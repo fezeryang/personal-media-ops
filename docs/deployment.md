@@ -1,45 +1,45 @@
-# Backend and crawler worker deployment
+# Personal Media Ops Deployment
 
-The target layout is:
+本文描述 Ubuntu 22.04 生产环境的真实部署布局。MediaCrawler 保持为仓库外部安装，
+不得复制进本项目或修改其核心源码。
+
+## Production Layout
 
 ```text
 /opt/personal-media-ops
-/opt/personal-media-ops/backend
-/opt/personal-media-ops/frontend/dist
+├── backend
+└── frontend/dist
+
+/www/wwwroot/ops.fezern8n.com
 /opt/mediacrawler
 /var/lib/mediaops
 /var/log/mediaops
+/var/backups/mediaops
 ```
 
-MediaCrawler remains an external installation. Do not copy it into this
-repository or modify its official source.
+运行用户为 `mediaops`。FastAPI 监听 `http://127.0.0.1:8000`，公网入口为
+`https://ops.fezern8n.com`。systemd 服务为 `mediaops-api` 和
+`mediaops-crawler-worker`。
 
-## Prepare directories
+## One-Time Root Preparation
 
-Run these once with administrative privileges:
+以下操作需要管理员执行：
 
 ```bash
-sudo install -d -o mediaops -g mediaops /var/lib/mediaops
-sudo install -d -o mediaops -g mediaops /var/lib/mediaops/crawler-output/tasks
-sudo install -d -o mediaops -g mediaops /var/lib/mediaops/qrcodes
-sudo install -d -o mediaops -g mediaops /var/log/mediaops/crawler
+sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops
+sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops/crawler-output/tasks
+sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops/qrcodes
+sudo install -d -o mediaops -g mediaops -m 0750 /var/log/mediaops/crawler
+sudo install -d -o mediaops -g mediaops -m 0750 /var/backups/mediaops
+sudo install -d -o root -g root -m 0755 /www/wwwroot/ops.fezern8n.com
 ```
 
-The `mediaops` user needs read/execute access to
-`/opt/mediacrawler/.venv/bin/python` and
-`/var/lib/mediaops/bin/run_mediacrawler.py`.
+`mediaops` 必须能读取并执行 `/opt/mediacrawler/.venv/bin/python` 和
+`/var/lib/mediaops/bin/run_mediacrawler.py`。不要扩大到不必要的目录写权限。
 
-## Install backend dependencies
+## Backend Configuration
 
-```bash
-cd /opt/personal-media-ops/backend
-uv sync --frozen
-```
-
-Copy `.env.example` to `.env`, keep it owned by the deployment user, and do not
-commit it.
-
-Required production values:
+在 `/opt/personal-media-ops/backend` 中创建不提交到 Git 的 `.env`。生产值至少包括：
 
 ```dotenv
 MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db
@@ -48,53 +48,58 @@ MEDIACRAWLER_RUNNER=/var/lib/mediaops/bin/run_mediacrawler.py
 MEDIAOPS_OUTPUT_ROOT=/var/lib/mediaops/crawler-output
 MEDIAOPS_LOG_ROOT=/var/log/mediaops
 MEDIAOPS_QRCODE_ROOT=/var/lib/mediaops/qrcodes
-MEDIAOPS_NODE_BINARY=/usr/bin/node
+MEDIAOPS_NODE_BINARY=/www/server/nodejs/v22.22.3/bin/node
 CRAWLER_POLL_INTERVAL_SECONDS=1
 ```
 
-Use `MEDIAOPS_NODE_BIN_DIR` instead of `MEDIAOPS_NODE_BINARY` when only the
-directory is known. The worker constructs a child `PATH` explicitly, so
-PyExecJS does not rely on an interactive shell profile.
+也可用 `MEDIAOPS_NODE_BIN_DIR=/www/server/nodejs/v22.22.3/bin` 代替
+`MEDIAOPS_NODE_BINARY`。Worker 会显式构造子进程 `PATH`，不依赖交互式 Shell profile。
 
-## Database initialization
-
-No manual migration command is required for this phase. API or worker startup
-creates the database parent directory and applies idempotent
-`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements.
-
-To verify:
+安装和验证后端：
 
 ```bash
-sudo -u mediaops /opt/personal-media-ops/backend/.venv/bin/python \
-  -c "from app.core.config import settings; from app.repositories.crawler_tasks import CrawlerTaskRepository; CrawlerTaskRepository(settings.database_path).initialize()"
+cd /opt/personal-media-ops/backend
+uv sync --frozen
+uv run pytest
 ```
 
-Back up `/var/lib/mediaops/mediaops.db` before future schema migrations.
+## Database Initialization and Migration Policy
 
-## Build the frontend
+当前应用启动时使用幂等的 `CREATE TABLE IF NOT EXISTS` /
+`CREATE INDEX IF NOT EXISTS` 初始化 SQLite，没有正式迁移工具。首次初始化可执行：
 
-The production frontend uses same-origin `/api` requests. Do not put the
-server IP or `127.0.0.1` in a production build:
+```bash
+cd /opt/personal-media-ops/backend
+uv run python -c \
+  "from app.core.config import settings; from app.repositories.crawler_tasks import CrawlerTaskRepository; CrawlerTaskRepository(settings.database_path).initialize()"
+```
+
+未来首次结构变化前必须先建立版本化迁移机制，不得只改模型或初始化器。迁移必须兼容
+已有数据；生产顺序必须是备份、迁移、代码发布、验证。数据库恢复属于破坏性 root
+操作，本仓库不会自动执行。
+
+## Frontend Build
+
+生产前端保持 `VITE_API_BASE_URL` 为空并通过同源 `/api` 访问后端：
 
 ```bash
 cd /opt/personal-media-ops/frontend
-npm ci
+npm ci --include=dev --cache "$HOME/.npm-cache"
 npm run lint
 npm run test
 npm run build
 ```
 
-The static output is `/opt/personal-media-ops/frontend/dist`. The optional
-`VITE_API_BASE_URL` variable is a Vite build-time value. Leave it empty for the
-recommended same-origin deployment.
+构建产物固定为 `/opt/personal-media-ops/frontend/dist`。发布阶段再将它同步到
+`/www/wwwroot/ops.fezern8n.com`，不要直接编辑构建后的 JS/CSS。
 
-For local development, `npm run dev` starts Vite on `127.0.0.1:5173` and
-proxies `/api` to `http://127.0.0.1:8000`.
+本地 `npm run dev` 监听 `127.0.0.1:5173`，Vite 将 `/api` 代理到
+`http://127.0.0.1:8000`。
 
-## Runner contract
+## Worker and Runner Contract
 
-The worker launches the configured Python and runner using an argument array,
-never a shell. The service-owned runner must support:
+Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `shell=True`。Runner
+必须支持：
 
 ```text
 --platform bili
@@ -109,11 +114,13 @@ never a shell. The service-owned runner must support:
 --enable-sub-comments false
 ```
 
-The caller cannot override these flags or paths.
+API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
+Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
+`waiting_login` 任务标记为异常中断。
 
 ## systemd
 
-Install the examples and reload systemd:
+服务模板位于 `deploy/systemd/`，只安装一个 Worker：
 
 ```bash
 sudo cp deploy/systemd/mediaops-api.service.example \
@@ -124,33 +131,25 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mediaops-api mediaops-crawler-worker
 ```
 
-Check status and logs:
+两个服务都必须使用 `User=mediaops`、`Group=mediaops`，并加载
+`/opt/personal-media-ops/backend/.env`。第二个 Worker 会因独占锁失败退出；不要扩大
+采集并发。
 
-```bash
-systemctl status mediaops-api mediaops-crawler-worker
-journalctl -u mediaops-crawler-worker -f
-```
+## BaoTa Nginx
 
-Only one worker should be enabled. A second worker exits because it cannot
-acquire the database-derived lock file. On restart, stale `running` or
-`waiting_login` tasks are marked `failed` with an interruption message.
-
-## Nginx and BaoTa
-
-Create an Nginx site for the public hostname and set its document root to:
+站点静态目录为：
 
 ```text
-/opt/personal-media-ops/frontend/dist
+/www/wwwroot/ops.fezern8n.com
 ```
 
-The site needs SPA fallback and a same-origin API proxy. A minimal server
-configuration is:
+关键配置：
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.example;
-    root /opt/personal-media-ops/frontend/dist;
+    server_name ops.fezern8n.com;
+    root /www/wwwroot/ops.fezern8n.com;
     index index.html;
 
     location /api/ {
@@ -169,47 +168,68 @@ server {
 }
 ```
 
-In BaoTa, create a static website with the same document root, then add the
-`location /api/` reverse-proxy block in the site's Nginx configuration. Keep
-the `location /` SPA fallback. Do not use BaoTa's static-directory proxy as a
-replacement for the `/api/` upstream.
-
-After changing Nginx configuration:
+宝塔 Nginx 的验证与重载命令是：
 
 ```bash
-sudo nginx -t
-sudo systemctl reload nginx
+sudo /www/server/nginx/sbin/nginx -t
+sudo /www/server/nginx/sbin/nginx -s reload
 ```
 
-With same-origin deployment, CORS is not involved in normal browser requests.
-If a separate development origin is intentionally used, add that exact origin
-to backend `FRONTEND_ORIGINS`; never use a wildcard in production.
+同源部署不依赖 CORS。只有明确的跨域开发来源才加入 `FRONTEND_ORIGINS`，生产不得
+使用通配符。
 
-## Update an existing server
+## Controlled Deployment
 
-Run as the deployment user unless a command explicitly uses `sudo`:
+部署入口为 `scripts/server/deploy.sh`。默认只显示计划，不连接服务器：
 
 ```bash
-cd /opt/personal-media-ops
-git pull --ff-only origin main
-
-cd /opt/personal-media-ops/backend
-uv sync --frozen
-uv run pytest
-
-cd /opt/personal-media-ops/frontend
-npm ci
-npm run build
-
-sudo systemctl restart mediaops-api mediaops-crawler-worker
-sudo nginx -t
-sudo systemctl reload nginx
+scripts/server/deploy.sh --commit <origin-main-sha>
 ```
 
-Verify the same-origin API and frontend:
+确认目标主机与提交后，执行非 root 阶段：
+
+```bash
+scripts/server/deploy.sh --commit <origin-main-sha> --execute
+```
+
+该阶段按顺序完成预检、SQLite 备份、`git pull --ff-only`、后端同步和测试、前端
+安装/lint/test/build。若无 root 权限，脚本以非零状态结束并输出精确待执行命令；
+此时状态是“代码准备完成，生产操作待执行”，不能视为上线完成。
+
+仅在已人工审查 restricted sudo 且本次任务明确授权时执行完整阶段：
+
+```bash
+scripts/server/deploy.sh \
+  --commit <origin-main-sha> \
+  --execute \
+  --root-stage
+```
+
+root 阶段使用 `sudo -n` 同步静态文件、重启两个应用服务、验证和重载 Nginx；不会
+请求密码。前端构建会写入只含目标 Git commit 的 `.mediaops-release`，供
+`status.sh` 检查静态版本。`infra/sudoers/mediaops.example` 仅供人工审查，本任务
+不会安装它。
+
+## Verification and Rollback
+
+发布后必须检查：
+
+```bash
+scripts/server/status.sh
+scripts/server/healthcheck.sh --with-ssh
+```
+
+也可直接检查：
 
 ```bash
 curl -fsS http://127.0.0.1:8000/api/health
-curl -I https://your-domain.example/
-curl -fsS https://your-domain.example/api/health
+curl -I https://ops.fezern8n.com/
+curl -fsS https://ops.fezern8n.com/api/health
 ```
+
+部署前备份位于 `/var/backups/mediaops/<UTC timestamp>/`，包含 SQLite 一致性副本、
+元数据和 SHA-256 校验值。代码回滚优先使用经过审查的 Git revert 或已知良好版本；
+禁止在生产运行 `git reset --hard`。数据库恢复必须先停止写入方并使用单独的人工
+审查方案。
+
+完整 SSH、日志和权限说明见 [server-operations.md](server-operations.md)。

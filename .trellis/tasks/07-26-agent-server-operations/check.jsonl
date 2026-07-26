@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Check command signatures, dry-run behavior, error matrix, and required verification."}
+{"file": ".trellis/tasks/07-26-agent-server-operations/research/skill-layout.md", "reason": "Check that the Skill remains one auto-discovered repository source."}

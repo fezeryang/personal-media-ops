@@ -1,0 +1,7 @@
+Host mediaops-prod
+    HostName 47.105.36.220
+    User mediaops
+    IdentityFile ~/.ssh/mediaops_prod
+    IdentitiesOnly yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
