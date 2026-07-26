@@ -1,4 +1,4 @@
 interface:
   display_name: "MediaOps Server"
-  short_description: "Operate and diagnose Personal Media Ops production"
-  default_prompt: "Use $mediaops-server to run a read-only production health check."
+  short_description: "Diagnose and safely release Personal Media Ops"
+  default_prompt: "Use $mediaops-server to prepare a controlled production check or release plan."

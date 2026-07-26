@@ -114,43 +114,67 @@ scripts/server/backup.sh --execute
 ```bash
 git fetch origin main
 git rev-parse origin/main
-scripts/server/deploy.sh --commit <origin-main-sha>
+scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 ```
 
-非 root 准备阶段：
+真实部署必须单独获得授权，并显式执行：
 
 ```bash
-scripts/server/deploy.sh --commit <origin-main-sha> --execute
+scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
-它完成数据库备份、快进拉取、后端测试和前端 lint/test/build。无 root 阶段时脚本
-明确返回“代码准备完成，生产操作待执行”并列出静态同步、服务重启和 Nginx 命令。
-
-仅在本次部署明确授权、且 `infra/sudoers/mediaops.example` 已由管理员审查安装时：
+脚本依次确认身份与工作树、fetch 并固定目标、拒绝非 fast-forward 和数据库迁移、
+备份 SQLite、pull、运行后端同步/pytest、运行前端 ci/lint/test/build，然后只调用：
 
 ```bash
-scripts/server/deploy.sh \
-  --commit <origin-main-sha> \
-  --execute \
-  --root-stage
+sudo -n /usr/local/sbin/mediaops-release finalize
 ```
 
-脚本仅使用 `sudo -n`，不会等待密码。部署结束必须运行状态和健康检查，并保存旧
-commit、目标 commit、备份位置和结果。
+任何 gate 失败都不会调用 `finalize`。helper 或健康检查失败时，脚本报告具体阶段并
+明确发布不成功，不会把部分准备或部分激活描述为成功。
+
+## Restricted Release Helper
+
+服务器安装入口为 `/usr/local/sbin/mediaops-release`，当前版本 `1`。只允许：
+
+```text
+version
+status
+publish-frontend
+restart-services
+nginx-check
+nginx-reload
+verify
+finalize
+```
+
+只读验证：
+
+```bash
+ssh -o BatchMode=yes mediaops-prod \
+  'sudo -n /usr/local/sbin/mediaops-release version'
+ssh -o BatchMode=yes mediaops-prod \
+  'sudo -n /usr/local/sbin/mediaops-release status'
+```
+
+规范源为 `infra/release/mediaops-release` 和
+`infra/sudoers/mediaops-release.example`。它们只能由管理员人工审查安装；
+`deploy.sh` 不会覆盖 helper 或 sudoers。不得尝试 root shell、额外参数、任意命令
+或 direct sudo rsync/systemctl/Nginx。
 
 ## Permission Boundary
 
 `mediaops` 可执行 Git 检查/拉取、依赖安装、测试、前端构建、允许范围内的日志读取、
 API/进程/端口/磁盘/内存检查。
 
-systemd 修改和重启、静态目录写入、Nginx 修改和重载、所有权、系统软件、防火墙、
-用户/sudoers、数据库删除或恢复需要 root 或受限 sudo。无权限时输出精确命令并报告
-“代码准备完成，生产操作待执行”，不得绕过权限。
+日常静态发布、两个应用服务重启和 Nginx 检查/重载只能通过受限 helper 完成。helper
+安装、sudoers、所有权、系统软件、防火墙、用户管理以及数据库删除/恢复仍需管理员
+人工处理，不得绕过权限。
 
 ## Current Automation Boundary
 
 - 不自动恢复或删除数据库；
-- 不修改 sudoers、Nginx、systemd 或防火墙；
+- 不安装或修改 helper、sudoers、Nginx、systemd 或防火墙配置；
 - 不清理日志、浏览器登录状态或采集数据；
 - 不编辑 `/opt/mediacrawler`；
 - 不自动回滚；

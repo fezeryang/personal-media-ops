@@ -22,7 +22,7 @@ Examples:
   run-server-tool.sh status
   run-server-tool.sh healthcheck --with-ssh
   run-server-tool.sh logs --worker --lines 200
-  run-server-tool.sh deploy --commit abcdef1
+  run-server-tool.sh deploy --target-ref abcdef1 --dry-run
 EOF
 }
 

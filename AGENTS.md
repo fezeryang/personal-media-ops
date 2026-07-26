@@ -105,9 +105,10 @@ planned actions. Back up SQLite before database-affecting deployment.
 Do not edit production repository files, `/opt/mediacrawler`, browser login
 state, systemd, Nginx, or BaoTa configuration unless the task explicitly
 requires it. Do not restart every service without evidence. Prefer diagnosis
-and the smallest verified repair. If root access is unavailable, never request
-an interactive sudo password; provide exact root commands and report
-“code prepared, production operation pending.”
+and the smallest verified repair. Routine privileged release work must use only
+the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
+Never request an interactive sudo password, seek a root shell, or automatically
+install/overwrite the helper or sudoers.
 
 ## Completion Report
 

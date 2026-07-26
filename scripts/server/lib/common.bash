@@ -10,6 +10,7 @@ readonly MEDIAOPS_DATABASE="/var/lib/mediaops/mediaops.db"
 readonly MEDIAOPS_BACKUP_ROOT="/var/backups/mediaops"
 readonly MEDIAOPS_NGINX="/www/server/nginx/sbin/nginx"
 readonly MEDIAOPS_NODE_BIN="/www/server/nodejs/v22.22.3/bin"
+readonly MEDIAOPS_RELEASE_HELPER="/usr/local/sbin/mediaops-release"
 readonly MEDIAOPS_PUBLIC_URL="https://ops.fezern8n.com"
 readonly MEDIAOPS_API_SERVICE="mediaops-api"
 readonly MEDIAOPS_WORKER_SERVICE="mediaops-crawler-worker"
@@ -78,16 +79,23 @@ mediaops_validate_lines() {
   ((lines <= 5000)) || mediaops_die "--lines must not exceed 5000"
 }
 
-mediaops_validate_commit() {
-  local commit="$1"
-  [[ "$commit" =~ ^[0-9a-fA-F]{7,40}$ ]] ||
-    mediaops_die "--commit must be a 7-40 character hexadecimal Git commit"
-}
-
 mediaops_validate_full_commit() {
   local commit="$1"
   [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] ||
     mediaops_die "expected a full 40-character Git commit, received: $commit"
+}
+
+mediaops_validate_target_ref() {
+  local target_ref="$1"
+  [[ ${#target_ref} -le 200 ]] ||
+    mediaops_die "--target-ref must not exceed 200 characters"
+  [[ "$target_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] ||
+    mediaops_die "--target-ref contains unsupported characters"
+  [[ "$target_ref" != *..* &&
+     "$target_ref" != */ &&
+     "$target_ref" != *//* &&
+     "$target_ref" != *.lock ]] ||
+    mediaops_die "--target-ref is not a safe Git revision"
 }
 
 mediaops_validate_uuid() {

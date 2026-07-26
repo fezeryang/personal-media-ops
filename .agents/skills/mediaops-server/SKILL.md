@@ -1,101 +1,108 @@
 ---
 name: mediaops-server
-description: Operate Personal Media Ops production safely. Use for deployment, service checks, production logs, unreachable API diagnosis, idle Worker diagnosis, frontend version checks, GitHub/server revision comparison, Nginx and FastAPI verification, SQLite backup preparation, read-only production diagnostics, controlled deployment commands, and post-release health checks.
+description: Operate Personal Media Ops production safely through bounded SSH diagnostics and the restricted mediaops-release helper. Use for service checks, logs, unreachable API or idle Worker diagnosis, GitHub/server revision comparison, SQLite backup preparation, controlled application builds, restricted releases, post-deployment verification, and rollback preparation.
 ---
 
 # MediaOps Server Operations
 
-Operate `mediaops-prod` with evidence-first, bounded commands. Default to
-read-only diagnosis. Never claim a server action succeeded without its output
-and a follow-up check.
+Operate `mediaops-prod` with evidence-first commands. Never claim success
+without command output and verification.
 
-## Load the Right Context
-
-Before acting:
+## Load Context
 
 1. Read [references/server-inventory.md](references/server-inventory.md).
-2. For deployments, backups, permissions, or recovery planning, also read
+2. For backup, build, release, failure, or rollback work, also read
    [references/deployment.md](references/deployment.md).
-3. Read the repository's root `AGENTS.md` and relevant deployment documentation.
-4. State the target host, requested operation, and whether it is read-only.
+3. Read root `AGENTS.md` and the relevant repository deployment docs.
+4. State the target, operation class, and whether it mutates production.
 
-## Connection Boundary
+Use `MEDIAOPS_SSH_HOST`, defaulting to `mediaops-prod`. Use BatchMode and a
+connection timeout. Never embed the IP in scripts, request a password, read a
+private key, or log in as root.
 
-Use the SSH alias in `MEDIAOPS_SSH_HOST`, defaulting to `mediaops-prod`. Do not
-embed `mediaops@47.105.36.220` in commands or scripts.
+## Classify the Operation
 
-Before connecting, inspect the local SSH resolution:
+### Read-only diagnosis
 
-```bash
-ssh -G "${MEDIAOPS_SSH_HOST:-mediaops-prod}"
-```
-
-Connect non-interactively:
+Use `connect`, `status`, `healthcheck`, or bounded `logs`. Treat permission
+failure as unknown, not as proof that a service or file is absent.
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=10 mediaops-prod '<read-only command>'
-```
-
-If the alias, key, or network is unavailable, report the missing prerequisite
-once and stop. Never request, print, or retry an interactive password. If the
-execution environment cannot access production, say so plainly.
-
-## Use the Repository Tools
-
-Run the canonical tools through the dispatcher:
-
-```bash
-.agents/skills/mediaops-server/scripts/run-server-tool.sh connect
 .agents/skills/mediaops-server/scripts/run-server-tool.sh status
-.agents/skills/mediaops-server/scripts/run-server-tool.sh healthcheck
-.agents/skills/mediaops-server/scripts/run-server-tool.sh logs --api --lines 200
-.agents/skills/mediaops-server/scripts/run-server-tool.sh backup
-.agents/skills/mediaops-server/scripts/run-server-tool.sh deploy --commit <sha>
+.agents/skills/mediaops-server/scripts/run-server-tool.sh healthcheck --with-ssh
 ```
 
-`connect`, `status`, and `healthcheck` are read-only. Log reads are bounded
-unless `--follow` is explicit. `backup` and `deploy` are dry runs unless
-`--execute` is provided.
+### Application build
 
-## Diagnostic Workflow
+Run Git sync, `uv sync --frozen`, backend pytest, frontend `npm ci`, lint, test,
+and build as `mediaops`. This is preparation, not a successful release.
 
-1. Run `connect`, then `status`.
-2. Compare the server commit with the expected GitHub `main` commit.
-3. Check the local API and public routes with `healthcheck --with-ssh`.
-4. Read only the relevant bounded log source.
-5. Form a diagnosis from the collected evidence.
-6. Propose the smallest repair and identify whether it requires `mediaops` or
-   root privileges.
+### Database backup
 
-Do not restart every service without evidence. Do not treat permission failures
-as proof that a service or file is absent.
+Run `scripts/server/backup.sh --execute` before pull or migration. Back up only
+SQLite and non-secret deployment metadata. Never back up `.env`, cookies, QR
+codes, browser state, crawler results, or SSH material.
 
-## Deployment Workflow
+### Restricted release
 
-Start with a dry run:
+Routine privileged activation is available only through:
 
 ```bash
-scripts/server/deploy.sh --commit <origin-main-sha>
+sudo -n /usr/local/sbin/mediaops-release <allowed-subcommand>
 ```
 
-Before any mutation, confirm the host, clean server worktree, old commit, target
-commit, backup destination, and exact actions. A requested deployment may run
-the non-root preparation with `--execute`. Use `--root-stage` only when root or
-reviewed passwordless sudo authorization is explicitly in scope.
+The full deploy script may call only `finalize`, and only after all tests and
+the build pass. Never call direct privileged rsync, systemctl, or Nginx
+commands. Never install or overwrite the helper or sudoers automatically.
 
-If root permission is unavailable, stop after code preparation, report
-“代码准备完成，生产操作待执行”, and return the exact root command list. Do not
-pretend the release is live.
+### Root boundary
 
-## Production Safety Rules
+The repository files under `infra/release/` and `infra/sudoers/` are reviewed
+sources for a human administrator. They do not grant Codex a root shell or
+arbitrary sudo. Do not probe commands outside the allowlist or bypass it.
 
-- Never edit code or built JS/CSS directly on production.
-- Never modify `/opt/mediacrawler`.
-- Never delete `/var/lib/mediaops`, clear `/var/log/mediaops`, or remove browser
-  login state.
-- Back up SQLite before a migration, restore, or deployment.
-- Never use `git reset --hard`, interactive sudo, or unreviewed wildcard deletion.
-- Do not alter BaoTa/Nginx, systemd, sudoers, firewall, ownership, or packages
-  unless the task explicitly authorizes that operation.
-- Do not expose `.env`, cookies, tokens, private keys, QR codes, or task data.
-- Every production action requires command output and health verification.
+## Required Pre-release Report
+
+Before a real release, report:
+
+- target server;
+- current commit;
+- target commit/ref;
+- whether database migration or schema paths exist;
+- whether SQLite backup has completed;
+- exact backend/frontend tests to run;
+- helper path and subcommand.
+
+Start with a no-connection dry-run:
+
+```bash
+scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
+```
+
+A separately authorized real release uses:
+
+```bash
+scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
+```
+
+## Post-release Verification
+
+After helper success, verify the localhost API and public frontend/API routes.
+Compare repository commit, build marker, and published marker. Record old/new
+commits only after all checks pass.
+
+## Failure Handling
+
+- Stop on a dirty worktree, target mismatch, non-fast-forward update,
+  migration/schema path, backup failure, failed test/build, helper failure, or
+  health failure.
+- Report the exact failed stage.
+- Never describe code preparation or partial helper execution as success.
+- Inspect evidence before retrying; do not restart every service blindly.
+
+## Rollback Preparation
+
+Retain the pre-release SQLite backup and old commit. Prefer a reviewed Git
+revert or known-good forward deployment. Database restore requires stopped
+writers and separate authorization. Never use `git reset --hard`, delete
+`/var/lib/mediaops`, clear logs, or modify `/opt/mediacrawler`.

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Verify command contracts, failure matrix, dry-run behavior, and production safety."}
+{"file": ".trellis/tasks/07-26-restricted-release-helper/research/helper-v1-observation.md", "reason": "Verify repository helper source matches the only observed v1 behavior."}

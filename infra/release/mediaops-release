@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly HELPER_VERSION="1"
+readonly APP_ROOT="/opt/personal-media-ops"
+readonly FRONTEND_BUILD="${APP_ROOT}/frontend/dist"
+readonly STATIC_ROOT="/www/wwwroot/ops.fezern8n.com"
+readonly API_SERVICE="mediaops-api"
+readonly WORKER_SERVICE="mediaops-crawler-worker"
+readonly NGINX="/www/server/nginx/sbin/nginx"
+readonly LOCAL_HEALTH_URL="http://127.0.0.1:8000/api/health"
+readonly RSYNC="/usr/bin/rsync"
+readonly SYSTEMCTL="/usr/bin/systemctl"
+readonly CURL="/usr/bin/curl"
+readonly HOSTNAME="/usr/bin/hostname"
+
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+umask 022
+
+usage() {
+    printf 'Usage: mediaops-release {version|status|publish-frontend|restart-services|nginx-check|nginx-reload|verify|finalize}\n' >&2
+}
+
+log() {
+    printf '[mediaops-release] %s\n' "$1"
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        printf 'ERROR: mediaops-release must run as root through the reviewed sudo allowlist\n' >&2
+        exit 3
+    fi
+}
+
+print_context() {
+    local action="$1"
+    log "host=$("$HOSTNAME")"
+    log "action=${action}"
+    log "app_root=${APP_ROOT}"
+}
+
+check_services() {
+    local failed=0
+    local api_state
+    local worker_state
+
+    api_state="$("$SYSTEMCTL" is-active "$API_SERVICE" 2>/dev/null || true)"
+    worker_state="$("$SYSTEMCTL" is-active "$WORKER_SERVICE" 2>/dev/null || true)"
+    printf 'api=%s\n' "${api_state:-unknown}"
+    printf 'worker=%s\n' "${worker_state:-unknown}"
+    [[ "$api_state" == "active" ]] || failed=1
+    [[ "$worker_state" == "active" ]] || failed=1
+    return "$failed"
+}
+
+check_frontend_presence() {
+    local failed=0
+
+    if [[ -f "${FRONTEND_BUILD}/index.html" ]]; then
+        printf 'frontend_build=present\n'
+    else
+        printf 'frontend_build=missing\n'
+        failed=1
+    fi
+    if [[ -f "${STATIC_ROOT}/index.html" ]]; then
+        printf 'published_frontend=present\n'
+    else
+        printf 'published_frontend=missing\n'
+        failed=1
+    fi
+
+    if [[ -r "${FRONTEND_BUILD}/.mediaops-release" &&
+          -r "${STATIC_ROOT}/.mediaops-release" ]] &&
+       ! cmp -s \
+            "${FRONTEND_BUILD}/.mediaops-release" \
+            "${STATIC_ROOT}/.mediaops-release"; then
+        printf 'ERROR: published frontend release does not match the current build\n' >&2
+        failed=1
+    fi
+    return "$failed"
+}
+
+nginx_check_impl() {
+    log "Checking Nginx configuration"
+    "$NGINX" -t
+}
+
+check_api_health() {
+    local health
+    health="$("$CURL" -fsS --max-time 10 "$LOCAL_HEALTH_URL")"
+    printf '%s\n' "$health"
+    grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health" &&
+        grep -Eq '"service"[[:space:]]*:[[:space:]]*"personal-media-ops-api"' <<<"$health"
+}
+
+verify_impl() {
+    local failed=0
+
+    check_services || failed=1
+    check_frontend_presence || failed=1
+    nginx_check_impl || failed=1
+    check_api_health || failed=1
+    return "$failed"
+}
+
+publish_frontend_impl() {
+    [[ -f "${FRONTEND_BUILD}/index.html" ]] || {
+        printf 'ERROR: frontend build is missing: %s/index.html\n' "$FRONTEND_BUILD" >&2
+        return 2
+    }
+    [[ -f "${FRONTEND_BUILD}/.mediaops-release" ]] || {
+        printf 'ERROR: frontend release marker is missing: %s/.mediaops-release\n' "$FRONTEND_BUILD" >&2
+        return 2
+    }
+    [[ -d "$STATIC_ROOT" ]] || {
+        printf 'ERROR: static root is missing: %s\n' "$STATIC_ROOT" >&2
+        return 2
+    }
+
+    log "Publishing frontend"
+    "$RSYNC" \
+        --archive \
+        --delete \
+        --no-owner \
+        --no-group \
+        "${FRONTEND_BUILD}/" \
+        "${STATIC_ROOT}/"
+}
+
+restart_services_impl() {
+    log "Restarting application services"
+    "$SYSTEMCTL" restart "$API_SERVICE" "$WORKER_SERVICE"
+}
+
+nginx_reload_impl() {
+    log "Reloading Nginx"
+    "$NGINX" -s reload
+}
+
+if (($# != 1)); then
+    usage
+    exit 2
+fi
+
+subcommand="$1"
+if [[ "$subcommand" == "version" ]]; then
+    printf '%s\n' "$HELPER_VERSION"
+    exit 0
+fi
+
+require_root
+print_context "$subcommand"
+
+case "$subcommand" in
+    status)
+        log "Release helper version: ${HELPER_VERSION}"
+        verify_impl
+        ;;
+    publish-frontend)
+        publish_frontend_impl
+        ;;
+    restart-services)
+        restart_services_impl
+        ;;
+    nginx-check)
+        nginx_check_impl
+        ;;
+    nginx-reload)
+        nginx_check_impl
+        nginx_reload_impl
+        ;;
+    verify)
+        log "Release helper version: ${HELPER_VERSION}"
+        verify_impl
+        ;;
+    finalize)
+        log "Release helper version: ${HELPER_VERSION}"
+        publish_frontend_impl
+        restart_services_impl
+        nginx_check_impl
+        nginx_reload_impl
+        verify_impl
+        log "finalize=success"
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

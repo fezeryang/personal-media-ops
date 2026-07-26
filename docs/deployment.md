@@ -168,11 +168,11 @@ server {
 }
 ```
 
-宝塔 Nginx 的验证与重载命令是：
+日常发布中的 Nginx 验证与重载只能通过受限 helper：
 
 ```bash
-sudo /www/server/nginx/sbin/nginx -t
-sudo /www/server/nginx/sbin/nginx -s reload
+sudo -n /usr/local/sbin/mediaops-release nginx-check
+sudo -n /usr/local/sbin/mediaops-release nginx-reload
 ```
 
 同源部署不依赖 CORS。只有明确的跨域开发来源才加入 `FRONTEND_ORIGINS`，生产不得
@@ -183,32 +183,70 @@ sudo /www/server/nginx/sbin/nginx -s reload
 部署入口为 `scripts/server/deploy.sh`。默认只显示计划，不连接服务器：
 
 ```bash
-scripts/server/deploy.sh --commit <origin-main-sha>
+scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 ```
 
-确认目标主机与提交后，执行非 root 阶段：
+确认目标主机、当前/目标 commit、迁移检测、备份和测试计划后，真实发布必须显式执行：
 
 ```bash
-scripts/server/deploy.sh --commit <origin-main-sha> --execute
+scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
-该阶段按顺序完成预检、SQLite 备份、`git pull --ff-only`、后端同步和测试、前端
-安装/lint/test/build。若无 root 权限，脚本以非零状态结束并输出精确待执行命令；
-此时状态是“代码准备完成，生产操作待执行”，不能视为上线完成。
+执行顺序：
 
-仅在已人工审查 restricted sudo 且本次任务明确授权时执行完整阶段：
+```text
+身份和工作树检查
+→ fetch/固定 origin/main 目标
+→ fast-forward 与迁移检查
+→ SQLite 备份
+→ git pull --ff-only
+→ uv sync --frozen
+→ 后端 pytest
+→ npm ci
+→ 前端 lint/test/build
+→ restricted helper finalize
+→ 内部健康检查
+→ 公网健康检查
+→ 记录新旧 commit
+```
+
+所有测试和构建成功后，部署脚本只调用：
 
 ```bash
-scripts/server/deploy.sh \
-  --commit <origin-main-sha> \
-  --execute \
-  --root-stage
+sudo -n /usr/local/sbin/mediaops-release finalize
 ```
 
-root 阶段使用 `sudo -n` 同步静态文件、重启两个应用服务、验证和重载 Nginx；不会
-请求密码。前端构建会写入只含目标 Git commit 的 `.mediaops-release`，供
-`status.sh` 检查静态版本。`infra/sudoers/mediaops.example` 仅供人工审查，本任务
-不会安装它。
+任何前置 gate 失败都不得调用 helper。helper 或发布后健康检查失败时可能存在部分
+激活状态，必须报告失败并先诊断，不能宣称发布成功。
+
+## Restricted Helper Source
+
+仓库中的人工审查源：
+
+```text
+infra/release/mediaops-release
+infra/sudoers/mediaops-release.example
+```
+
+helper 版本为 `1`，固定子命令为 `version`、`status`、`publish-frontend`、
+`restart-services`、`nginx-check`、`nginx-reload`、`verify` 和 `finalize`。
+它不接受任意路径、服务或额外参数。
+
+管理员可在独立维护窗口审查后安装；应用部署脚本永远不会执行这些安装命令：
+
+```bash
+sudo install -o root -g root -m 0755 \
+  infra/release/mediaops-release \
+  /usr/local/sbin/mediaops-release
+sudo visudo -cf infra/sudoers/mediaops-release.example
+sudo install -o root -g root -m 0440 \
+  infra/sudoers/mediaops-release.example \
+  /etc/sudoers.d/mediaops-release
+```
+
+安装或更新 helper/sudoers 不属于普通应用发布。不得要求密码、获取 root shell，或
+绕过白名单。前端构建会写入目标 commit 的 `.mediaops-release` 标记，供 helper 和
+`status.sh` 验证发布版本。
 
 ## Verification and Rollback
 

@@ -39,6 +39,8 @@ passwords, private keys, tokens, cookies, or `.env` values.
 | Crawler Worker service | `mediaops-crawler-worker` |
 | BaoTa Nginx binary | `/www/server/nginx/sbin/nginx` |
 | Node binary | `/www/server/nodejs/v22.22.3/bin/node` |
+| Restricted release helper | `/usr/local/sbin/mediaops-release` |
+| Release helper version | `1` |
 | MediaCrawler checkout | `/opt/mediacrawler` |
 | MediaCrawler Python | `/opt/mediacrawler/.venv/bin/python` |
 
@@ -46,6 +48,7 @@ The `mediaops` account can inspect the repository, install project
 dependencies, run tests/builds, read permitted logs, call APIs, and check
 process, port, disk, and memory status.
 
-Root or reviewed restricted sudo is required for systemd changes/restarts,
-static-root writes, Nginx changes/reloads, ownership changes, system package or
-firewall changes, user/sudoers changes, and database deletion/restoration.
+Routine static publication, application restarts, and Nginx validation/reload
+must use the exact reviewed helper subcommands through `sudo -n`. Arbitrary root
+commands, helper/sudoers installation, ownership changes, package/firewall/user
+changes, and database deletion/restoration remain administrator-only.

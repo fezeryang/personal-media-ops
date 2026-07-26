@@ -94,8 +94,12 @@ uv run python -m app.workers.crawler_worker
 scripts/server/connect.sh
 scripts/server/status.sh
 scripts/server/healthcheck.sh
-scripts/server/deploy.sh --commit <origin-main-sha>
+scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 ```
+
+Real releases require an explicit `--execute` and use the manually installed
+restricted helper `/usr/local/sbin/mediaops-release`. Reviewed, non-installed
+sources live under `infra/release/` and `infra/sudoers/`.
 
 生产部署、root 权限阶段和回滚边界以
 [deployment guide](docs/deployment.md) 与

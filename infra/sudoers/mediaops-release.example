@@ -1,0 +1,16 @@
+# Personal Media Ops restricted release helper allowlist.
+# This is a reviewed source example only. Install manually with visudo after
+# installing /usr/local/sbin/mediaops-release as root:root mode 0755.
+# Deployment scripts must never install or overwrite either production file.
+
+Cmnd_Alias MEDIAOPS_RELEASE = \
+    /usr/local/sbin/mediaops-release version, \
+    /usr/local/sbin/mediaops-release status, \
+    /usr/local/sbin/mediaops-release publish-frontend, \
+    /usr/local/sbin/mediaops-release restart-services, \
+    /usr/local/sbin/mediaops-release nginx-check, \
+    /usr/local/sbin/mediaops-release nginx-reload, \
+    /usr/local/sbin/mediaops-release verify, \
+    /usr/local/sbin/mediaops-release finalize
+
+mediaops ALL=(root) NOPASSWD: MEDIAOPS_RELEASE
