@@ -170,3 +170,36 @@ Integrated the reviewed mediaops-release v1 boundary, fail-closed deployment orc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Multi-platform crawler infrastructure
+
+**Date**: 2026-07-26
+**Task**: Multi-platform crawler infrastructure
+**Branch**: `main`
+
+### Summary
+
+Added platform adapters and capabilities, Alembic migrations, unified results, XHS/Douyin code-ready Runner support, capability-driven frontend, deployment migration gates, tests, and documentation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `64e62aa` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
