@@ -119,6 +119,16 @@ the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
 Never request an interactive sudo password, seek a root shell, or automatically
 install/overwrite the helper or sudoers.
 
+For the stage-four rollout authorized on 2026-07-26, the reproduced
+Codex-observer failure at the external Beaver/WAF boundary (`403`, `525`, or a
+TLS reset) is non-blocking only when the restricted helper and Nginx checks
+pass, both application services are active, localhost `/api/health` passes,
+and the production server can validate the public hostname and certificate via
+an SNI loopback request. Record the external observer failure in the final
+report. This exception does not permit ignoring a different public failure, an
+origin-side failure, or any failed database, test, build, migration, helper,
+service, Nginx, or SNI gate.
+
 ## Completion Report
 
 Every completed task must report:
