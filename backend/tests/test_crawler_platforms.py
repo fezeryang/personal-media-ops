@@ -162,6 +162,79 @@ def test_adapter_rejects_unsafe_result_urls() -> None:
     assert result.cover_url is None
 
 
+def _write_result_file(task_dir: Path, storage_directory: str, name: str) -> Path:
+    jsonl_dir = task_dir / storage_directory / "jsonl"
+    jsonl_dir.mkdir(parents=True, exist_ok=True)
+    result_file = jsonl_dir / name
+    result_file.write_text('{"video_id": "1"}\n', encoding="utf-8")
+    return result_file
+
+
+@pytest.mark.parametrize(
+    ("platform", "storage_directory"),
+    [
+        ("bili", "bili"),
+        ("bili", "bilibili"),
+        ("dy", "dy"),
+        ("dy", "douyin"),
+        ("xhs", "xhs"),
+    ],
+)
+def test_content_result_files_supports_each_storage_layout(
+    tmp_path: Path,
+    platform: str,
+    storage_directory: str,
+) -> None:
+    result_file = _write_result_file(
+        tmp_path, storage_directory, "search_contents_2026-07-26.jsonl"
+    )
+
+    found = platform_registry.get(platform).content_result_files(tmp_path)
+
+    assert found == [result_file.resolve()]
+
+
+def test_content_result_files_merges_candidates_sorted_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    short_file = _write_result_file(
+        tmp_path, "bili", "search_contents_b.jsonl"
+    )
+    long_file = _write_result_file(
+        tmp_path, "bilibili", "search_contents_a.jsonl"
+    )
+
+    found = platform_registry.get("bili").content_result_files(tmp_path)
+
+    assert found == sorted([short_file.resolve(), long_file.resolve()])
+
+
+def test_content_result_files_deduplicates_linked_storage_directories(
+    tmp_path: Path,
+) -> None:
+    result_file = _write_result_file(
+        tmp_path, "bili", "search_contents_test.jsonl"
+    )
+    (tmp_path / "bilibili").symlink_to(tmp_path / "bili")
+
+    found = platform_registry.get("bili").content_result_files(tmp_path)
+
+    assert found == [result_file.resolve()]
+
+
+def test_content_result_files_rejects_paths_escaping_task_directory(
+    tmp_path: Path,
+) -> None:
+    task_dir = tmp_path / "task"
+    outside = tmp_path / "outside"
+    _write_result_file(outside, "bili", "search_contents_test.jsonl")
+    (task_dir / "bili").mkdir(parents=True)
+    (task_dir / "bili" / "jsonl").symlink_to(outside / "bili" / "jsonl")
+
+    with pytest.raises(ValueError):
+        platform_registry.get("bili").content_result_files(task_dir)
+
+
 @pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
 def test_login_success_detection_ignores_qr_save_line(platform: str) -> None:
     adapter = platform_registry.get(platform)

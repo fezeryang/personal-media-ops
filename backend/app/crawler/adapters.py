@@ -58,7 +58,7 @@ def _first_comma_value(value: object) -> str | None:
 class CrawlerPlatformAdapter(ABC):
     platform: str
     display_name: str
-    storage_directory: str
+    storage_directories: tuple[str, ...]
     verification_status: Literal["verified", "code_ready"]
 
     def capability(self, enabled: bool) -> CrawlerPlatformCapability:
@@ -113,18 +113,19 @@ class CrawlerPlatformAdapter(ABC):
         ]
 
     def content_result_files(self, task_dir: Path) -> list[Path]:
-        jsonl_root = task_dir / self.storage_directory / "jsonl"
-        if not jsonl_root.is_dir():
-            return []
         task_root = task_dir.resolve()
-        candidates: list[Path] = []
-        for candidate in sorted(jsonl_root.glob("*_contents_*.jsonl")):
-            resolved = candidate.resolve()
-            if not resolved.is_relative_to(task_root):
-                raise ValueError("result path escapes task output directory")
-            if resolved.is_file():
-                candidates.append(resolved)
-        return candidates
+        collected: set[Path] = set()
+        for storage_directory in self.storage_directories:
+            jsonl_root = task_dir / storage_directory / "jsonl"
+            if not jsonl_root.is_dir():
+                continue
+            for candidate in jsonl_root.glob("*_contents_*.jsonl"):
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(task_root):
+                    raise ValueError("result path escapes task output directory")
+                if resolved.is_file():
+                    collected.add(resolved)
+        return sorted(collected)
 
     @staticmethod
     def is_login_success(line: str) -> bool:
@@ -179,7 +180,7 @@ class BilibiliAdapter(CrawlerPlatformAdapter):
         super().__init__(
             platform="bili",
             display_name="哔哩哔哩",
-            storage_directory="bilibili",
+            storage_directories=("bili", "bilibili"),
             verification_status="verified",
         )
 
@@ -209,7 +210,7 @@ class XiaohongshuAdapter(CrawlerPlatformAdapter):
         super().__init__(
             platform="xhs",
             display_name="小红书",
-            storage_directory="xhs",
+            storage_directories=("xhs",),
             verification_status="code_ready",
         )
 
@@ -237,7 +238,7 @@ class DouyinAdapter(CrawlerPlatformAdapter):
         super().__init__(
             platform="dy",
             display_name="抖音",
-            storage_directory="douyin",
+            storage_directories=("dy", "douyin"),
             verification_status="code_ready",
         )
 
