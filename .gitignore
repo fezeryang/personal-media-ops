@@ -18,6 +18,13 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+crawler-output/
+qrcodes/
+browser_data/
+**/browser_data/
+cookies/
+**/cookies/
+qrcode*.png
 
 # Local editor and OS files
 .DS_Store

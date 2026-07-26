@@ -28,7 +28,11 @@ with HTTP route modules in `app/api` and environment-backed shared settings in
 backend/
 ├── app/
 │   ├── api/
+│   ├── models/
 │   ├── core/
+│   ├── repositories/
+│   ├── workers/
+│   ├── db.py
 │   └── main.py
 ├── tests/
 ├── pyproject.toml
@@ -45,8 +49,9 @@ deploy/systemd/
 
 Keep the API contract close to its route in `app/api/<resource>.py`; mount
 routers from `app/main.py`. Keep configuration parsing in `app/core/config.py`.
-Do not add persistence or background-worker directories until those features
-are explicitly introduced.
+Keep Pydantic request/response contracts in `app/models`, parameterized SQLite
+access in `app/repositories`, schema initialization in `app/db.py`, and
+independently executable workers in `app/workers`.
 
 ---
 
@@ -63,8 +68,9 @@ must remain importable as `app.main:app`.
 
 <!-- Link to well-organized modules as examples -->
 
-Current example: `backend/app/api/health.py` exposes `GET /api/health`, and
-`backend/tests/test_health.py` verifies its response contract.
+Examples: `backend/app/api/health.py` exposes `GET /api/health`;
+`backend/app/api/crawler.py` exposes crawler task resources; and
+`backend/app/workers/crawler_worker.py` runs separately from FastAPI.
 
 ## Scenario: Minimal health API contract
 

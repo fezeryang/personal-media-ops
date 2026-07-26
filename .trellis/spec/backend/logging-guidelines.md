@@ -6,46 +6,34 @@
 
 ## Overview
 
-<!--
-Document your project's logging conventions here.
-
-Questions to answer:
-- What logging library do you use?
-- What are the log levels and when to use each?
-- What should be logged?
-- What should NOT be logged (PII, secrets)?
--->
-
-(To be filled by the team)
+Crawler stdout and stderr are merged and appended in real time to one
+service-generated log file per task. API log access is bounded and validates
+the stored path against the configured task path.
 
 ---
 
 ## Log Levels
 
-<!-- When to use each level: debug, info, warn, error -->
-
-(To be filled by the team)
+The external runner owns crawler line content. Worker lifecycle failures are
+stored in `error_message`; systemd/journald records worker process failures.
 
 ---
 
 ## Structured Logging
 
-<!-- Log format, required fields -->
-
-(To be filled by the team)
+Crawler log files are plain UTF-8-compatible text at
+`<MEDIAOPS_LOG_ROOT>/crawler/{task_id}.log`.
 
 ---
 
 ## What to Log
 
-<!-- Important events to log -->
-
-(To be filled by the team)
+Preserve runner stdout/stderr in arrival order. Persist PID, state transitions,
+exit code failures, completion time, and interruption recovery in SQLite.
 
 ---
 
 ## What NOT to Log
 
-<!-- Sensitive data, PII, secrets -->
-
-(To be filled by the team)
+Do not log cookies, browser profile data, environment variables, command
+credentials, or QR image bytes. Never accept a caller-provided log path.

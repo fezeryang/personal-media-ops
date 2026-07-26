@@ -1,0 +1,17 @@
+[Unit]
+Description=Personal Media Ops crawler worker
+After=network.target
+
+[Service]
+Type=simple
+User=mediaops
+Group=mediaops
+WorkingDirectory=/opt/personal-media-ops/backend
+EnvironmentFile=/opt/personal-media-ops/backend/.env
+ExecStart=/opt/personal-media-ops/backend/.venv/bin/python -m app.workers.crawler_worker
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

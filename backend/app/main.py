@@ -1,18 +1,41 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.crawler import router as crawler_router
 from app.api.health import router as health_router
-from app.core.config import settings
+from app.core.config import Settings, settings
+from app.repositories.crawler_tasks import CrawlerTaskRepository
 
 
-app = FastAPI(title="personal-media-ops-api", version="0.1.0")
+def create_app(config: Settings | None = None) -> FastAPI:
+    active_settings = config or settings
+    repository = CrawlerTaskRepository(active_settings.database_path)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=list(settings.frontend_origins),
-    allow_credentials=True,
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        repository.initialize()
+        yield
 
-app.include_router(health_router, prefix="/api")
+    application = FastAPI(
+        title="personal-media-ops-api",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+    application.state.settings = active_settings
+    application.state.crawler_repository = repository
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(active_settings.frontend_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+    application.include_router(health_router, prefix="/api")
+    application.include_router(crawler_router, prefix="/api")
+    return application
+
+
+app = create_app()
