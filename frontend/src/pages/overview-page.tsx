@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader } from "../components/ui/card";
 import { TaskTable } from "../features/crawler/components/task-table";
 import {
   useCrawlerTasksQuery,
+  useCrawlerCapabilitiesQuery,
   useHealthQuery,
 } from "../features/crawler/hooks/use-crawler-queries";
 import {
@@ -56,10 +57,25 @@ const engineTone = {
 
 export function OverviewPage() {
   const tasksQuery = useCrawlerTasksQuery();
+  const capabilitiesQuery = useCrawlerCapabilitiesQuery();
   const healthQuery = useHealthQuery();
   const tasks = tasksQuery.data ?? [];
   const metrics = buildTaskMetrics(tasks);
-  const engine = getEngineState(tasks, healthQuery.data?.status === "ok");
+  const capabilities = capabilitiesQuery.data?.platforms ?? [];
+  const engine = getEngineState(
+    tasks,
+    healthQuery.data?.status === "ok",
+    capabilities,
+  );
+  const enabledPlatforms = capabilities
+    .filter((platform) => platform.enabled)
+    .map((platform) => platform.display_name);
+  const verifiedPlatforms = capabilities
+    .filter(
+      (platform) =>
+        platform.enabled && platform.verification_status === "verified",
+    )
+    .map((platform) => platform.display_name);
 
   return (
     <div className="space-y-7">
@@ -132,7 +148,7 @@ export function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent className="pt-4">
-            <h2 className="font-display text-xl font-semibold">B 站搜索引擎</h2>
+            <h2 className="font-display text-xl font-semibold">浏览器采集引擎</h2>
             <p className="mt-2 text-sm leading-6 text-muted">{engine.detail}</p>
             <div className="mt-6 space-y-3 border-t border-line pt-5">
               <div className="flex items-center justify-between text-xs">
@@ -140,8 +156,16 @@ export function OverviewPage() {
                 <span className="font-semibold text-ink">单任务串行</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted">已验证范围</span>
-                <span className="font-semibold text-ink">B 站关键词搜索</span>
+                <span className="text-muted">已启用平台</span>
+                <span className="text-right font-semibold text-ink">
+                  {enabledPlatforms.join("、") || "能力接口未返回"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted">真实验证</span>
+                <span className="text-right font-semibold text-ink">
+                  {verifiedPlatforms.join("、") || "暂无"}
+                </span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="flex items-center gap-1.5 text-muted">

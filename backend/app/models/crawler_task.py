@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.crawler_platform import CrawlerResultItem
+
 TaskStatus = Literal[
     "pending",
     "running",
@@ -15,8 +17,12 @@ TaskStatus = Literal[
 class CreateCrawlerTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    platform: Literal["bili"]
-    crawler_type: Literal["search"]
+    platform: str = Field(min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9_-]+$")
+    crawler_type: str = Field(
+        min_length=2,
+        max_length=32,
+        pattern=r"^[a-z][a-z0-9_-]+$",
+    )
     keywords: str = Field(min_length=1, max_length=200)
     requested_count: int = Field(ge=1, le=20)
 
@@ -52,7 +58,7 @@ class CrawlerTaskResponse(BaseModel):
 
 
 class CrawlerResultsResponse(BaseModel):
-    items: list[object]
+    items: list[CrawlerResultItem]
     offset: int
     limit: int
     next_offset: int

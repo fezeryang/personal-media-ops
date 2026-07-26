@@ -3,9 +3,13 @@ from concurrent.futures import ThreadPoolExecutor
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 
 
-def seed_task(repository: CrawlerTaskRepository, keywords: str) -> dict[str, object]:
+def seed_task(
+    repository: CrawlerTaskRepository,
+    keywords: str,
+    platform: str = "bili",
+) -> dict[str, object]:
     return repository.create(
-        platform="bili",
+        platform=platform,
         crawler_type="search",
         keywords=keywords,
         login_type="qrcode",
@@ -14,6 +18,34 @@ def seed_task(repository: CrawlerTaskRepository, keywords: str) -> dict[str, obj
         log_path=f"/logs/{keywords}.log",
         qrcode_path=f"/qrcodes/{keywords}.png",
     )
+
+
+def test_repository_accepts_registered_platforms(
+    repository: CrawlerTaskRepository,
+) -> None:
+    xhs = repository.create(
+        platform="xhs",
+        crawler_type="search",
+        keywords="xhs",
+        login_type="qrcode",
+        requested_count=1,
+        output_dir="/output/xhs",
+        log_path="/logs/xhs.log",
+        qrcode_path="/qrcodes/xhs.png",
+    )
+    dy = repository.create(
+        platform="dy",
+        crawler_type="search",
+        keywords="dy",
+        login_type="qrcode",
+        requested_count=1,
+        output_dir="/output/dy",
+        log_path="/logs/dy.log",
+        qrcode_path="/qrcodes/dy.png",
+    )
+
+    assert xhs["platform"] == "xhs"
+    assert dy["platform"] == "dy"
 
 
 def test_only_one_pending_task_can_be_claimed(
@@ -50,8 +82,8 @@ def test_interrupted_active_tasks_are_failed(
 def test_concurrent_claimers_cannot_start_two_tasks(
     repository: CrawlerTaskRepository,
 ) -> None:
-    seed_task(repository, "first")
-    seed_task(repository, "second")
+    seed_task(repository, "first", platform="xhs")
+    seed_task(repository, "second", platform="dy")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         claimed = list(executor.map(lambda _: repository.claim_next(), range(2)))

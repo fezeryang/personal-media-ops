@@ -7,6 +7,7 @@ import {
 import {
   cancelCrawlerTask,
   createCrawlerTask,
+  getCrawlerCapabilities,
   getCrawlerTask,
   getCrawlerTaskLogs,
   getCrawlerTaskQrcode,
@@ -20,6 +21,7 @@ import { getHealth } from "../../../api/health";
 import { isActiveTask } from "../lib/task";
 
 export const crawlerQueryKeys = {
+  capabilities: ["crawler-capabilities"] as const,
   all: ["crawler-tasks"] as const,
   detail: (taskId: string) => ["crawler-tasks", taskId] as const,
   logs: (taskId: string) => ["crawler-tasks", taskId, "logs"] as const,
@@ -27,6 +29,15 @@ export const crawlerQueryKeys = {
   results: (taskId: string, offset: number, limit: number) =>
     ["crawler-tasks", taskId, "results", offset, limit] as const,
 };
+
+export function useCrawlerCapabilitiesQuery() {
+  return useQuery({
+    queryKey: crawlerQueryKeys.capabilities,
+    queryFn: ({ signal }) => getCrawlerCapabilities(signal),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+}
 
 export function useHealthQuery() {
   return useQuery({

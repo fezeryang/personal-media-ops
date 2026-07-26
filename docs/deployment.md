@@ -27,6 +27,7 @@
 
 ```bash
 sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops
+sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops/bin
 sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops/crawler-output/tasks
 sudo install -d -o mediaops -g mediaops -m 0750 /var/lib/mediaops/qrcodes
 sudo install -d -o mediaops -g mediaops -m 0750 /var/log/mediaops/crawler
@@ -43,6 +44,7 @@ sudo install -d -o root -g root -m 0755 /www/wwwroot/ops.fezern8n.com
 
 ```dotenv
 MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db
+MEDIAOPS_ENABLED_PLATFORMS=bili
 MEDIACRAWLER_PYTHON=/opt/mediacrawler/.venv/bin/python
 MEDIACRAWLER_RUNNER=/var/lib/mediaops/bin/run_mediacrawler.py
 MEDIAOPS_OUTPUT_ROOT=/var/lib/mediaops/crawler-output
@@ -65,18 +67,23 @@ uv run pytest
 
 ## Database Initialization and Migration Policy
 
-当前应用启动时使用幂等的 `CREATE TABLE IF NOT EXISTS` /
-`CREATE INDEX IF NOT EXISTS` 初始化 SQLite，没有正式迁移工具。首次初始化可执行：
+SQLite schema 由 `backend/migrations/` 中的 Alembic revision 管理。首次初始化或
+现有旧库升级都使用同一命令：
 
 ```bash
 cd /opt/personal-media-ops/backend
-uv run python -c \
-  "from app.core.config import settings; from app.repositories.crawler_tasks import CrawlerTaskRepository; CrawlerTaskRepository(settings.database_path).initialize()"
+MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db \
+  uv run alembic upgrade head
 ```
 
-未来首次结构变化前必须先建立版本化迁移机制，不得只改模型或初始化器。迁移必须兼容
-已有数据；生产顺序必须是备份、迁移、代码发布、验证。数据库恢复属于破坏性 root
-操作，本仓库不会自动执行。
+`0001_legacy_tasks` 会创建空库，或在列结构完全匹配时接管原 B 站任务表；
+`0002_multiplatform_tasks` 将平台约束扩展为 `bili/xhs/dy`，逐列复制原记录，因此
+B 站任务 ID、状态、时间、计数和路径保持不变。应用启动只校验当前 revision，不会
+静默执行迁移。
+
+生产迁移顺序固定为：确认无未审查变更 → SQLite 一致性备份 → 拉取目标代码 → 测试与
+前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查。数据库恢复属于
+破坏性 root 操作，本仓库不会自动执行。
 
 ## Frontend Build
 
@@ -98,11 +105,12 @@ npm run build
 
 ## Worker and Runner Contract
 
-Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `shell=True`。Runner
-必须支持：
+Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `shell=True`。仓库审查
+源为 `scripts/crawler/run_mediacrawler.py`，运行时固定路径仍为
+`/var/lib/mediaops/bin/run_mediacrawler.py`。Runner 必须支持：
 
 ```text
---platform bili
+--platform bili|xhs|dy
 --crawler-type search
 --keywords <text>
 --login-type qrcode
@@ -116,7 +124,23 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
-`waiting_login` 任务标记为异常中断。
+`waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner
+在配置层和 MediaCrawler CLI 参数层都固定关闭代理。保持既有 B 站参数契约意味着
+只发布应用代码不会要求先替换生产 Runner。
+
+仓库 Runner 不属于 MediaCrawler 核心源码。首次启用小红书或抖音 Adapter 前，先以
+`mediaops` 身份把已审查版本安装到固定运行路径并验证语法：
+
+```bash
+cd /opt/personal-media-ops
+python3 -m py_compile scripts/crawler/run_mediacrawler.py
+install -m 0750 scripts/crawler/run_mediacrawler.py \
+  /var/lib/mediaops/bin/run_mediacrawler.py
+```
+
+不要编辑 `/opt/mediacrawler`。`MEDIAOPS_ENABLED_PLATFORMS` 默认只含 `bili`。
+小红书或抖音必须在 Runner、扫码登录、输出和结果转换完成真实验证后，才可在 `.env`
+中分别加入 `xhs` 或 `dy`；本阶段代码完成不等同于生产验证。
 
 ## systemd
 
@@ -192,18 +216,29 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
+如果待发布 diff 包含 Alembic、模型或 schema 路径，默认会在备份前停止。审查迁移与
+回滚方案后，才可显式授权：
+
+```bash
+scripts/server/deploy.sh \
+  --target-ref <origin-main-sha> \
+  --allow-migrations \
+  --execute
+```
+
 执行顺序：
 
 ```text
 身份和工作树检查
 → fetch/固定 origin/main 目标
-→ fast-forward 与迁移检查
+→ fast-forward 与迁移授权检查
 → SQLite 备份
 → git pull --ff-only
 → uv sync --frozen
 → 后端 pytest
 → npm ci
 → 前端 lint/test/build
+→ 已授权时执行 Alembic upgrade 并校验 head
 → restricted helper finalize
 → 内部健康检查
 → 公网健康检查
@@ -216,7 +251,9 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 sudo -n /usr/local/sbin/mediaops-release finalize
 ```
 
-任何前置 gate 失败都不得调用 helper。helper 或发布后健康检查失败时可能存在部分
+迁移只会在数据库备份、后端测试和前端构建全部成功后执行；未提供
+`--allow-migrations` 时不得执行。任何前置 gate 失败都不得调用 helper。helper 或
+发布后健康检查失败时可能存在部分
 激活状态，必须报告失败并先诊断，不能宣称发布成功。
 
 ## Restricted Helper Source
@@ -267,7 +304,8 @@ curl -fsS https://ops.fezern8n.com/api/health
 
 部署前备份位于 `/var/backups/mediaops/<UTC timestamp>/`，包含 SQLite 一致性副本、
 元数据和 SHA-256 校验值。代码回滚优先使用经过审查的 Git revert 或已知良好版本；
-禁止在生产运行 `git reset --hard`。数据库恢复必须先停止写入方并使用单独的人工
-审查方案。
+禁止在生产运行 `git reset --hard`。`0002` 只有在数据库不存在 `xhs/dy` 任务时才
+允许降级到 `0001`；否则应保持新 schema 并回滚应用代码。数据库恢复必须先停止 API
+和 Worker 写入方，并使用单独授权、校验备份的人工审查方案。
 
 完整 SSH、日志和权限说明见 [server-operations.md](server-operations.md)。

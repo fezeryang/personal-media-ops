@@ -21,6 +21,7 @@ def worker_settings(base: Settings, runner: Path) -> Settings:
         node_binary=None,
         node_bin_dir=base.node_bin_dir,
         crawler_poll_interval_seconds=0.02,
+        enabled_platforms=base.enabled_platforms,
     )
 
 
@@ -28,15 +29,17 @@ def seed_task(
     repository: CrawlerTaskRepository,
     settings: Settings,
     keywords: str = "AI Agent",
+    platform: str = "bili",
+    requested_count: int = 2,
 ) -> dict[str, object]:
     task_id = repository.new_id()
     return repository.create(
         task_id=task_id,
-        platform="bili",
+        platform=platform,
         crawler_type="search",
         keywords=keywords,
         login_type="qrcode",
-        requested_count=2,
+        requested_count=requested_count,
         output_dir=str(settings.output_root / "tasks" / task_id),
         log_path=str(settings.log_root / "crawler" / f"{task_id}.log"),
         qrcode_path=str(settings.qrcode_root / f"{task_id}.png"),
@@ -56,10 +59,16 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
 args, _ = parser.parse_known_args()
 output = Path(args.output_dir)
-output.mkdir(parents=True, exist_ok=True)
-(output / "items.jsonl").write_text('{"id": 1}\\n{"id": 2}\\n', encoding="utf-8")
+store_names = {"bili": "bilibili", "xhs": "xhs", "dy": "douyin"}
+result_dir = output / store_names[args.platform] / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    '{"video_id": "1"}\\n{"video_id": "2"}\\n{"video_id": "3"}\\n',
+    encoding="utf-8",
+)
 print("crawler completed", flush=True)
 """.strip(),
         encoding="utf-8",
@@ -123,7 +132,7 @@ for _ in range(100):
     if continue_file.exists():
         break
     time.sleep(0.05)
-print("login completed", flush=True)
+print("Login successful then wait for redirect", flush=True)
 """.strip(),
         encoding="utf-8",
     )
@@ -141,6 +150,10 @@ print("login completed", flush=True)
             await asyncio.sleep(0.01)
         else:
             pytest.fail("worker never exposed waiting_login")
+        await asyncio.sleep(0.05)
+        still_waiting = repository.get(str(task["id"]))
+        assert still_waiting is not None
+        assert still_waiting["status"] == "waiting_login"
         (settings.output_root / "tasks" / str(task["id"]) / "continue").touch()
         await worker_task
 
@@ -196,11 +209,18 @@ def test_second_worker_lock_is_rejected(test_settings: Settings) -> None:
         pass
 
 
+@pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
 def test_worker_command_uses_only_fixed_executables_and_service_flags(
     test_settings: Settings,
     repository: CrawlerTaskRepository,
+    platform: str,
 ) -> None:
-    task = seed_task(repository, test_settings, keywords="--not-an-option")
+    task = seed_task(
+        repository,
+        test_settings,
+        keywords="--not-an-option",
+        platform=platform,
+    )
     worker = CrawlerWorker(repository, test_settings)
     output_dir = test_settings.output_root / "tasks" / str(task["id"])
     qrcode_path = test_settings.qrcode_root / f"{task['id']}.png"
@@ -211,7 +231,9 @@ def test_worker_command_uses_only_fixed_executables_and_service_flags(
         str(test_settings.mediacrawler_python),
         str(test_settings.mediacrawler_runner),
     ]
+    assert command[command.index("--platform") + 1] == platform
     assert "--keywords=--not-an-option" in command
     assert command[command.index("--max-concurrency-num") + 1] == "1"
     assert command[command.index("--enable-comments") + 1] == "false"
     assert command[command.index("--enable-sub-comments") + 1] == "false"
+    assert "--enable-proxy" not in command

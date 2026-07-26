@@ -28,15 +28,21 @@ with HTTP route modules in `app/api` and environment-backed shared settings in
 backend/
 ├── app/
 │   ├── api/
+│   ├── crawler/
 │   ├── models/
 │   ├── core/
 │   ├── repositories/
 │   ├── workers/
 │   ├── db.py
 │   └── main.py
+├── migrations/
+│   └── versions/
 ├── tests/
+├── alembic.ini
 ├── pyproject.toml
 └── .env.example
+scripts/crawler/
+└── run_mediacrawler.py
 deploy/systemd/
 └── mediaops-api.service.example
 ```
@@ -49,9 +55,12 @@ deploy/systemd/
 
 Keep the API contract close to its route in `app/api/<resource>.py`; mount
 routers from `app/main.py`. Keep configuration parsing in `app/core/config.py`.
-Keep Pydantic request/response contracts in `app/models`, parameterized SQLite
-access in `app/repositories`, schema initialization in `app/db.py`, and
-independently executable workers in `app/workers`.
+Keep Pydantic request/response contracts in `app/models`, platform Adapters and
+the registry in `app/crawler`, parameterized SQLite access in
+`app/repositories`, runtime schema checks in `app/db.py`, Alembic revisions in
+`migrations/versions`, and independently executable workers in `app/workers`.
+The reviewed external-process bridge lives in `scripts/crawler`; it is not
+MediaCrawler core source.
 
 ---
 

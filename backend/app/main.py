@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.crawler import router as crawler_router
 from app.api.health import router as health_router
 from app.core.config import Settings, settings
+from app.crawler.registry import platform_registry
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 
 
 def create_app(config: Settings | None = None) -> FastAPI:
     active_settings = config or settings
+    platform_registry.list_capabilities(active_settings.enabled_platforms)
     repository = CrawlerTaskRepository(active_settings.database_path)
 
     @asynccontextmanager

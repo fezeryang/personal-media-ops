@@ -30,13 +30,15 @@ trap 'deployment_failure "$?" "$LINENO"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--dry-run | --execute]
+Usage: deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations] [--dry-run | --execute]
 
 Run a controlled deployment of GitHub main through the restricted release helper.
 
 Options:
   --host SSH_ALIAS  SSH config alias (default: MEDIAOPS_SSH_HOST or mediaops-prod)
   --target-ref REF  Expected origin/main commit or ref (default: origin/main)
+  --allow-migrations
+                    Permit reviewed Alembic migrations after backup and tests
   --dry-run          Print the deployment plan without connecting (default)
   --execute          Back up, pull, test, build, finalize, and verify
   -h, --help         Show this help
@@ -52,7 +54,7 @@ print_plan() {
 Phases:
   confirm SSH identity and production worktree
   fetch origin/main and resolve the target ref
-  reject non-fast-forward updates and database migrations
+  reject non-fast-forward updates and unauthorized database migrations
   record the old commit
   create a consistent SQLite backup
   git pull --ff-only origin main
@@ -62,6 +64,7 @@ Phases:
   frontend lint
   frontend test
   frontend build
+  uv run alembic upgrade head (only for explicitly authorized migrations)
   restricted release helper finalize
   internal API health check
   public frontend and API health checks
@@ -97,6 +100,7 @@ host_override=""
 target_ref="origin/main"
 execute=false
 dry_run=false
+allow_migrations=false
 
 while (($# > 0)); do
     case "$1" in
@@ -112,6 +116,10 @@ while (($# > 0)); do
             ;;
         --execute)
             execute=true
+            shift
+            ;;
+        --allow-migrations)
+            allow_migrations=true
             shift
             ;;
         --dry-run)
@@ -142,6 +150,11 @@ printf 'Target ref: %s\n' "$target_ref"
 printf 'Current commit: inspect during execute preflight\n'
 printf 'Target commit: resolve during execute preflight\n'
 printf 'Database migration: inspect during execute preflight\n'
+if [[ "$allow_migrations" == true ]]; then
+    printf 'Migration authorization: granted\n'
+else
+    printf 'Migration authorization: required when detected\n'
+fi
 printf 'Database backup: required before pull\n'
 printf 'Tests: uv sync --frozen; backend pytest; frontend npm ci, lint, test, build\n'
 printf 'Helper path: %s\n' "$MEDIAOPS_RELEASE_HELPER"
@@ -158,9 +171,11 @@ mediaops_require_ssh "$host"
 
 DEPLOY_STAGE="fetch-and-target-validation"
 preflight="$(
-    mediaops_ssh "$host" "bash -s -- ${target_ref}" <<'REMOTE'
+    mediaops_ssh "$host" \
+        "bash -s -- ${target_ref} ${allow_migrations}" <<'REMOTE'
 set -Eeuo pipefail
 target_ref="$1"
+allow_migrations="$2"
 repository="/opt/personal-media-ops"
 node_bin_dir="/www/server/nodejs/v22.22.3/bin"
 release_helper="/usr/local/sbin/mediaops-release"
@@ -243,13 +258,14 @@ printf 'old_commit=%s\n' "$old_commit"
 printf 'target_commit=%s\n' "$target_commit"
 printf 'target_ref=%s\n' "$target_ref"
 printf 'database_migration=%s\n' "$migration_state"
+printf 'migration_authorized=%s\n' "$allow_migrations"
 printf 'database_backup=pending\n'
 printf 'tests=backend-pytest,frontend-lint,frontend-test,frontend-build\n'
 printf 'helper_version=%s\n' "$helper_version"
 printf 'helper_subcommand=finalize\n'
 
-if [[ "$migration_state" == "yes" ]]; then
-    printf 'ERROR: database migration or schema paths require a reviewed migration plan:\n%s\n' \
+if [[ "$migration_state" == "yes" && "$allow_migrations" != "true" ]]; then
+    printf 'ERROR: database migration or schema paths require --allow-migrations after review:\n%s\n' \
         "$migration_paths" >&2
     exit 4
 fi
@@ -260,11 +276,15 @@ printf '%s\n' "$preflight"
 old_commit="$(awk -F= '$1 == "old_commit" {print $2}' <<<"$preflight")"
 target_commit="$(awk -F= '$1 == "target_commit" {print $2}' <<<"$preflight")"
 migration_state="$(awk -F= '$1 == "database_migration" {print $2}' <<<"$preflight")"
+migration_authorized="$(
+    awk -F= '$1 == "migration_authorized" {print $2}' <<<"$preflight"
+)"
 helper_version="$(awk -F= '$1 == "helper_version" {print $2}' <<<"$preflight")"
 mediaops_validate_full_commit "$old_commit"
 mediaops_validate_full_commit "$target_commit"
-[[ "$migration_state" == "no" ]] ||
-    deployment_abort "database migration detection did not pass"
+if [[ "$migration_state" == "yes" && "$migration_authorized" != "true" ]]; then
+    deployment_abort "database migration was not explicitly authorized"
+fi
 [[ "$helper_version" == "1" ]] ||
     deployment_abort "release helper version validation did not pass"
 
@@ -273,6 +293,7 @@ printf 'Target server: %s\n' "$host"
 printf 'Current commit: %s\n' "$old_commit"
 printf 'Target commit: %s\n' "$target_commit"
 printf 'Database migration: %s\n' "$migration_state"
+printf 'Migration authorization: %s\n' "$migration_authorized"
 printf 'Database backup: pending\n'
 printf 'Tests: backend pytest; frontend lint, test, build\n'
 printf 'Helper call after all gates: finalize\n'
@@ -283,11 +304,15 @@ printf '%s\n' "$backup_output"
 printf 'Database backup: completed\n'
 
 DEPLOY_STAGE="git-sync-and-build"
-mediaops_ssh "$host" "bash -s -- ${target_commit}" <<'REMOTE'
+mediaops_ssh "$host" \
+    "bash -s -- ${target_commit} ${migration_state} ${migration_authorized}" <<'REMOTE'
 set -Eeuo pipefail
 target_commit="$1"
+migration_state="$2"
+migration_authorized="$3"
 repository="/opt/personal-media-ops"
 node_bin_dir="/www/server/nodejs/v22.22.3/bin"
+database_path="/var/lib/mediaops/mediaops.db"
 remote_stage="initialization"
 export PATH="${node_bin_dir}:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -367,6 +392,21 @@ remote_stage="frontend-build"
     printf 'ERROR: frontend build did not create dist/index.html\n' >&2
     exit 3
 }
+
+if [[ "$migration_state" == "yes" ]]; then
+    [[ "$migration_authorized" == "true" ]] || {
+        printf 'ERROR: migration stage reached without authorization\n' >&2
+        exit 4
+    }
+    remote_stage="database-migration"
+    (
+        cd -- "${repository}/backend"
+        MEDIAOPS_DATABASE_PATH="$database_path" uv run alembic upgrade head
+        MEDIAOPS_DATABASE_PATH="$database_path" uv run python -c \
+            'from app.core.config import settings; from app.database_migrations import require_database_current; require_database_current(settings.database_path)'
+    )
+fi
+
 printf '%s\n' "$target_commit" > "${repository}/frontend/dist/.mediaops-release"
 printf 'remote_build=completed\n'
 REMOTE
@@ -398,7 +438,8 @@ DEPLOY_STAGE="complete"
 mediaops_stage "Deployment succeeded"
 printf 'Old commit: %s\n' "$old_commit"
 printf 'New commit: %s\n' "$target_commit"
-printf 'Database migration: no\n'
+printf 'Database migration: %s\n' "$migration_state"
+printf 'Migration authorization: %s\n' "$migration_authorized"
 printf 'Database backup: completed\n'
 printf 'Helper subcommand: finalize\n'
 printf 'Deployment success: yes\n'

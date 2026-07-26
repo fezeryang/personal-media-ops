@@ -1,52 +1,66 @@
 import { normalizeCrawlerResult } from "./result-fields";
 
 describe("crawler result normalization", () => {
-  it("normalizes common MediaCrawler Bilibili fields", () => {
+  it("formats the unified crawler result contract", () => {
     expect(
       normalizeCrawlerResult({
+        platform: "bili",
+        content_id: "BV123",
+        content_type: "video",
         title: "A useful video",
-        nickname: "Uploader",
-        video_url: "https://www.bilibili.com/video/BV123",
-        cover: "https://i.example.test/cover.jpg",
-        video_play_count: "1.2万",
-        liked_count: 456,
-        collected_count: "78",
-        video_comment: 9,
-        publish_time: "2026-07-26 18:00:00",
+        description: null,
+        author_name: "Uploader",
+        content_url: "https://www.bilibili.com/video/BV123",
+        cover_url: "https://i.example.test/cover.jpg",
+        published_at: 1700000000,
         source_keyword: "AI Agent",
+        metrics: {
+          play_count: 12000,
+          like_count: 456,
+          favorite_count: 78,
+          comment_count: 9,
+          share_count: 3,
+        },
       }),
     ).toMatchObject({
       title: "A useful video",
       author: "Uploader",
-      videoUrl: "https://www.bilibili.com/video/BV123",
+      contentUrl: "https://www.bilibili.com/video/BV123",
       coverUrl: "https://i.example.test/cover.jpg",
-      playCount: "1.2万",
+      playCount: "12,000",
       likeCount: "456",
       favoriteCount: "78",
       commentCount: "9",
-      publishedAt: "2026-07-26 18:00:00",
+      publishedAt: 1700000000,
       sourceKeyword: "AI Agent",
     });
-  });
-
-  it("constructs a safe Bilibili URL from bvid", () => {
-    expect(normalizeCrawlerResult({ bvid: "BV1AB411C7M9" }).videoUrl).toBe(
-      "https://www.bilibili.com/video/BV1AB411C7M9",
-    );
   });
 
   it("rejects unsafe URLs and degrades missing fields", () => {
     expect(
       normalizeCrawlerResult({
+        platform: "xhs",
+        content_id: "note-1",
+        content_type: "note",
         title: "<img src=x onerror=alert(1)>",
-        video_url: "javascript:alert(1)",
-        cover: "data:text/html,bad",
-        bvid: "../unsafe",
+        description: null,
+        author_name: null,
+        content_url: "javascript:alert(1)",
+        cover_url: "data:text/html,bad",
+        published_at: null,
+        source_keyword: null,
+        metrics: {
+          play_count: null,
+          like_count: null,
+          favorite_count: null,
+          comment_count: null,
+          share_count: null,
+        },
       }),
     ).toEqual({
       title: "<img src=x onerror=alert(1)>",
       author: "未知作者",
-      videoUrl: null,
+      contentUrl: null,
       coverUrl: null,
       playCount: "—",
       likeCount: "—",

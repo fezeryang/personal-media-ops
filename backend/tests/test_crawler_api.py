@@ -1,18 +1,27 @@
 import sqlite3
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.main import create_app
+from tests.alembic_utils import run_alembic_command
 
 
-def create_task(client: TestClient, keywords: str = "AI Agent") -> dict[str, object]:
+def create_task(
+    client: TestClient,
+    keywords: str = "AI Agent",
+    *,
+    platform: str = "bili",
+    requested_count: int = 20,
+) -> dict[str, object]:
     response = client.post(
         "/api/crawler/tasks",
         json={
-            "platform": "bili",
+            "platform": platform,
             "crawler_type": "search",
             "keywords": keywords,
-            "requested_count": 20,
+            "requested_count": requested_count,
         },
     )
     assert response.status_code == 201
@@ -33,13 +42,60 @@ def test_create_and_list_crawler_tasks(client: TestClient) -> None:
     assert [task["id"] for task in listing.json()] == [second["id"], first["id"]]
 
 
+def test_capabilities_report_registry_and_global_limit(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/crawler/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["max_concurrent_tasks"] == 1
+    assert [
+        (item["platform"], item["enabled"], item["verification_status"])
+        for item in response.json()["platforms"]
+    ] == [
+        ("bili", True, "verified"),
+        ("xhs", True, "code_ready"),
+        ("dy", True, "code_ready"),
+    ]
+
+
+def test_create_supports_enabled_xhs_and_douyin(
+    client: TestClient,
+) -> None:
+    xhs = create_task(client, platform="xhs")
+    dy = create_task(client, platform="dy")
+
+    assert xhs["platform"] == "xhs"
+    assert dy["platform"] == "dy"
+
+
+def test_create_rejects_disabled_platform(
+    test_settings: Settings,
+) -> None:
+    bili_only = replace(test_settings, enabled_platforms=("bili",))
+    run_alembic_command(bili_only.database_path, "upgrade", "head")
+    with TestClient(create_app(bili_only)) as client:
+        response = client.post(
+            "/api/crawler/tasks",
+            json={
+                "platform": "xhs",
+                "crawler_type": "search",
+                "keywords": "test",
+                "requested_count": 1,
+            },
+        )
+
+    assert response.status_code == 409
+    assert "not enabled" in response.json()["detail"].lower()
+
+
 def test_create_rejects_unsupported_platform_and_extra_controls(
     client: TestClient,
 ) -> None:
     unsupported = client.post(
         "/api/crawler/tasks",
         json={
-            "platform": "xhs",
+            "platform": "youtube",
             "crawler_type": "search",
             "keywords": "test",
             "requested_count": 1,
@@ -88,9 +144,19 @@ def test_results_are_paginated_without_loading_every_line(
 ) -> None:
     task = create_task(client)
     task_dir = test_settings.output_root / "tasks" / str(task["id"])
-    task_dir.mkdir(parents=True)
-    (task_dir / "results.jsonl").write_text(
-        "\n".join(f'{{"index": {index}}}' for index in range(5)) + "\n",
+    result_dir = task_dir / "bilibili" / "jsonl"
+    result_dir.mkdir(parents=True)
+    (result_dir / "search_contents_2026-07-26.jsonl").write_text(
+        "\n".join(
+            (
+                '{"video_id": "'
+                f'{index}", "title": "Video {index}", '
+                f'"video_play_count": "{index}"'
+                "}"
+            )
+            for index in range(5)
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -101,12 +167,78 @@ def test_results_are_paginated_without_loading_every_line(
 
     assert response.status_code == 200
     assert response.json() == {
-        "items": [{"index": 1}, {"index": 2}],
+        "items": [
+            {
+                "platform": "bili",
+                "content_id": "1",
+                "content_type": "video",
+                "title": "Video 1",
+                "description": None,
+                "author_name": None,
+                "content_url": None,
+                "cover_url": None,
+                "published_at": None,
+                "source_keyword": None,
+                "metrics": {
+                    "play_count": 1,
+                    "like_count": None,
+                    "favorite_count": None,
+                    "comment_count": None,
+                    "share_count": None,
+                },
+            },
+            {
+                "platform": "bili",
+                "content_id": "2",
+                "content_type": "video",
+                "title": "Video 2",
+                "description": None,
+                "author_name": None,
+                "content_url": None,
+                "cover_url": None,
+                "published_at": None,
+                "source_keyword": None,
+                "metrics": {
+                    "play_count": 2,
+                    "like_count": None,
+                    "favorite_count": None,
+                    "comment_count": None,
+                    "share_count": None,
+                },
+            },
+        ],
         "offset": 1,
         "limit": 2,
         "next_offset": 3,
         "has_more": True,
     }
+
+
+def test_results_are_capped_at_requested_count(
+    client: TestClient,
+    test_settings: Settings,
+) -> None:
+    task = create_task(client, requested_count=2)
+    result_dir = (
+        test_settings.output_root / "tasks" / str(task["id"]) / "bilibili" / "jsonl"
+    )
+    result_dir.mkdir(parents=True)
+    (result_dir / "search_contents_2026-07-26.jsonl").write_text(
+        "\n".join(
+            f'{{"video_id": "{index}", "title": "Video {index}"}}' for index in range(5)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = client.get(
+        f"/api/crawler/tasks/{task['id']}/results",
+        params={"offset": 0, "limit": 20},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 2
+    assert response.json()["has_more"] is False
 
 
 def test_result_path_traversal_in_database_is_rejected(

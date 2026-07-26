@@ -16,9 +16,13 @@ import { LogViewer } from "../features/crawler/components/log-viewer";
 import { QrcodePanel } from "../features/crawler/components/qrcode-panel";
 import { ResultBrowser } from "../features/crawler/components/result-browser";
 import { TaskStatusBadge } from "../features/crawler/components/task-status-badge";
-import { useCrawlerTaskQuery } from "../features/crawler/hooks/use-crawler-queries";
+import {
+  useCrawlerCapabilitiesQuery,
+  useCrawlerTaskQuery,
+} from "../features/crawler/hooks/use-crawler-queries";
 import {
   isActiveTask,
+  platformDisplayName,
   taskStatusLabel,
 } from "../features/crawler/lib/task";
 import { formatDateTime, shortTaskId } from "../lib/utils";
@@ -42,6 +46,7 @@ function DetailItem({ label, value }: DetailItemProps) {
 export function TaskDetailPage() {
   const { taskId = "" } = useParams();
   const taskQuery = useCrawlerTaskQuery(taskId);
+  const capabilitiesQuery = useCrawlerCapabilitiesQuery();
   const task = taskQuery.data;
 
   if (taskQuery.isPending) {
@@ -76,6 +81,10 @@ export function TaskDetailPage() {
   }
 
   const active = isActiveTask(task);
+  const platformName = platformDisplayName(
+    task.platform,
+    capabilitiesQuery.data?.platforms,
+  );
 
   return (
     <div className="space-y-7">
@@ -98,7 +107,7 @@ export function TaskDetailPage() {
               {task.keywords}
             </h1>
             <p className="mt-2 text-sm text-muted">
-              哔哩哔哩 · 关键词搜索 · 二维码登录
+              {platformName} · 关键词搜索 · 二维码登录
             </p>
           </div>
           {active ? <CancelTaskDialog taskId={task.id} /> : null}
@@ -174,7 +183,7 @@ export function TaskDetailPage() {
             </div>
           </CardContent>
         </Card>
-        <QrcodePanel task={task} />
+        <QrcodePanel task={task} platformName={platformName} />
       </section>
 
       <LogViewer taskId={task.id} active={active} />

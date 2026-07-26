@@ -1,8 +1,36 @@
 # Crawler task API contract
 
-All endpoints are under `/api`. This phase supports only Bilibili keyword
-search. The API never accepts commands, executable paths, cookies, output
-paths, comment controls, or concurrency controls.
+All endpoints are under `/api`. Platform availability comes from the backend
+Adapter registry; clients must not maintain an independent allowlist. The API
+never accepts commands, executable paths, cookies, output paths, proxy/comment
+controls, or concurrency controls.
+
+## Capabilities
+
+`GET /api/crawler/capabilities`
+
+```json
+{
+  "max_concurrent_tasks": 1,
+  "platforms": [
+    {
+      "platform": "bili",
+      "display_name": "哔哩哔哩",
+      "enabled": true,
+      "verification_status": "verified",
+      "crawler_types": [{"value": "search", "label": "关键词搜索"}],
+      "login_types": [{"value": "qrcode", "label": "二维码登录"}],
+      "requested_count": {"minimum": 1, "maximum": 20, "default": 20},
+      "supports_comments": false,
+      "supports_sub_comments": false
+    }
+  ]
+}
+```
+
+The registry contains `bili`, `xhs`, and `dy`. `bili` is production-verified.
+`xhs` and `dy` report `code_ready` and are disabled unless
+`MEDIAOPS_ENABLED_PLATFORMS` explicitly enables them after operator approval.
 
 ## Create a task
 
@@ -17,89 +45,66 @@ paths, comment controls, or concurrency controls.
 }
 ```
 
-Validation:
+`platform` must be registered and enabled; disabled platforms return HTTP 409
+and unsupported platforms return HTTP 422. `crawler_type` must be a capability
+advertised for that platform. Keywords contain 1–200 printable,
+non-whitespace characters; count is an integer from 1 through 20. Unknown
+fields are rejected.
 
-* `platform` must be `bili`.
-* `crawler_type` must be `search`.
-* `keywords` must contain 1–200 printable, non-whitespace characters.
-* `requested_count` must be an integer from 1 through 20.
-* Unknown fields are rejected with HTTP 422.
-* `login_type=qrcode`, crawler concurrency `1`, and disabled first-/second-level
-  comments are enforced by the service.
-
-The response is HTTP 201 with the created task. Initial status is `pending`.
+The service fixes `login_type=qrcode`, global crawler concurrency `1`, and
+disables first-/second-level comments and proxies. HTTP 201 returns the task
+with initial status `pending`.
 
 ## List and inspect tasks
 
-* `GET /api/crawler/tasks` returns all tasks newest first.
-* `GET /api/crawler/tasks/{task_id}` returns one task or HTTP 404.
+- `GET /api/crawler/tasks` returns tasks newest first.
+- `GET /api/crawler/tasks/{task_id}` returns one task or HTTP 404.
 
 Statuses are `pending`, `running`, `waiting_login`, `succeeded`, `failed`, and
-`cancelled`.
+`cancelled`. Existing Bilibili rows retain their IDs, fields, timestamps,
+paths, counts, and status through the multi-platform migration. Task responses
+still include worker-owned paths and PID for operational compatibility, but
+the workbench does not display them.
 
-Task fields:
+## Logs and QR code
 
-```json
-{
-  "id": "uuid",
-  "platform": "bili",
-  "crawler_type": "search",
-  "keywords": "AI Agent",
-  "login_type": "qrcode",
-  "status": "pending",
-  "requested_count": 20,
-  "actual_count": 0,
-  "output_dir": "/var/lib/mediaops/crawler-output/tasks/uuid",
-  "log_path": "/var/log/mediaops/crawler/uuid.log",
-  "qrcode_path": "/var/lib/mediaops/qrcodes/uuid.png",
-  "pid": null,
-  "error_message": null,
-  "created_at": "2026-07-26T00:00:00Z",
-  "started_at": null,
-  "finished_at": null,
-  "cancel_requested": false
-}
-```
+`GET /api/crawler/tasks/{task_id}/logs` accepts either `offset=N` (at most
+256 KiB, next position in `X-Next-Offset`) or `tail=N` (1–1000 lines). Paths
+are reconstructed inside the configured task log root.
 
-## Logs
+`GET /api/crawler/tasks/{task_id}/qrcode` returns `image/png` when ready.
+Before creation it returns HTTP 404 with the current task status and a
+not-ready detail. It never accepts or returns an arbitrary file path.
 
-`GET /api/crawler/tasks/{task_id}/logs`
-
-Query options:
-
-* `offset=N` reads at most 256 KiB from byte offset `N`; the
-  `X-Next-Offset` response header identifies the next byte.
-* `tail=N` returns the last `N` lines, where `N` is at most 1000.
-* `offset` and `tail` cannot be combined.
-
-The server uses only the log path generated for that task. Missing logs return
-HTTP 404; invalid stored paths return HTTP 409.
-
-## QR code
-
-`GET /api/crawler/tasks/{task_id}/qrcode`
-
-When available, this returns `image/png`. Before creation it returns HTTP 404:
-
-```json
-{
-  "status": "running",
-  "detail": "QR code is not available yet"
-}
-```
-
-The route never accepts or returns an arbitrary requested file.
-
-## Results
+## Unified results
 
 `GET /api/crawler/tasks/{task_id}/results?offset=0&limit=20`
 
-`offset` is a JSONL record offset. `limit` is from 1 through 100. Files are
-read incrementally from the task's own directory.
+The backend reads platform content JSONL incrementally, normalizes each record
+through its Adapter, and never returns more than `requested_count`. `limit` is
+1–100.
 
 ```json
 {
-  "items": [{"id": 1}],
+  "items": [{
+    "platform": "bili",
+    "content_id": "BV123",
+    "content_type": "video",
+    "title": "Example",
+    "description": null,
+    "author_name": "Uploader",
+    "content_url": "https://www.bilibili.com/video/BV123",
+    "cover_url": "https://example.test/cover.jpg",
+    "published_at": 1700000000,
+    "source_keyword": "AI Agent",
+    "metrics": {
+      "play_count": 100,
+      "like_count": 10,
+      "favorite_count": 5,
+      "comment_count": 2,
+      "share_count": 1
+    }
+  }],
   "offset": 0,
   "limit": 20,
   "next_offset": 1,
@@ -107,34 +112,17 @@ read incrementally from the task's own directory.
 }
 ```
 
-## Cancel
+Missing source fields become empty or `null`. Unsafe non-HTTP(S) content and
+cover URLs become `null`; raw HTML is never rendered.
 
-`POST /api/crawler/tasks/{task_id}/cancel`
+## Cancel and polling
 
-Only `pending`, `running`, and `waiting_login` tasks can be cancelled.
-Pending tasks become `cancelled` immediately. Active tasks set
-`cancel_requested=true`; the worker terminates the subprocess and finalizes
-the status. Invalid state transitions return HTTP 409.
+`POST /api/crawler/tasks/{task_id}/cancel` only accepts `pending`, `running`,
+or `waiting_login`. Pending tasks cancel immediately; active tasks set
+`cancel_requested` and the Worker terminates the subprocess.
 
-## Web workbench integration
-
-The React workbench consumes this contract without a separate frontend-only
-API:
-
-* The overview computes task totals and status counts from
-  `GET /api/crawler/tasks`; there is no statistics endpoint.
-* Active task details (`pending`, `running`, or `waiting_login`) are polled.
-  High-frequency detail polling stops after a terminal state.
-* The log viewer requests `tail=300`, renders the response as plain text, and
-  never inserts log content as HTML.
-* A QR-code HTTP 404 is treated as an expected "not ready" state. PNG responses
-  are held in a short-lived browser object URL and are not persisted.
-* The result browser uses `offset` and `limit=12`, and reads only one page at a
-  time. JSONL result fields are optional and are normalized defensively.
-* The create form sends exactly `platform`, `crawler_type`, `keywords`, and
-  `requested_count`. Fixed login and worker constraints are not user inputs.
-
-Although task responses include worker-owned filesystem paths and `pid` for
-operations use, the web workbench does not display those fields. External
-result links and cover URLs are accepted only when their scheme is HTTP or
-HTTPS.
+The workbench polls active details, bounded logs, and pending QR images. It
+stops high-frequency detail polling at terminal status and pages results with
+`offset`/`limit=12`. The create form is generated from the capabilities route
+and sends exactly `platform`, `crawler_type`, `keywords`, and
+`requested_count`.

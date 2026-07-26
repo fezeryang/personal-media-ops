@@ -8,10 +8,13 @@ add local rules, but may not weaken the safety requirements below.
 **Personal Media Ops**（个人互联网情报与内容运营平台）是用户自己的互联网信息获取、
 整理、分析与内容运营基础设施，不是普通爬虫面板。
 
-Current capabilities are Bilibili keyword collection, FastAPI APIs, SQLite task
-metadata, a single-concurrency Worker, external MediaCrawler integration, a
-React workbench, log/QR/result views, and same-origin Nginx deployment. Never
-present unfinished modules or synthetic data as working product behavior.
+Current capabilities are a platform Adapter registry, Bilibili keyword
+collection, FastAPI APIs, versioned SQLite migrations, a single-concurrency
+Worker, external MediaCrawler integration, a React workbench, log/QR/result
+views, and same-origin Nginx deployment. Xiaohongshu and Douyin adapters are
+code-ready but must not be described as production-verified until real
+operator validation is recorded. Never present unfinished modules or
+synthetic data as working product behavior.
 
 ## End-to-End Agent Workflow
 
@@ -42,6 +45,8 @@ uncommitted or edit generated JS/CSS on the server.
 - `docs/`: API, deployment, agent workflow, and server operations.
 - `deploy/systemd/`: reviewed service-unit examples; installation needs root.
 - `scripts/server/`: guarded SSH diagnostics, logs, backup, and deployment.
+- `scripts/crawler/`: reviewed MediaCrawler Runner adapter; not third-party
+  MediaCrawler source.
 - `infra/`: non-secret SSH and infrastructure examples.
 - `.agents/skills/`: repository-native Codex skills, including
   `mediaops-server`.
@@ -92,15 +97,19 @@ change only a model or initializer while claiming migration support. Migrations
 must preserve existing data, and deployment docs must specify backup,
 migration, application, and rollback order.
 
-This repository currently has no formal migration tool; it only applies
-idempotent initial SQLite DDL. Establishing versioned migrations is the next
-database-infrastructure task before the first schema change.
+Alembic is the formal migration mechanism under `backend/migrations/`. Runtime
+startup verifies that SQLite is at the current head and must not silently
+upgrade it. New schema changes require a forward migration, an existing-data
+test, and a reviewed downgrade or explicit irreversible-migration rationale.
 
 ## Production Operations
 
 Use `$mediaops-server` and `scripts/server/`. Default to read-only diagnosis.
 Before any mutation, state the target host, target commit, worktree state, and
 planned actions. Back up SQLite before database-affecting deployment.
+Deployments containing migration/schema paths require the explicit
+`--allow-migrations` gate; never add that flag without reviewing migration and
+rollback behavior.
 
 Do not edit production repository files, `/opt/mediacrawler`, browser login
 state, systemd, Nginx, or BaoTa configuration unless the task explicitly

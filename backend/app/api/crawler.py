@@ -1,4 +1,3 @@
-import json
 from collections import deque
 from pathlib import Path
 from typing import Annotated, Any
@@ -7,6 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from app.core.config import Settings
+from app.crawler.registry import (
+    PlatformDisabledError,
+    UnsupportedPlatformError,
+    platform_registry,
+)
+from app.crawler.results import (
+    CrawlerResultDataError,
+    read_normalized_result_page,
+)
+from app.models.crawler_platform import CrawlerCapabilitiesResponse
 from app.models.crawler_task import (
     CrawlerResultsResponse,
     CrawlerTaskResponse,
@@ -17,7 +26,7 @@ from app.repositories.crawler_tasks import (
     TaskNotCancellableError,
 )
 
-router = APIRouter(prefix="/crawler/tasks", tags=["crawler-tasks"])
+router = APIRouter(prefix="/crawler", tags=["crawler"])
 MAX_LOG_BYTES = 256 * 1024
 MAX_LOG_TAIL_LINES = 1000
 MAX_RESULTS_LIMIT = 100
@@ -59,12 +68,42 @@ def _validated_task_path(
     return expected
 
 
-@router.post("", response_model=CrawlerTaskResponse, status_code=201)
+@router.get("/capabilities", response_model=CrawlerCapabilitiesResponse)
+def get_crawler_capabilities(
+    settings: SettingsDependency,
+) -> CrawlerCapabilitiesResponse:
+    try:
+        capabilities = platform_registry.list_capabilities(settings.enabled_platforms)
+    except UnsupportedPlatformError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return CrawlerCapabilitiesResponse(
+        max_concurrent_tasks=1,
+        platforms=capabilities,
+    )
+
+
+@router.post("/tasks", response_model=CrawlerTaskResponse, status_code=201)
 def create_crawler_task(
     payload: CreateCrawlerTaskRequest,
     repository: RepositoryDependency,
     settings: SettingsDependency,
 ) -> dict[str, Any]:
+    try:
+        adapter = platform_registry.require_enabled(
+            payload.platform,
+            settings.enabled_platforms,
+        )
+    except UnsupportedPlatformError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except PlatformDisabledError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if payload.crawler_type not in {
+        option.value for option in adapter.capability(True).crawler_types
+    }:
+        raise HTTPException(
+            status_code=422,
+            detail="unsupported crawler type for platform",
+        )
     task_id = repository.new_id()
     return repository.create(
         task_id=task_id,
@@ -79,12 +118,12 @@ def create_crawler_task(
     )
 
 
-@router.get("", response_model=list[CrawlerTaskResponse])
+@router.get("/tasks", response_model=list[CrawlerTaskResponse])
 def list_crawler_tasks(repository: RepositoryDependency) -> list[dict[str, Any]]:
     return repository.list()
 
 
-@router.get("/{task_id}", response_model=CrawlerTaskResponse)
+@router.get("/tasks/{task_id}", response_model=CrawlerTaskResponse)
 def get_crawler_task(
     task_id: str,
     repository: RepositoryDependency,
@@ -92,7 +131,7 @@ def get_crawler_task(
     return _get_task_or_404(repository, task_id)
 
 
-@router.get("/{task_id}/logs", response_class=PlainTextResponse)
+@router.get("/tasks/{task_id}/logs", response_class=PlainTextResponse)
 def get_crawler_task_logs(
     task_id: str,
     repository: RepositoryDependency,
@@ -127,7 +166,7 @@ def get_crawler_task_logs(
     )
 
 
-@router.get("/{task_id}/qrcode", response_model=None)
+@router.get("/tasks/{task_id}/qrcode", response_model=None)
 def get_crawler_task_qrcode(
     task_id: str,
     repository: RepositoryDependency,
@@ -150,7 +189,7 @@ def get_crawler_task_qrcode(
     return FileResponse(qrcode_path, media_type="image/png", filename="qrcode.png")
 
 
-@router.get("/{task_id}/results", response_model=CrawlerResultsResponse)
+@router.get("/tasks/{task_id}/results", response_model=CrawlerResultsResponse)
 def get_crawler_task_results(
     task_id: str,
     repository: RepositoryDependency,
@@ -164,39 +203,23 @@ def get_crawler_task_results(
         expected_path=settings.output_root / "tasks" / task_id,
         allowed_root=settings.output_root / "tasks",
     )
-    records: list[object] = []
-    record_index = 0
-
-    if task_dir.is_dir():
-        for candidate in sorted(task_dir.rglob("*.jsonl")):
-            resolved = candidate.resolve()
-            if not resolved.is_relative_to(task_dir):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Task result path is invalid",
-                )
-            with resolved.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    if not line.strip():
-                        continue
-                    if record_index < offset:
-                        record_index += 1
-                        continue
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError as error:
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Task result contains invalid JSONL",
-                        ) from error
-                    record_index += 1
-                    if len(records) > limit:
-                        break
-            if len(records) > limit:
-                break
-
-    has_more = len(records) > limit
-    items = records[:limit]
+    try:
+        adapter = platform_registry.get(str(task["platform"]))
+        items, has_more = read_normalized_result_page(
+            adapter=adapter,
+            task_dir=task_dir,
+            offset=offset,
+            limit=limit,
+            maximum=int(task["requested_count"]),
+        )
+    except UnsupportedPlatformError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="Task platform is invalid",
+        ) from error
+    except CrawlerResultDataError as error:
+        status_code = 409 if "escapes" in str(error) else 500
+        raise HTTPException(status_code=status_code, detail=str(error)) from error
     return {
         "items": items,
         "offset": offset,
@@ -206,7 +229,7 @@ def get_crawler_task_results(
     }
 
 
-@router.post("/{task_id}/cancel", response_model=CrawlerTaskResponse)
+@router.post("/tasks/{task_id}/cancel", response_model=CrawlerTaskResponse)
 def cancel_crawler_task(
     task_id: str,
     repository: RepositoryDependency,

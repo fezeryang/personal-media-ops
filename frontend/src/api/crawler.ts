@@ -33,8 +33,68 @@ export const crawlerTaskSchema = z.object({
 
 const crawlerTaskListSchema = z.array(crawlerTaskSchema);
 
+const capabilityOptionSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+});
+
+export const crawlerPlatformCapabilitySchema = z.object({
+  platform: z.string(),
+  display_name: z.string(),
+  enabled: z.boolean(),
+  verification_status: z.enum(["verified", "code_ready"]),
+  crawler_types: z.array(capabilityOptionSchema).min(1),
+  login_types: z.array(capabilityOptionSchema).min(1),
+  requested_count: z.object({
+    minimum: z.number().int().positive(),
+    maximum: z.number().int().positive(),
+    default: z.number().int().positive(),
+  }),
+  supports_comments: z.boolean(),
+  supports_sub_comments: z.boolean(),
+});
+
+const crawlerCapabilitiesSchema = z.object({
+  max_concurrent_tasks: z.number().int().positive(),
+  platforms: z.array(crawlerPlatformCapabilitySchema),
+});
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const optionalHttpUrlSchema = z
+  .string()
+  .refine(isSafeHttpUrl)
+  .nullable();
+
+export const crawlerResultSchema = z.object({
+  platform: z.string(),
+  content_id: z.string(),
+  content_type: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  author_name: z.string().nullable(),
+  content_url: optionalHttpUrlSchema,
+  cover_url: optionalHttpUrlSchema,
+  published_at: z.number().int().nonnegative().nullable(),
+  source_keyword: z.string().nullable(),
+  metrics: z.object({
+    play_count: z.number().int().nonnegative().nullable(),
+    like_count: z.number().int().nonnegative().nullable(),
+    favorite_count: z.number().int().nonnegative().nullable(),
+    comment_count: z.number().int().nonnegative().nullable(),
+    share_count: z.number().int().nonnegative().nullable(),
+  }),
+});
+
 const crawlerResultsSchema = z.object({
-  items: z.array(z.record(z.string(), z.unknown())),
+  items: z.array(crawlerResultSchema),
   offset: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
   next_offset: z.number().int().nonnegative(),
@@ -43,13 +103,26 @@ const crawlerResultsSchema = z.object({
 
 export type CrawlerTaskStatus = z.infer<typeof crawlerTaskStatusSchema>;
 export type CrawlerTask = z.infer<typeof crawlerTaskSchema>;
+export type CrawlerPlatformCapability = z.infer<
+  typeof crawlerPlatformCapabilitySchema
+>;
+export type CrawlerCapabilities = z.infer<typeof crawlerCapabilitiesSchema>;
+export type CrawlerResult = z.infer<typeof crawlerResultSchema>;
 export type CrawlerResults = z.infer<typeof crawlerResultsSchema>;
 
 export interface CreateCrawlerTaskInput {
-  platform: "bili";
-  crawler_type: "search";
+  platform: string;
+  crawler_type: string;
   keywords: string;
   requested_count: number;
+}
+
+export function getCrawlerCapabilities(
+  signal?: AbortSignal,
+): Promise<CrawlerCapabilities> {
+  return requestJson("/api/crawler/capabilities", crawlerCapabilitiesSchema, {
+    signal,
+  });
 }
 
 export function listCrawlerTasks(signal?: AbortSignal): Promise<CrawlerTask[]> {

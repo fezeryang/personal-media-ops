@@ -25,13 +25,10 @@ import {
 
 const PAGE_SIZE = 12;
 
-function displayPublishTime(value: string | null): string {
-  if (!value) return "未提供";
-  if (/^\d{10,13}$/.test(value)) {
-    const timestamp = Number(value) * (value.length === 10 ? 1_000 : 1);
-    return formatDateTime(new Date(timestamp).toISOString());
-  }
-  return formatDateTime(value);
+function displayPublishTime(value: number | null): string {
+  if (value === null) return "未提供";
+  const timestamp = value < 10_000_000_000 ? value * 1_000 : value;
+  return formatDateTime(new Date(timestamp).toISOString());
 }
 
 function ResultCard({
@@ -71,10 +68,10 @@ function ResultCard({
               {item.title}
             </h3>
           </div>
-          {item.videoUrl ? (
+          {item.contentUrl ? (
             <Button asChild variant="ghost" size="icon">
               <a
-                href={item.videoUrl}
+                href={item.contentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={`在新标签页打开：${item.title}`}

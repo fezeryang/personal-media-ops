@@ -15,7 +15,8 @@ status.sh [--host SSH_ALIAS]
 healthcheck.sh [--base-url URL] [--with-ssh] [--host SSH_ALIAS]
 logs.sh SOURCE [--lines 1..5000] [--follow] [--host SSH_ALIAS]
 backup.sh [--host SSH_ALIAS] [--dry-run | --execute]
-deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--dry-run | --execute]
+deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
+          [--dry-run | --execute]
 mediaops-release {version|status|publish-frontend|restart-services|nginx-check|nginx-reload|verify|finalize}
 ```
 
@@ -27,10 +28,13 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 - `MEDIAOPS_SSH_HOST` defaults to `mediaops-prod`; SSH is non-interactive.
 - Dry-run makes no SSH connection. Execute requires an explicit flag.
 - `--target-ref` must resolve to `origin/main`; updates are fast-forward only.
-- Migration/schema paths stop deployment because no migration tool exists.
+- Migration/schema paths stop deployment unless the reviewed release receives
+  explicit `--allow-migrations`.
 - SQLite backup completes before pull.
 - Backend sync/pytest and frontend ci/lint/test/build complete before helper
   invocation.
+- Authorized migrations run `uv run alembic upgrade head` after backup and all
+  tests/builds, then verify runtime schema head before helper invocation.
 - The deploy script calls only
   `sudo -n /usr/local/sbin/mediaops-release finalize` for privileged work.
 - Helper version is `1`; its paths, services, binaries, and subcommands are
@@ -47,7 +51,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 | Dirty/non-main server worktree | Stop before backup/pull |
 | Target differs from `origin/main` | Stop before backup/pull |
 | Target is non-fast-forward | Stop before backup/pull |
-| Migration/schema path detected | Report paths and stop |
+| Migration/schema path detected without opt-in | Report paths and stop |
+| Authorized Alembic migration fails | Stop before `finalize` |
 | Missing helper or helper version not `1` | Stop before backup/pull |
 | Backup failure | Stop before pull |
 | Target changes after backup | Stop before pull |
@@ -59,8 +64,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 
 ## 5. Good / Base / Bad Cases
 
-- Good: `deploy.sh --target-ref <sha> --dry-run` prints host, target,
-  migration/backup status, gates, and helper subcommand without SSH.
+- Good: `deploy.sh --target-ref <sha> --allow-migrations --dry-run` prints
+  migration authorization, gates, and helper subcommand without SSH.
 - Base: `--execute` backs up, fast-forwards, tests/builds, calls `finalize`,
   verifies, then prints old/new commits.
 - Bad: direct sudo rsync/systemctl/Nginx, arbitrary helper arguments, helper
@@ -92,7 +97,10 @@ sudo /www/server/nginx/sbin/nginx -s reload
 
 ```bash
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
-scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
+scripts/server/deploy.sh \
+  --target-ref <origin-main-sha> \
+  --allow-migrations \
+  --execute
 ```
 
 The second command is a real release and requires explicit user authorization.

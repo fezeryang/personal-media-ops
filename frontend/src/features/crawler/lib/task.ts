@@ -1,4 +1,5 @@
 import type {
+  CrawlerPlatformCapability,
   CrawlerTask,
   CrawlerTaskStatus,
 } from "../../../api/crawler";
@@ -44,6 +45,16 @@ export function isActiveTask(task: CrawlerTask): boolean {
   return isActiveStatus(task.status);
 }
 
+export function platformDisplayName(
+  platform: string,
+  capabilities: readonly CrawlerPlatformCapability[] = [],
+): string {
+  return (
+    capabilities.find((capability) => capability.platform === platform)
+      ?.display_name ?? platform
+  );
+}
+
 export function buildTaskMetrics(tasks: CrawlerTask[]): TaskMetrics {
   return tasks.reduce<TaskMetrics>(
     (metrics, task) => {
@@ -61,6 +72,7 @@ export function buildTaskMetrics(tasks: CrawlerTask[]): TaskMetrics {
 export function getEngineState(
   tasks: CrawlerTask[],
   apiConnected: boolean,
+  capabilities: readonly CrawlerPlatformCapability[] = [],
 ): EngineState {
   if (!apiConnected) {
     return {
@@ -69,10 +81,13 @@ export function getEngineState(
       tone: "danger",
     };
   }
-  if (tasks.some((task) => task.status === "waiting_login")) {
+  const waitingTask = tasks.find(
+    (task) => task.status === "waiting_login",
+  );
+  if (waitingTask) {
     return {
       label: "等待扫码",
-      detail: "采集任务正在等待哔哩哔哩登录",
+      detail: `采集任务正在等待${platformDisplayName(waitingTask.platform, capabilities)}登录`,
       tone: "warning",
     };
   }

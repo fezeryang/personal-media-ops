@@ -52,8 +52,9 @@ sudo -n /usr/local/sbin/mediaops-release <allowed-subcommand>
 ```
 
 The full deploy script may call only `finalize`, and only after all tests and
-the build pass. Never call direct privileged rsync, systemctl, or Nginx
-commands. Never install or overwrite the helper or sudoers automatically.
+the build and any explicitly authorized Alembic migration pass. Never call
+direct privileged rsync, systemctl, or Nginx commands. Never install or
+overwrite the helper or sudoers automatically.
 
 ### Root boundary
 
@@ -69,6 +70,7 @@ Before a real release, report:
 - current commit;
 - target commit/ref;
 - whether database migration or schema paths exist;
+- whether migration execution has explicit `--allow-migrations` authorization;
 - whether SQLite backup has completed;
 - exact backend/frontend tests to run;
 - helper path and subcommand.
@@ -85,6 +87,15 @@ A separately authorized real release uses:
 scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
+If and only if the reviewed diff contains a compatible Alembic migration, use:
+
+```bash
+scripts/server/deploy.sh \
+  --target-ref <origin-main-sha> \
+  --allow-migrations \
+  --execute
+```
+
 ## Post-release Verification
 
 After helper success, verify the localhost API and public frontend/API routes.
@@ -94,8 +105,8 @@ commits only after all checks pass.
 ## Failure Handling
 
 - Stop on a dirty worktree, target mismatch, non-fast-forward update,
-  migration/schema path, backup failure, failed test/build, helper failure, or
-  health failure.
+  unauthorized migration/schema path, backup failure, failed
+  test/build/migration, helper failure, or health failure.
 - Report the exact failed stage.
 - Never describe code preparation or partial helper execution as success.
 - Inspect evidence before retrying; do not restart every service blindly.
@@ -103,6 +114,7 @@ commits only after all checks pass.
 ## Rollback Preparation
 
 Retain the pre-release SQLite backup and old commit. Prefer a reviewed Git
-revert or known-good forward deployment. Database restore requires stopped
+revert or known-good forward deployment. Before downgrading, confirm the
+migration permits it with current data. Database restore requires stopped
 writers and separate authorization. Never use `git reset --hard`, delete
 `/var/lib/mediaops`, clear logs, or modify `/opt/mediacrawler`.

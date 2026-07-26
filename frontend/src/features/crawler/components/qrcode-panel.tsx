@@ -6,7 +6,13 @@ import { ErrorState } from "../../../components/error-state";
 import { Card, CardContent, CardHeader } from "../../../components/ui/card";
 import { useCrawlerTaskQrcodeQuery } from "../hooks/use-crawler-queries";
 
-function QrcodeImage({ image }: { image: Blob }) {
+function QrcodeImage({
+  image,
+  platformName,
+}: {
+  image: Blob;
+  platformName: string;
+}) {
   const [imageUrl] = useState(() => URL.createObjectURL(image));
 
   useEffect(
@@ -19,13 +25,19 @@ function QrcodeImage({ image }: { image: Blob }) {
   return (
     <img
       src={imageUrl}
-      alt="哔哩哔哩登录二维码"
+      alt={`${platformName}登录二维码`}
       className="size-44 object-contain"
     />
   );
 }
 
-export function QrcodePanel({ task }: { task: CrawlerTask }) {
+export function QrcodePanel({
+  task,
+  platformName,
+}: {
+  task: CrawlerTask;
+  platformName: string;
+}) {
   const waitingForLogin = task.status === "waiting_login";
   const qrcodeQuery = useCrawlerTaskQrcodeQuery(task.id, waitingForLogin);
 
@@ -70,10 +82,11 @@ export function QrcodePanel({ task }: { task: CrawlerTask }) {
               <QrcodeImage
                 key={qrcodeQuery.dataUpdatedAt}
                 image={qrcodeQuery.data}
+                platformName={platformName}
               />
             </div>
             <p className="mt-4 text-sm font-semibold text-ink">
-              使用哔哩哔哩客户端扫码
+              使用{platformName}客户端扫码
             </p>
             <p className="mt-1 text-xs text-muted">
               登录完成后，任务状态会自动恢复为采集中。

@@ -83,6 +83,24 @@ After implementation:
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
 
+## Capability-Driven Integration Checklist
+
+When one backend registry drives API validation, Worker execution, and UI
+selection:
+
+- [ ] Add the platform once in the backend registry and keep the frontend free
+  of an independent allowlist
+- [ ] Distinguish code-ready from production-verified capability
+- [ ] Preserve old process arguments unless the runtime Runner is upgraded in
+  the same separately authorized operation
+- [ ] Trace raw output → Adapter → API schema → Zod schema → display model
+- [ ] Test global concurrency with tasks from different platforms
+- [ ] Check migration, runtime startup, and deployment ordering together
+
+When a cross-layer test hangs, isolate the runtime first: if a minimal
+cross-thread event-loop wakeup also hangs, compare inside and outside the
+execution sandbox before changing application or dependency code.
+
 ---
 
 ## Cross-Platform Template Consistency

@@ -51,3 +51,13 @@ uv run pytest --cov=app --cov-report=term-missing
 
 Review process arguments, SQL placeholders, path containment, task state
 transitions, ignored runtime data, and compatibility of `/api/health`.
+
+## Test Environment Diagnostic
+
+FastAPI synchronous routes use AnyIO worker threads. If pytest hangs, first run
+a minimal `asyncio` `call_soon_threadsafe()` probe. In the managed Codex
+sandbox, socket wakeups may be blocked even when application code is correct.
+If the minimal probe fails in-sandbox and passes outside it, run the unchanged
+test suite in the approved unsandboxed environment; do not replace
+`TestClient`, pin unrelated packages, or rewrite production code to mask the
+execution-environment restriction.

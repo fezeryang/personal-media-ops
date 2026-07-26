@@ -3,6 +3,7 @@ import {
   buildTaskMetrics,
   getEngineState,
   isActiveTask,
+  platformDisplayName,
   taskStatusLabel,
 } from "./task";
 import type { CrawlerTask } from "../../../api/crawler";
@@ -73,5 +74,29 @@ describe("crawler task helpers", () => {
       getEngineState([{ ...baseTask, status: "running" }], true).label,
     ).toBe("执行中");
     expect(getEngineState([baseTask], true).label).toBe("队列待处理");
+  });
+
+  it("uses capability metadata for platform display names", () => {
+    const capability = {
+      platform: "xhs",
+      display_name: "小红书",
+      enabled: true,
+      verification_status: "code_ready" as const,
+      crawler_types: [{ value: "search", label: "关键词搜索" }],
+      login_types: [{ value: "qrcode", label: "二维码登录" }],
+      requested_count: { minimum: 1, maximum: 20, default: 20 },
+      supports_comments: false,
+      supports_sub_comments: false,
+    };
+
+    expect(platformDisplayName("xhs", [capability])).toBe("小红书");
+    expect(platformDisplayName("unknown", [capability])).toBe("unknown");
+    expect(
+      getEngineState(
+        [{ ...baseTask, platform: "xhs", status: "waiting_login" }],
+        true,
+        [capability],
+      ).detail,
+    ).toContain("小红书");
   });
 });

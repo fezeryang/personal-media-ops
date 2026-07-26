@@ -7,6 +7,9 @@ from types import TracebackType
 from typing import Any, Self
 
 from app.core.config import Settings, settings
+from app.crawler.adapters import CrawlerPlatformAdapter
+from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
+from app.crawler.results import count_normalized_results
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 
 
@@ -57,12 +60,15 @@ class CrawlerWorker:
         config: Settings,
         *,
         terminate_timeout_seconds: float = 5,
+        registry: CrawlerPlatformRegistry = platform_registry,
     ) -> None:
         self.repository = repository
         self.settings = config
         self.terminate_timeout_seconds = terminate_timeout_seconds
+        self.registry = registry
 
     async def run_forever(self) -> None:
+        self.registry.list_capabilities(self.settings.enabled_platforms)
         self.repository.initialize()
         with WorkerLock(self.settings.database_path):
             self.repository.fail_interrupted_tasks()
@@ -86,6 +92,10 @@ class CrawlerWorker:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             qrcode_path.parent.mkdir(parents=True, exist_ok=True)
 
+            adapter = self.registry.require_enabled(
+                str(task["platform"]),
+                self.settings.enabled_platforms,
+            )
             command = self._build_command(task, output_dir, qrcode_path)
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -100,6 +110,7 @@ class CrawlerWorker:
                 process,
                 log_path,
                 qrcode_path,
+                adapter,
             )
             if cancelled:
                 self.repository.complete_cancelled(task_id)
@@ -109,7 +120,11 @@ class CrawlerWorker:
             if return_code == 0:
                 self.repository.complete_success(
                     task_id,
-                    self._count_jsonl_records(output_dir),
+                    count_normalized_results(
+                        adapter,
+                        output_dir,
+                        int(task["requested_count"]),
+                    ),
                 )
             else:
                 self.repository.complete_failure(
@@ -148,28 +163,16 @@ class CrawlerWorker:
         output_dir: Path,
         qrcode_path: Path,
     ) -> list[str]:
+        adapter = self.registry.get(str(task["platform"]))
         return [
             str(self.settings.mediacrawler_python),
             str(self.settings.mediacrawler_runner),
-            "--platform",
-            "bili",
-            "--crawler-type",
-            "search",
-            f"--keywords={task['keywords']}",
-            "--login-type",
-            "qrcode",
-            "--requested-count",
-            str(task["requested_count"]),
-            "--output-dir",
-            str(output_dir),
-            "--qrcode-path",
-            str(qrcode_path),
-            "--max-concurrency-num",
-            "1",
-            "--enable-comments",
-            "false",
-            "--enable-sub-comments",
-            "false",
+            *adapter.build_runner_arguments(
+                keywords=str(task["keywords"]),
+                requested_count=int(task["requested_count"]),
+                output_dir=output_dir,
+                qrcode_path=qrcode_path,
+            ),
         ]
 
     def _build_environment(self) -> dict[str, str]:
@@ -202,6 +205,7 @@ class CrawlerWorker:
         process: asyncio.subprocess.Process,
         log_path: Path,
         qrcode_path: Path,
+        adapter: CrawlerPlatformAdapter,
     ) -> bool:
         if process.stdout is None:
             raise RuntimeError("crawler process stdout pipe is unavailable")
@@ -230,7 +234,9 @@ class CrawlerWorker:
 
                 if line:
                     log_handle.write(line)
-                    if waiting_for_login:
+                    if waiting_for_login and adapter.is_login_success(
+                        line.decode("utf-8", errors="replace")
+                    ):
                         self.repository.set_running(task_id)
                         waiting_for_login = False
                     continue
@@ -258,18 +264,6 @@ class CrawlerWorker:
             except ProcessLookupError:
                 return
             await process.wait()
-
-    @staticmethod
-    def _count_jsonl_records(output_dir: Path) -> int:
-        count = 0
-        root = output_dir.resolve()
-        for candidate in root.rglob("*.jsonl"):
-            resolved = candidate.resolve()
-            if not resolved.is_relative_to(root):
-                raise ValueError("result path escapes task output directory")
-            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
-                count += sum(1 for line in handle if line.strip())
-        return count
 
 
 def main() -> None:

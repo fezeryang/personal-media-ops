@@ -1,18 +1,16 @@
 # Type Safety
 
-> Type safety patterns and the browser-to-FastAPI contract.
-
 ## Scenario: FastAPI crawler boundary
 
 ### 1. Scope / Trigger
 
-This contract applies whenever the frontend adds or changes a call to the
-FastAPI crawler routes, or maps MediaCrawler JSONL records to UI fields.
+Apply this contract whenever the frontend changes crawler API calls, platform
+selection, task rendering, or normalized result fields.
 
 ### 2. Signatures
 
 ```text
-GET  /api/health
+GET  /api/crawler/capabilities
 GET  /api/crawler/tasks
 POST /api/crawler/tasks
 GET  /api/crawler/tasks/{task_id}
@@ -22,65 +20,63 @@ GET  /api/crawler/tasks/{task_id}/results?offset=N&limit=N
 POST /api/crawler/tasks/{task_id}/cancel
 ```
 
-`requestJson<T>(path, schema, init)` validates JSON before returning `T`.
-`requestText` handles logs and `requestBlob` handles PNG data.
+All endpoint functions accept an optional `AbortSignal`. `requestJson` parses
+responses with Zod before returning inferred TypeScript types.
 
 ### 3. Contracts
 
-- Task creation sends only `platform: "bili"`, `crawler_type: "search"`,
-  `keywords: string`, and `requested_count: 1..20`.
-- Status is one of `pending`, `running`, `waiting_login`, `succeeded`,
-  `failed`, or `cancelled`.
-- Results are `{items, offset, limit, next_offset, has_more}` where each item is
-  `Record<string, unknown>`.
-- `VITE_API_BASE_URL` is optional and defaults to the empty same-origin base.
-- All API functions accept an optional `AbortSignal`.
+- Capabilities expose `platform`, display name, enabled state, verification
+  state, fixed crawler/login options, count bounds, and comment support.
+- The create form derives its platform and fixed labels from capabilities. It
+  sends only `platform`, `crawler_type`, `keywords`, and `requested_count`.
+- Task status remains the six-value backend enum.
+- Results are a paginated unified schema with safe nullable URLs, publication
+  time, source keyword, and nullable numeric metrics.
+- `VITE_API_BASE_URL` defaults to empty same-origin.
+- Task paths and PID may exist in the compatibility response but are never
+  rendered.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Frontend behavior |
-|---|---|
-| Non-2xx JSON with string detail | Throw `ApiError(status, detail)` |
-| FastAPI 422 issue list | Join field names and messages |
-| Non-JSON error | Throw an HTTP-status fallback |
+| --- | --- |
+| Non-2xx JSON detail | Throw `ApiError(status, detail)` |
+| FastAPI validation issues | Join field paths/messages |
 | Network failure | Throw `ApiError(0, localized message)` |
-| Query abort | Preserve `AbortError` |
-| Successful JSON violates Zod schema | Throw response-format `ApiError(502)` |
-| QR returns 404 | Return `null` ("not ready"), not a page error |
-| QR returns 200 without `image/png` | Throw QR-format `ApiError(502)` |
-| Result URL is not HTTP(S) | Return `null` and omit the link/image |
+| Abort | Preserve `AbortError` |
+| Invalid successful JSON | Throw response-format `ApiError(502)` |
+| QR 404 | Return `null` as not-ready |
+| QR non-PNG | Throw QR-format `ApiError(502)` |
+| Non-HTTP(S) result URL | Zod rejects the response |
+| Disabled capability | Show it as disabled; never submit it |
 
-### 5. Good/Base/Bad Cases
+### 5. Good / Base / Bad Cases
 
-- Good: a complete Bilibili record displays title, author, safe links, metrics,
-  publication time, and source keyword.
-- Base: missing optional JSONL fields display neutral placeholders.
-- Bad: `javascript:` links, HTML-shaped strings, malformed task responses, and
-  unknown creation controls never become trusted UI behavior.
+- Good: a newly registered backend platform appears without a frontend
+  platform allowlist change.
+- Base: missing optional result fields render neutral placeholders.
+- Bad: cast raw JSON to a task/result type, render HTML, or silently substitute
+  mock capabilities after a request failure.
 
 ### 6. Tests Required
 
-- Assert endpoint method, encoded task ID, request body, and pagination query.
-- Assert FastAPI validation, network, non-JSON, and invalid-schema errors.
-- Assert all task statuses map to Chinese and active state is exact.
-- Assert common/missing/malicious JSONL records normalize safely.
-- Run backend pytest when frontend contract usage changes.
+Test capability parsing, exact create body, encoded IDs, bounded logs,
+pagination, QR behavior, unified result formatting, unsafe URLs, active status
+logic, and capability-driven form submission.
 
 ### 7. Wrong vs Correct
 
-#### Wrong
+Wrong:
 
 ```typescript
-const task = (await response.json()) as CrawlerTask;
-element.innerHTML = task.error_message ?? "";
+const result = (await response.json()) as CrawlerResult;
 ```
 
-#### Correct
+Correct:
 
 ```typescript
-const task = await requestJson(path, crawlerTaskSchema, { signal });
-return <p>{task.error_message}</p>;
+const result = await requestJson(path, crawlerResultSchema, { signal });
 ```
 
-Types are inferred from Zod schemas where possible. Use `unknown` for untrusted
-record fields and narrow with explicit helpers. `any` is forbidden.
+Use `unknown` at untrusted boundaries and narrow explicitly. TypeScript `any`
+is forbidden.

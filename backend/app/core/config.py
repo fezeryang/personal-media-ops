@@ -17,6 +17,7 @@ class Settings:
     node_binary: Path | None
     node_bin_dir: Path | None
     crawler_poll_interval_seconds: float
+    enabled_platforms: tuple[str, ...]
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -30,6 +31,18 @@ class Settings:
         poll_interval = float(os.getenv("CRAWLER_POLL_INTERVAL_SECONDS", "1"))
         if poll_interval <= 0:
             raise ValueError("CRAWLER_POLL_INTERVAL_SECONDS must be greater than zero")
+        enabled_platforms = tuple(
+            dict.fromkeys(
+                platform.strip()
+                for platform in os.getenv(
+                    "MEDIAOPS_ENABLED_PLATFORMS",
+                    "bili",
+                ).split(",")
+                if platform.strip()
+            )
+        )
+        if not enabled_platforms:
+            raise ValueError("MEDIAOPS_ENABLED_PLATFORMS must not be empty")
         return cls(
             frontend_origins=origins,
             database_path=Path(
@@ -63,6 +76,7 @@ class Settings:
             node_binary=Path(node_binary) if node_binary else None,
             node_bin_dir=Path(node_bin_dir) if node_bin_dir else None,
             crawler_poll_interval_seconds=poll_interval,
+            enabled_platforms=enabled_platforms,
         )
 
 

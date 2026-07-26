@@ -62,9 +62,20 @@ dry_run_output="$(
 assert_contains "$dry_run_output" "Target server: deliberately-unresolvable-mediaops"
 assert_contains "$dry_run_output" "Target ref: 0123456789abcdef0123456789abcdef01234567"
 assert_contains "$dry_run_output" "Database migration: inspect during execute preflight"
+assert_contains "$dry_run_output" "Migration authorization: required when detected"
 assert_contains "$dry_run_output" "Database backup: required before pull"
 assert_contains "$dry_run_output" "Helper subcommand: finalize"
 assert_contains "$dry_run_output" "Dry run only"
+
+migration_dry_run_output="$(
+    "$DEPLOY" \
+        --host deliberately-unresolvable-mediaops \
+        --target-ref 0123456789abcdef0123456789abcdef01234567 \
+        --allow-migrations \
+        --dry-run
+)"
+assert_contains "$migration_dry_run_output" "Migration authorization: granted"
+assert_contains "$migration_dry_run_output" "uv run alembic upgrade head"
 
 assert_rejects "$DEPLOY" --dry-run --execute
 assert_rejects "$DEPLOY" --target-ref '../main' --dry-run
@@ -118,6 +129,16 @@ for gate in 'uv run pytest' 'npm run lint' 'npm run test' 'npm run build'; do
     [[ "$gate_line" =~ ^[0-9]+$ && "$gate_line" -lt "$finalize_line" ]] ||
         fail "gate must appear before helper finalize: ${gate}"
 done
+
+migration_line="$(
+    grep -nF 'uv run alembic upgrade head' "$DEPLOY" |
+        tail -n 1 |
+        cut -d: -f1
+)"
+[[ "$migration_line" =~ ^[0-9]+$ && "$migration_line" -lt "$finalize_line" ]] ||
+    fail "Alembic upgrade must appear before helper finalize"
+grep -Fq -- '--allow-migrations' "$DEPLOY" ||
+    fail "deploy script must require explicit migration authorization"
 
 if grep -Eq \
     '(cp|install|rsync).*/usr/local/sbin/mediaops-release|/etc/sudoers' \

@@ -8,13 +8,17 @@ import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { CreateTaskDialog } from "../features/crawler/components/create-task-dialog";
 import { TaskTable } from "../features/crawler/components/task-table";
-import { useCrawlerTasksQuery } from "../features/crawler/hooks/use-crawler-queries";
+import {
+  useCrawlerCapabilitiesQuery,
+  useCrawlerTasksQuery,
+} from "../features/crawler/hooks/use-crawler-queries";
 import { TASK_STATUS_LABELS } from "../features/crawler/lib/task";
 
 type StatusFilter = "all" | CrawlerTaskStatus;
 
 export function TasksPage() {
   const tasksQuery = useCrawlerTasksQuery();
+  const capabilitiesQuery = useCrawlerCapabilitiesQuery();
   const [status, setStatus] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
 
@@ -29,13 +33,17 @@ export function TasksPage() {
       return matchesStatus && matchesSearch;
     });
   }, [search, status, tasksQuery.data]);
+  const enabledPlatformNames = (
+    capabilitiesQuery.data?.platforms.filter((platform) => platform.enabled) ??
+    []
+  ).map((platform) => platform.display_name);
 
   return (
     <div className="space-y-7">
       <PageHeader
         eyebrow="Crawler operations"
         title="采集中心"
-        description="创建并管理已验证的 B 站关键词采集任务。服务器采用单任务串行执行。"
+        description={`创建并管理${enabledPlatformNames.length ? enabledPlatformNames.join("、") : "已启用平台"}关键词采集任务。服务器采用单任务串行执行。`}
         action={<CreateTaskDialog />}
       />
 

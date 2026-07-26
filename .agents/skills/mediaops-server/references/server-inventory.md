@@ -43,6 +43,8 @@ passwords, private keys, tokens, cookies, or `.env` values.
 | Release helper version | `1` |
 | MediaCrawler checkout | `/opt/mediacrawler` |
 | MediaCrawler Python | `/opt/mediacrawler/.venv/bin/python` |
+| Reviewed Runner source | `/opt/personal-media-ops/scripts/crawler/run_mediacrawler.py` |
+| Active Runner | `/var/lib/mediaops/bin/run_mediacrawler.py` |
 
 The `mediaops` account can inspect the repository, install project
 dependencies, run tests/builds, read permitted logs, call APIs, and check

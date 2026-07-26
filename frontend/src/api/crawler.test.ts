@@ -1,6 +1,7 @@
 import {
   cancelCrawlerTask,
   createCrawlerTask,
+  getCrawlerCapabilities,
   getCrawlerTask,
   getCrawlerTaskLogs,
   getCrawlerTaskQrcode,
@@ -36,6 +37,50 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe("crawler API", () => {
+  it("loads the platform capability registry", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse({
+        max_concurrent_tasks: 1,
+        platforms: [
+          {
+            platform: "bili",
+            display_name: "哔哩哔哩",
+            enabled: true,
+            verification_status: "verified",
+            crawler_types: [{ value: "search", label: "关键词搜索" }],
+            login_types: [{ value: "qrcode", label: "二维码登录" }],
+            requested_count: { minimum: 1, maximum: 20, default: 20 },
+            supports_comments: false,
+            supports_sub_comments: false,
+          },
+          {
+            platform: "xhs",
+            display_name: "小红书",
+            enabled: false,
+            verification_status: "code_ready",
+            crawler_types: [{ value: "search", label: "关键词搜索" }],
+            login_types: [{ value: "qrcode", label: "二维码登录" }],
+            requested_count: { minimum: 1, maximum: 20, default: 20 },
+            supports_comments: false,
+            supports_sub_comments: false,
+          },
+        ],
+      }),
+    );
+
+    await expect(getCrawlerCapabilities()).resolves.toMatchObject({
+      max_concurrent_tasks: 1,
+      platforms: [
+        { platform: "bili", enabled: true },
+        { platform: "xhs", enabled: false },
+      ],
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/crawler/capabilities",
+      expect.objectContaining({ signal: undefined }),
+    );
+  });
+
   it("lists, reads, creates, and cancels tasks", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -83,7 +128,27 @@ describe("crawler API", () => {
       .mockResolvedValueOnce(new Response("latest log", { status: 200 }))
       .mockResolvedValueOnce(
         jsonResponse({
-          items: [{ title: "Video" }],
+          items: [
+            {
+              platform: "bili",
+              content_id: "BV1",
+              content_type: "video",
+              title: "Video",
+              description: null,
+              author_name: "Uploader",
+              content_url: "https://www.bilibili.com/video/BV1",
+              cover_url: null,
+              published_at: 1700000000,
+              source_keyword: "AI",
+              metrics: {
+                play_count: 10,
+                like_count: 9,
+                favorite_count: 8,
+                comment_count: 7,
+                share_count: 6,
+              },
+            },
+          ],
           offset: 12,
           limit: 12,
           next_offset: 24,
@@ -96,7 +161,11 @@ describe("crawler API", () => {
     );
     await expect(
       getCrawlerTaskResults("task-1", 12, 12),
-    ).resolves.toMatchObject({ next_offset: 24, has_more: true });
+    ).resolves.toMatchObject({
+      next_offset: 24,
+      has_more: true,
+      items: [{ platform: "bili", content_id: "BV1" }],
+    });
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "/api/crawler/tasks/task-1/logs?tail=300",
     );

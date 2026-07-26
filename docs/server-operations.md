@@ -123,12 +123,16 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
-脚本依次确认身份与工作树、fetch 并固定目标、拒绝非 fast-forward 和数据库迁移、
+脚本依次确认身份与工作树、fetch 并固定目标、拒绝非 fast-forward 和未授权迁移、
 备份 SQLite、pull、运行后端同步/pytest、运行前端 ci/lint/test/build，然后只调用：
 
 ```bash
 sudo -n /usr/local/sbin/mediaops-release finalize
 ```
+
+包含 migration/schema 路径的发布默认停止。迁移和回滚方案经审查后，使用
+`--allow-migrations --execute` 显式授权；脚本会在备份、测试和构建成功后执行
+`uv run alembic upgrade head`，校验 revision 后才调用 `finalize`。
 
 任何 gate 失败都不会调用 `finalize`。helper 或健康检查失败时，脚本报告具体阶段并
 明确发布不成功，不会把部分准备或部分激活描述为成功。
