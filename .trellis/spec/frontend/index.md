@@ -6,7 +6,8 @@
 
 ## Overview
 
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
+This directory records the frontend conventions implemented by the Vite
+workbench.
 
 ---
 
@@ -14,25 +15,35 @@ This directory contains guidelines for frontend development. Fill in each file w
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
+| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
+| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
+| [State Management](./state-management.md) | Local state, global state, server state | Active |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
+| [Type Safety](./type-safety.md) | Type patterns, validation and API contract | Active |
 
 ---
 
-## How to Fill These Guidelines
+## Pre-Development Checklist
 
-For each guideline file:
+1. Read `directory-structure.md` before adding a module.
+2. Read `hook-guidelines.md` and `state-management.md` for API-backed features.
+3. Read `type-safety.md` before changing an API schema or result field mapping.
+4. Read `component-guidelines.md` and `quality-guidelines.md` before UI work.
 
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
+## Quality Check
 
-The goal is to help AI assistants and new team members understand how YOUR project works.
+Run from `frontend/`:
+
+```bash
+npm run lint
+npm run test
+npm run test:coverage
+npm run build
+```
+
+Then verify desktop and narrow-screen layouts against a real local FastAPI
+instance or an explicitly enabled development fixture.
 
 ---
 

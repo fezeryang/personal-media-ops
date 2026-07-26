@@ -115,3 +115,26 @@ Only `pending`, `running`, and `waiting_login` tasks can be cancelled.
 Pending tasks become `cancelled` immediately. Active tasks set
 `cancel_requested=true`; the worker terminates the subprocess and finalizes
 the status. Invalid state transitions return HTTP 409.
+
+## Web workbench integration
+
+The React workbench consumes this contract without a separate frontend-only
+API:
+
+* The overview computes task totals and status counts from
+  `GET /api/crawler/tasks`; there is no statistics endpoint.
+* Active task details (`pending`, `running`, or `waiting_login`) are polled.
+  High-frequency detail polling stops after a terminal state.
+* The log viewer requests `tail=300`, renders the response as plain text, and
+  never inserts log content as HTML.
+* A QR-code HTTP 404 is treated as an expected "not ready" state. PNG responses
+  are held in a short-lived browser object URL and are not persisted.
+* The result browser uses `offset` and `limit=12`, and reads only one page at a
+  time. JSONL result fields are optional and are normalized defensively.
+* The create form sends exactly `platform`, `crawler_type`, `keywords`, and
+  `requested_count`. Fixed login and worker constraints are not user inputs.
+
+Although task responses include worker-owned filesystem paths and `pid` for
+operations use, the web workbench does not display those fields. External
+result links and cover URLs are accepted only when their scheme is HTTP or
+HTTPS.

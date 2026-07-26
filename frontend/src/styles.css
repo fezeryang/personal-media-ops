@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-display:
+    "IBM Plex Sans", "SF Pro Display", "PingFang SC", "Microsoft YaHei",
+    ui-sans-serif, system-ui, sans-serif;
+  --font-mono:
+    "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans Mono", monospace;
+
+  --color-canvas: #f4f5f2;
+  --color-paper: #f7f8f6;
+  --color-ink: #17202e;
+  --color-muted: #647083;
+  --color-line: #dfe3e1;
+  --color-sidebar: #121a27;
+  --color-signal: #1f7a8c;
+  --color-signal-strong: #126476;
+  --color-success: #237a57;
+  --color-warning: #be6d16;
+  --color-warning-strong: #98500c;
+  --color-danger: #b63a46;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    min-width: 320px;
+    background: var(--color-canvas);
+    color-scheme: light;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background:
+      radial-gradient(circle at 92% -6%, rgba(31, 122, 140, 0.09), transparent 31rem),
+      var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button,
+  a,
+  input,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: rgba(31, 122, 140, 0.18);
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

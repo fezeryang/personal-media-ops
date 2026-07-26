@@ -2,50 +2,32 @@
 
 > How hooks are used in this project.
 
----
-
 ## Overview
 
-<!--
-Document your project's hook conventions here.
-
-Questions to answer:
-- What custom hooks do you have?
-- How do you handle data fetching?
-- What are the naming conventions?
-- How do you share stateful logic?
--->
-
-(To be filled by the team)
-
----
+TanStack Query owns remote state. Fetch functions remain framework-independent
+under `src/api`; hooks add cache keys, polling policy, and cache updates.
 
 ## Custom Hook Patterns
 
-<!-- How to create and structure custom hooks -->
-
-(To be filled by the team)
-
----
+Keep query keys in a single feature key factory. Mutation success handlers
+update the detail and list caches, then invalidate only data that must be
+re-fetched.
 
 ## Data Fetching
 
-<!-- How data fetching is handled (React Query, SWR, etc.) -->
-
-(To be filled by the team)
-
----
+- Pass TanStack Query's `AbortSignal` to every query function.
+- Poll active task details every 2 seconds and stop high-frequency polling in
+  terminal states.
+- Treat QR HTTP 404 and not-yet-created logs as explicit expected states.
+- Bound logs with `tail=300` and results with backend pagination.
+- Let API/network errors reach the UI; never replace them with mock data.
 
 ## Naming Conventions
 
-<!-- Hook naming rules (use*, etc.) -->
-
-(To be filled by the team)
-
----
+Use `use<Resource>Query` and `use<Action>Mutation`. Hooks must not read or write
+local storage.
 
 ## Common Mistakes
 
-<!-- Hook-related mistakes your team has made -->
-
-(To be filled by the team)
+Do not put a polling `setInterval` in a page. Query observers automatically stop
+when pages unmount and receive request cancellation signals.

@@ -2,50 +2,32 @@
 
 > How state is managed in this project.
 
----
-
 ## Overview
 
-<!--
-Document your project's state management conventions here.
-
-Questions to answer:
-- What state management solution do you use?
-- How is local vs global state decided?
-- How do you handle server state?
-- What are the patterns for derived state?
--->
-
-(To be filled by the team)
-
----
+Use TanStack Query for server state, component state for transient controls, and
+React Router for resource identity.
 
 ## State Categories
 
-<!-- Local state, global state, server state, URL state -->
-
-(To be filled by the team)
-
----
+- Server state: health, task lists/details, logs, QR blobs, result pages.
+- URL state: active route and `taskId`.
+- Local state: filters, search text, result offset, dialog visibility, log
+  refresh/scroll toggles, image failure state.
+- Derived state: dashboard metrics, engine label, active/terminal checks.
 
 ## When to Use Global State
 
-<!-- Criteria for promoting state to global -->
-
-(To be filled by the team)
-
----
+Do not add a global client store unless state must be shared outside the route
+tree and cannot be derived from Query or URL state. The current application has
+no global client store.
 
 ## Server State
 
-<!-- How server data is cached and synchronized -->
-
-(To be filled by the team)
-
----
+The shared `QueryClient` defines retry behavior. Feature hooks own query keys
+and status-dependent intervals. Create/cancel mutations update both list and
+detail caches.
 
 ## Common Mistakes
 
-<!-- State management mistakes your team has made -->
-
-(To be filled by the team)
+Never persist QR data, Cookie material, logs, or crawler results in local
+storage. Do not copy Query data into component state merely to render it.

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Feature-first frontend module ownership"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "UI composition, accessibility, and responsive conventions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "TanStack Query polling and cancellation rules"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Server, URL, local, and derived state boundaries"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "FastAPI and JSONL runtime validation contract"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Security and quality gates"}
