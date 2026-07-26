@@ -232,6 +232,8 @@ scripts/server/deploy.sh \
 preflight：身份、工作树、目标 commit、迁移检测、helper 版本
 → backup：SQLite 一致性备份
 → git-sync：fetch 并 git pull --ff-only 到固定目标 commit
+→ runner-sync：将仓库审查版 scripts/crawler/run_mediacrawler.py 同步到
+  /var/lib/mediaops/bin/run_mediacrawler.py（Worker 实际执行的已安装副本）
 → backend-test：uv sync --frozen 与后端 pytest
 → frontend-build：npm ci 与前端 lint/test/build，写入 .mediaops-release 标记
 → migrate：已授权时执行 Alembic upgrade 并校验 head
@@ -246,6 +248,16 @@ preflight：身份、工作树、目标 commit、迁移检测、helper 版本
 `verify` 不写标记），标记目录用 `mkdir -p` 幂等创建。不带 `--resume` 的
 execute 运行会先清空该目标 commit 的标记文件，确保历史尝试遗留的标记不会满足
 255 重查。
+
+`runner-sync` 存在的原因：Worker 通过生产 `MEDIACRAWLER_RUNNER` 执行的是
+`/var/lib/mediaops/bin/run_mediacrawler.py` 这个已安装副本，而不是仓库文件。
+该副本曾因发布流水线不同步而漂移（旧副本的 `--platform` 仍只允许 `bili`，导致
+一次真实的小红书任务以 argparse exit 2 失败）。此阶段以 mediaops 用户、不使用
+sudo 执行：源文件缺失即硬失败；与已安装副本逐字节一致（`cmp -s`）时记录
+`runner_sync=unchanged` 并只写阶段标记；不一致时先以 `install -m 750` 生成带
+UTC 时间戳的 `.backup-*` 备份，再安装新副本、清除
+`/var/lib/mediaops/bin/__pycache__`，并记录 `runner_sync=updated` 与新文件的
+sha256。
 
 所有测试和构建成功后，部署脚本只调用：
 

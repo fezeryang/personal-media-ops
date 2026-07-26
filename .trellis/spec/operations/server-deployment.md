@@ -36,12 +36,23 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 - Authorized migrations run `uv run alembic upgrade head` after backup and all
   tests/builds, then verify runtime schema head before helper invocation.
 - Deployment runs as isolated stages (`preflight`, `backup`, `git-sync`,
-  `backend-test`, `frontend-build`, `migrate`, `finalize`, `verify`), each in
-  its own SSH session; long-running stages add SSH keepalives. The
+  `runner-sync`, `backend-test`, `frontend-build`, `migrate`, `finalize`,
+  `verify`), each in its own SSH session; long-running stages add SSH
+  keepalives. The
   marker-tracked stages (`backup` through `finalize`) append
   `<stage>=done <utc-timestamp>` to
   `/var/lib/mediaops/deploy-state/<target-commit>.stages` only after remote
   success; `preflight` and `verify` are not marker-tracked.
+- `runner-sync` (between `git-sync` and `backend-test`) installs the reviewed
+  repository runner `scripts/crawler/run_mediacrawler.py` to
+  `/var/lib/mediaops/bin/run_mediacrawler.py` — the copy the Worker actually
+  executes via `MEDIACRAWLER_RUNNER`; unsynced drift caused a real production
+  Xiaohongshu argparse failure. It runs as `mediaops` without sudo, hard-fails
+  on a missing source, is a no-op (`runner_sync=unchanged`) when the installed
+  copy is byte-identical, and otherwise takes a UTC-timestamped
+  `install -m 750` backup, installs the new copy, purges
+  `/var/lib/mediaops/bin/__pycache__`, and logs `runner_sync=updated` with the
+  new file's sha256.
 - `--resume` skips stages already marked done for the same target commit;
   `preflight` and `verify` always run. A non-resume execute run clears the
   target commit's marker file first, so stale markers from earlier attempts
@@ -111,7 +122,9 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   no direct root commands, no direct-user helper executability assumption, and
   gate ordering before `finalize`.
 - Stubbed (never real SSH) execute-path tests cover `--resume` stage
-  skipping, exit-255 marker recovery, the non-resume stale-marker reset, the
+  skipping, exit-255 marker recovery, the `runner-sync` marker, ordering
+  between `git-sync` and `backend-test`, and resume skip, the non-resume
+  stale-marker reset, the
   finalize `.user.ini` fallback, the helper rsync protect/exclude filter, and
   that dry-run never invokes SSH.
 - Official Skill validation passes.

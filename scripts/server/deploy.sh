@@ -61,6 +61,9 @@ Stages (each in its own SSH session, recorded in /var/lib/mediaops/deploy-state/
   preflight: confirm SSH identity, worktree, target ref, migration authorization, helper version
   backup: create a consistent SQLite backup
   git-sync: fetch origin/main and git pull --ff-only to the fixed target commit
+  runner-sync: install the reviewed MediaCrawler runner copy the Worker executes
+               (/var/lib/mediaops/bin/run_mediacrawler.py), backing up any
+               differing installed copy first
   backend-test: uv sync --frozen; backend pytest
   frontend-build: npm ci; frontend lint, test, build; write the frontend release marker
   migrate: uv run alembic upgrade head (only for explicitly authorized migrations)
@@ -191,6 +194,42 @@ mkdir -p -- "$state_dir"
 printf 'git-sync=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> "${state_dir}/${target_commit}.stages"
 printf 'git_sync=completed\n'
+REMOTE
+}
+
+# The Worker executes the reviewed runner COPY at
+# /var/lib/mediaops/bin/run_mediacrawler.py (settings default and production
+# MEDIACRAWLER_RUNNER), not the repository file. Sync it on every deployment so
+# the installed copy can never drift from the repository version again.
+stage_runner_sync() {
+    mediaops_ssh "$host" "bash -s -- runner-sync ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+src="/opt/personal-media-ops/scripts/crawler/run_mediacrawler.py"
+dst="/var/lib/mediaops/bin/run_mediacrawler.py"
+state_dir="/var/lib/mediaops/deploy-state"
+
+[[ -f "$src" ]] || {
+    printf 'ERROR: reviewed runner source is missing from the repository: %s\n' \
+        "$src" >&2
+    exit 3
+}
+mkdir -p -- /var/lib/mediaops/bin
+if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then
+    printf 'runner_sync=unchanged\n'
+else
+    if [[ -f "$dst" ]]; then
+        install -m 750 -- "$dst" "${dst}.backup-$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+    install -m 750 -- "$src" "$dst"
+    rm -rf -- /var/lib/mediaops/bin/__pycache__
+    printf 'runner_sync=updated sha256=%s\n' \
+        "$(sha256sum -- "$dst" | awk '{print $1}')"
+fi
+mkdir -p -- "$state_dir"
+printf 'runner-sync=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
 REMOTE
 }
 
@@ -612,6 +651,7 @@ run_marker_stage backup stage_backup
 printf 'Database backup: completed\n'
 
 run_marker_stage git-sync stage_git_sync
+run_marker_stage runner-sync stage_runner_sync
 run_marker_stage backend-test stage_backend_test
 run_marker_stage frontend-build stage_frontend_build
 

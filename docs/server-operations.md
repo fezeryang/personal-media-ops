@@ -124,7 +124,10 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
 脚本按阶段执行：`preflight`（身份、工作树、目标、迁移检测、helper 版本）、
-`backup`、`git-sync`、`backend-test`、`frontend-build`、`migrate`（仅授权时）、
+`backup`、`git-sync`、`runner-sync`（把仓库审查版 runner 同步到 Worker 实际
+执行的 `/var/lib/mediaops/bin/run_mediacrawler.py`，不一致时先做时间戳备份；
+该副本曾漂移并导致真实小红书任务 argparse 失败）、`backend-test`、
+`frontend-build`、`migrate`（仅授权时）、
 `finalize`、`verify`。每个阶段使用独立 SSH 会话，长时间运行的阶段附加
 keepalive；`backup` 到 `finalize` 这些标记阶段在远端成功后才在
 `/var/lib/mediaops/deploy-state/<target-commit>.stages` 记录

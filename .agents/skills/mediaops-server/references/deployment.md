@@ -57,14 +57,21 @@ the target commit's marker file first.
 2. `backup`: back up SQLite with `scripts/server/backup.sh --execute`.
 3. `git-sync`: re-fetch, ensure the target did not change, run
    `git pull --ff-only origin main`, and confirm HEAD equals the target.
-4. `backend-test`: run `uv sync --frozen` and backend pytest.
-5. `frontend-build`: run frontend `npm ci --include=dev`, lint, test, build,
+4. `runner-sync`: install the reviewed repository runner
+   `scripts/crawler/run_mediacrawler.py` to
+   `/var/lib/mediaops/bin/run_mediacrawler.py`, the copy the Worker actually
+   executes (`MEDIACRAWLER_RUNNER`); unsynced drift here caused a real
+   production Xiaohongshu argparse failure. Runs as `mediaops` without sudo;
+   no-op when byte-identical, otherwise a UTC-timestamped `install -m 750`
+   backup, the new copy, and a `__pycache__` purge.
+5. `backend-test`: run `uv sync --frozen` and backend pytest.
+6. `frontend-build`: run frontend `npm ci --include=dev`, lint, test, build,
    and write the target commit to `frontend/dist/.mediaops-release`.
-6. `migrate` (authorized schema changes only): run
+7. `migrate` (authorized schema changes only): run
    `uv run alembic upgrade head` against the fixed production SQLite path and
    verify the database is at head.
-7. `finalize`: invoke `sudo -n /usr/local/sbin/mediaops-release finalize`.
-8. `verify`: verify the localhost API, the public frontend, health API, and
+8. `finalize`: invoke `sudo -n /usr/local/sbin/mediaops-release finalize`.
+9. `verify`: verify the localhost API, the public frontend, health API, and
    SPA route; record success and print old/new commits.
 
 If a stage's SSH invocation exits 255 (transport error), the orchestrator
