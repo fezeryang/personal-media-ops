@@ -38,3 +38,36 @@ Added the Python 3.11 FastAPI backend skeleton, health endpoint, environment-dri
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Implement crawler task API and worker
+
+**Date**: 2026-07-26
+**Task**: Implement crawler task API and worker
+**Branch**: `main`
+
+### Summary
+
+Added SQLite-backed Bilibili crawler task APIs, a locked single-concurrency worker with safe subprocess and file handling, fake-runner tests, systemd deployment, and API/deployment documentation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1782ac` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
