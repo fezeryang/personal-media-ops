@@ -137,3 +137,36 @@ Established repository-wide end-to-end Agent rules, the auto-discovered mediaops
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Restricted release helper integration
+
+**Date**: 2026-07-26
+**Task**: Restricted release helper integration
+**Branch**: `main`
+
+### Summary
+
+Integrated the reviewed mediaops-release v1 boundary, fail-closed deployment orchestration, exact sudoers allowlist, Skill contracts, operations specs, regression checks, and deployment documentation; verified production helper version/status without releasing.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9ac37dc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

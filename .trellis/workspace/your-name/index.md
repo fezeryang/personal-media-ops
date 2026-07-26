@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-07-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~139 | Active |
+| `journal-1.md` | ~172 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-07-26 | Restricted release helper integration | `9ac37dc` | `main` |
 | 4 | 2026-07-26 | Establish Agent and Server Operations | `ef4b444` | `main` |
 | 3 | 2026-07-26 | Build crawler operations frontend | `416ad5d` | `main` |
 | 2 | 2026-07-26 | Implement crawler task API and worker | `f1782ac` | `main` |
