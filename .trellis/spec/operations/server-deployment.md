@@ -39,6 +39,10 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   `sudo -n /usr/local/sbin/mediaops-release finalize` for privileged work.
 - Helper version is `1`; its paths, services, binaries, and subcommands are
   fixed.
+- The installed helper may intentionally be `root:root 0750`; `mediaops` does
+  not need direct read or execute permission. Validate availability only with
+  `sudo -n /usr/local/sbin/mediaops-release version`, which exercises the
+  reviewed sudoers entry without weakening the helper mode.
 - Helper and sudoers sources are never installed by deployment code.
 - Success is recorded only after internal and public checks pass.
 
@@ -54,6 +58,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 | Migration/schema path detected without opt-in | Report paths and stop |
 | Authorized Alembic migration fails | Stop before `finalize` |
 | Missing helper or helper version not `1` | Stop before backup/pull |
+| Helper is not directly executable by `mediaops`, but `sudo -n ... version` returns `1` | Continue; this is the expected restricted-permission model |
+| `sudo -n ... version` fails | Report the controlled helper entry as unavailable and stop before backup/pull |
 | Backup failure | Stop before pull |
 | Target changes after backup | Stop before pull |
 | Test/build failure | Do not invoke `finalize` |
@@ -68,6 +74,9 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   migration authorization, gates, and helper subcommand without SSH.
 - Base: `--execute` backs up, fast-forwards, tests/builds, calls `finalize`,
   verifies, then prints old/new commits.
+- Good: a `root:root 0750` installed helper passes preflight through its exact
+  `sudo -n ... version` allowlist entry even though `[[ -x helper ]]` is false
+  for `mediaops`.
 - Bad: direct sudo rsync/systemctl/Nginx, arbitrary helper arguments, helper
   installation, password prompts, or reporting partial activation as success.
 
@@ -76,7 +85,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 - Bash syntax passes for public scripts, embedded remote Bash/Python, helper,
   and script tests.
 - Release script tests cover dry-run, invalid args, helper version/allowlist,
-  no direct root commands, and gate ordering before `finalize`.
+  no direct root commands, no direct-user helper executability assumption, and
+  gate ordering before `finalize`.
 - Official Skill validation passes.
 - Backend pytest and frontend lint/test/build remain green.
 - Secret/artifact scans find no private keys, `.env`, database, logs, QR codes,
@@ -89,6 +99,7 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 ### Wrong
 
 ```bash
+[[ -x /usr/local/sbin/mediaops-release ]]
 sudo systemctl restart mediaops-api
 sudo /www/server/nginx/sbin/nginx -s reload
 ```
@@ -96,6 +107,7 @@ sudo /www/server/nginx/sbin/nginx -s reload
 ### Correct
 
 ```bash
+sudo -n /usr/local/sbin/mediaops-release version
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 scripts/server/deploy.sh \
   --target-ref <origin-main-sha> \

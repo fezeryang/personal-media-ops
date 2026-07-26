@@ -205,10 +205,6 @@ command -v uv >/dev/null
     printf 'ERROR: fixed Node/npm runtime is unavailable: %s\n' "$node_bin_dir" >&2
     exit 2
 }
-[[ -x "$release_helper" ]] || {
-    printf 'ERROR: restricted release helper is unavailable: %s\n' "$release_helper" >&2
-    exit 2
-}
 [[ -d "${repository}/backend" && -d "${repository}/frontend" ]] || {
     printf 'ERROR: backend or frontend directory is missing\n' >&2
     exit 2
@@ -245,7 +241,11 @@ if [[ -n "$migration_paths" ]]; then
     migration_state="yes"
 fi
 
-helper_version="$(sudo -n "$release_helper" version)"
+if ! helper_version="$(sudo -n "$release_helper" version)"; then
+    printf 'ERROR: restricted release helper is unavailable through sudo -n: %s\n' \
+        "$release_helper" >&2
+    exit 2
+fi
 [[ "$helper_version" == "1" ]] || {
     printf 'ERROR: expected release helper version 1, found: %s\n' "$helper_version" >&2
     exit 3

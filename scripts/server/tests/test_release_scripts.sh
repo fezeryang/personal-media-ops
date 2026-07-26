@@ -117,6 +117,12 @@ if grep -Eq \
     fail "deploy script contains a direct privileged command"
 fi
 
+if grep -Fq '[[ -x "$release_helper" ]]' "$DEPLOY"; then
+    fail "deploy script must not require direct helper execution by mediaops"
+fi
+grep -Fq 'sudo -n "$release_helper" version' "$DEPLOY" ||
+    fail "deploy script must validate helper availability through sudo -n"
+
 finalize_line="$(
     grep -nF 'sudo -n /usr/local/sbin/mediaops-release finalize' "$DEPLOY" |
         cut -d: -f1
