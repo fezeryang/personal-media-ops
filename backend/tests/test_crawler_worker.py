@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -6,7 +7,12 @@ import pytest
 
 from app.core.config import Settings
 from app.repositories.crawler_tasks import CrawlerTaskRepository
-from app.workers.crawler_worker import CrawlerWorker, WorkerAlreadyRunning, WorkerLock
+from app.workers.crawler_worker import (
+    STREAM_READER_LIMIT_BYTES,
+    CrawlerWorker,
+    WorkerAlreadyRunning,
+    WorkerLock,
+)
 
 
 def worker_settings(base: Settings, runner: Path) -> Settings:
@@ -84,6 +90,103 @@ print("crawler completed", flush=True)
     assert stored["actual_count"] == 2
     assert stored["pid"] is not None
     assert stored["finished_at"] is not None
+
+
+def test_worker_survives_stdout_line_beyond_stream_limit(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    # Beyond twice the stream limit: draining must iterate through the
+    # reader's flow-control pause/resume, not just a single oversized chunk.
+    oversized_length = 2 * STREAM_READER_LIMIT_BYTES + 4096
+    runner = tmp_path / "oversized_runner.py"
+    runner.write_text(
+        f"""
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
+args, _ = parser.parse_known_args()
+output = Path(args.output_dir)
+result_dir = output / "bilibili" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    '{{"video_id": "1"}}\\n{{"video_id": "2"}}\\n{{"video_id": "3"}}\\n',
+    encoding="utf-8",
+)
+print("x" * {oversized_length}, flush=True)
+print("crawler completed", flush=True)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = worker_settings(test_settings, runner)
+    task = seed_task(repository, settings)
+
+    asyncio.run(CrawlerWorker(repository, settings).run_once())
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "succeeded"
+    assert stored["actual_count"] == 2
+    log_data = (settings.log_root / "crawler" / f"{task['id']}.log").read_bytes()
+    # Exact count: a faulty drain that loses or duplicates buffered bytes
+    # must fail, not just one that truncates.
+    assert log_data.count(b"x") == oversized_length
+    assert b"crawler completed" in log_data
+
+
+def test_worker_terminates_subprocess_when_streaming_raises(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = tmp_path / "slow_runner.py"
+    runner.write_text(
+        """
+import time
+print("started", flush=True)
+while True:
+    time.sleep(0.1)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = worker_settings(test_settings, runner)
+    task = seed_task(repository, settings)
+
+    async def exploding_stream(
+        self: CrawlerWorker,
+        *args: object,
+        **kwargs: object,
+    ) -> bool:
+        raise RuntimeError("stream boom")
+
+    terminated_pids: list[int] = []
+    original_terminate = CrawlerWorker._terminate_process
+
+    async def recording_terminate(
+        self: CrawlerWorker,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        terminated_pids.append(process.pid)
+        await original_terminate(self, process)
+
+    monkeypatch.setattr(CrawlerWorker, "_stream_process", exploding_stream)
+    monkeypatch.setattr(CrawlerWorker, "_terminate_process", recording_terminate)
+    worker = CrawlerWorker(repository, settings, terminate_timeout_seconds=0.5)
+
+    asyncio.run(asyncio.wait_for(worker.run_once(), timeout=5))
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert "stream boom" in str(stored["error_message"])
+    assert terminated_pids == [stored["pid"]]
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(stored["pid"]), 0)
 
 
 def test_worker_records_nonzero_exit(

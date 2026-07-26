@@ -12,6 +12,8 @@ from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
 from app.crawler.results import count_normalized_results
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 
+STREAM_READER_LIMIT_BYTES = 1024 * 1024
+
 
 class WorkerAlreadyRunning(RuntimeError):
     pass
@@ -103,20 +105,25 @@ class CrawlerWorker:
                 stderr=asyncio.subprocess.STDOUT,
                 env=self._build_environment(),
                 start_new_session=True,
+                limit=STREAM_READER_LIMIT_BYTES,
             )
-            self.repository.set_pid(task_id, process.pid)
-            cancelled = await self._stream_process(
-                task_id,
-                process,
-                log_path,
-                qrcode_path,
-                adapter,
-            )
+            try:
+                self.repository.set_pid(task_id, process.pid)
+                cancelled = await self._stream_process(
+                    task_id,
+                    process,
+                    log_path,
+                    qrcode_path,
+                    adapter,
+                )
+                return_code = None if cancelled else await process.wait()
+            except Exception:
+                await self._terminate_process(process)
+                raise
             if cancelled:
                 self.repository.complete_cancelled(task_id)
                 return
 
-            return_code = await process.wait()
             if return_code == 0:
                 self.repository.complete_success(
                     task_id,
@@ -224,7 +231,7 @@ class CrawlerWorker:
 
                 try:
                     line = await asyncio.wait_for(
-                        process.stdout.readline(),
+                        self._read_stream_chunk(process.stdout),
                         timeout=self.settings.crawler_poll_interval_seconds,
                     )
                 except TimeoutError:
@@ -242,6 +249,23 @@ class CrawlerWorker:
                     continue
                 break
         return False
+
+    @staticmethod
+    async def _read_stream_chunk(stream: asyncio.StreamReader) -> bytes:
+        """Read one line, degrading to a raw chunk for oversized lines.
+
+        ``readuntil`` keeps the buffered bytes intact when it raises
+        ``LimitOverrunError``, so an oversized line is drained with ``read``
+        and still lands in the log instead of aborting the task.
+        """
+        try:
+            return await stream.readuntil(b"\n")
+        except asyncio.IncompleteReadError as error:
+            return error.partial
+        except asyncio.LimitOverrunError as error:
+            return await stream.read(max(error.consumed, 1))
+        except ValueError:
+            return await stream.read(STREAM_READER_LIMIT_BYTES)
 
     async def _terminate_process(
         self,
