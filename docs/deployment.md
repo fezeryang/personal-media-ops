@@ -226,24 +226,26 @@ scripts/server/deploy.sh \
   --execute
 ```
 
-执行顺序：
+部署按阶段执行，每个阶段使用独立的短连接 SSH 会话：
 
 ```text
-身份和工作树检查
-→ fetch/固定 origin/main 目标
-→ fast-forward 与迁移授权检查
-→ SQLite 备份
-→ git pull --ff-only
-→ uv sync --frozen
-→ 后端 pytest
-→ npm ci
-→ 前端 lint/test/build
-→ 已授权时执行 Alembic upgrade 并校验 head
-→ restricted helper finalize
-→ 内部健康检查
-→ 公网健康检查
-→ 记录新旧 commit
+preflight：身份、工作树、目标 commit、迁移检测、helper 版本
+→ backup：SQLite 一致性备份
+→ git-sync：fetch 并 git pull --ff-only 到固定目标 commit
+→ backend-test：uv sync --frozen 与后端 pytest
+→ frontend-build：npm ci 与前端 lint/test/build，写入 .mediaops-release 标记
+→ migrate：已授权时执行 Alembic upgrade 并校验 head
+→ finalize：restricted helper finalize
+→ verify：内部健康检查、公网健康检查、记录新旧 commit
 ```
+
+长时间运行的阶段附加 SSH keepalive（`ServerAliveInterval=15`、
+`ServerAliveCountMax=8`）。`backup` 到 `finalize` 这些标记阶段在服务器端成功
+完成后追加一行 `<stage>=done <UTC 时间戳>` 到
+`/var/lib/mediaops/deploy-state/<target-commit>.stages`（`preflight` 与
+`verify` 不写标记），标记目录用 `mkdir -p` 幂等创建。不带 `--resume` 的
+execute 运行会先清空该目标 commit 的标记文件，确保历史尝试遗留的标记不会满足
+255 重查。
 
 所有测试和构建成功后，部署脚本只调用：
 
@@ -255,6 +257,32 @@ sudo -n /usr/local/sbin/mediaops-release finalize
 `--allow-migrations` 时不得执行。任何前置 gate 失败都不得调用 helper。helper 或
 发布后健康检查失败时可能存在部分
 激活状态，必须报告失败并先诊断，不能宣称发布成功。
+
+### Resume 与 SSH 传输异常
+
+- `--resume` 会在 preflight 之后读取目标 commit 的阶段标记文件，跳过已记录
+  `done` 的阶段；preflight 和 verify 始终重新执行。各阶段自身幂等（已在目标
+  commit 时 `git pull --ff-only` 为 no-op，pytest/npm 重跑安全），也可单独重跑：
+
+  ```bash
+  scripts/server/deploy.sh --target-ref <origin-main-sha> --resume --execute
+  ```
+
+- 某阶段 SSH 以 255（传输错误）退出时，脚本不会立即判定失败，而是重连一次并
+  检查该阶段的远端标记；标记为 `done` 时输出
+  `SSH transport anomaly, stage completed remotely` 警告并继续，否则按原样以
+  阶段名报告失败。其他非零退出码仍直接判定阶段失败。
+
+### finalize 的 .user.ini 回退
+
+静态目录中存在 BaoTa 面板的不可变（`chattr +i`）`.user.ini` 文件，已部署的
+helper v1 在 `rsync --delete` 尝试删除它时会以 exit 23 中止 finalize，即使发布
+内容本身已完成。deploy.sh 对此提供回退：finalize 失败后核对
+`/www/wwwroot/ops.fezern8n.com/.mediaops-release` 与
+`/opt/personal-media-ops/frontend/dist/.mediaops-release` 是否都精确等于目标
+commit。两者一致时，依次单独调用白名单内的 `restart-services`、
+`nginx-reload`、`verify` 子命令完成激活，任何一步失败仍视为部署失败；标记
+不一致则立即中止并报告可能的部分激活。日志会明确记录走了哪条路径。
 
 ## Restricted Helper Source
 
@@ -268,6 +296,11 @@ infra/sudoers/mediaops-release.example
 helper 版本为 `1`，固定子命令为 `version`、`status`、`publish-frontend`、
 `restart-services`、`nginx-check`、`nginx-reload`、`verify` 和 `finalize`。
 它不接受任意路径、服务或额外参数。
+
+helper 源中的 `publish-frontend` rsync 已加入 `--exclude='.user.ini'` 与
+`--filter='protect .user.ini'`，避免 `--delete` 尝试删除 BaoTa 面板的不可变
+`.user.ini` 而以 exit 23 中止；版本号保持 `1`，该修复在下一次经审查的 helper
+安装后生效。在此之前，deploy.sh 通过上述 finalize 回退兼容已部署的 helper v1。
 
 管理员可在独立维护窗口审查后安装；应用部署脚本永远不会执行这些安装命令：
 

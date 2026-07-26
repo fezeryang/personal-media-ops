@@ -20,6 +20,14 @@ readonly -a MEDIAOPS_SSH_OPTIONS=(
   -o ConnectTimeout=10
 )
 
+# Long-running remote commands (tests, builds, migrations) add keepalives so
+# a quiet channel is probed instead of silently dropped mid-deployment.
+readonly -a MEDIAOPS_SSH_LONG_OPTIONS=(
+  "${MEDIAOPS_SSH_OPTIONS[@]}"
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=8
+)
+
 mediaops_error() {
   local exit_code="$1"
   local line_number="$2"
@@ -108,6 +116,12 @@ mediaops_ssh() {
   local host="$1"
   shift
   ssh "${MEDIAOPS_SSH_OPTIONS[@]}" "$host" "$@"
+}
+
+mediaops_ssh_long() {
+  local host="$1"
+  shift
+  ssh "${MEDIAOPS_SSH_LONG_OPTIONS[@]}" "$host" "$@"
 }
 
 mediaops_require_ssh_alias() {

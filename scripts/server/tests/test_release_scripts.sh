@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 DEPLOY="${REPOSITORY_ROOT}/scripts/server/deploy.sh"
+COMMON="${REPOSITORY_ROOT}/scripts/server/lib/common.bash"
 HELPER="${REPOSITORY_ROOT}/infra/release/mediaops-release"
 SUDOERS="${REPOSITORY_ROOT}/infra/sudoers/mediaops-release.example"
 
@@ -51,7 +52,7 @@ assert_rejects() {
 [[ -x "$HELPER" ]] || fail "release helper source is not executable"
 [[ -f "$SUDOERS" ]] || fail "release sudoers source is missing"
 
-bash -n "$DEPLOY" "$HELPER"
+bash -n "$DEPLOY" "$HELPER" "$COMMON"
 
 dry_run_output="$(
     "$DEPLOY" \
@@ -83,6 +84,10 @@ assert_rejects "$DEPLOY" --root-stage
 
 [[ "$("$HELPER" version)" == "1" ]] ||
     fail "helper version output must be exactly 1"
+grep -Fq -- "--exclude='.user.ini'" "$HELPER" ||
+    fail "helper rsync must exclude .user.ini from transfer"
+grep -Fq -- "--filter='protect .user.ini'" "$HELPER" ||
+    fail "helper rsync must protect .user.ini from --delete"
 assert_rejects "$HELPER" unknown
 assert_rejects "$HELPER" version extra
 assert_rejects "$HELPER" publish-frontend
@@ -150,6 +155,350 @@ if grep -Eq \
     '(cp|install|rsync).*/usr/local/sbin/mediaops-release|/etc/sudoers' \
     "$DEPLOY"; then
     fail "deploy script must not install the helper or sudoers"
+fi
+
+# --- stubbed execute-path tests (no real SSH or network, ever) -----------
+
+STUB_ROOT="$(mktemp -d)"
+trap 'rm -rf "$STUB_ROOT"' EXIT
+STUB_BIN="${STUB_ROOT}/bin"
+mkdir -p -- "$STUB_BIN"
+readonly TARGET_COMMIT="0123456789abcdef0123456789abcdef01234567"
+
+cat > "${STUB_BIN}/ssh" <<'STUB'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+state="${MEDIAOPS_STUB_STATE:?MEDIAOPS_STUB_STATE is required}"
+log="${state}/ssh.log"
+markers="${state}/markers"
+mkdir -p -- "$state"
+touch -- "$log" "$markers"
+
+if [[ "${1:-}" == "-G" ]]; then
+    printf 'hostname 203.0.113.10\nuser mediaops\n'
+    exit 0
+fi
+
+host=""
+command_string=""
+while (($# > 0)); do
+    case "$1" in
+        -o)
+            shift 2
+            ;;
+        *)
+            if [[ -z "$host" ]]; then
+                host="$1"
+            elif [[ -z "$command_string" ]]; then
+                command_string="$1"
+            else
+                command_string="${command_string} $1"
+            fi
+            shift
+            ;;
+    esac
+done
+printf '%s\n' "$command_string" >> "$log"
+
+read -ra words <<<"$command_string"
+
+mark_done() {
+    printf '%s=done 2026-07-26T00:00:00Z\n' "$1" >> "$markers"
+}
+
+consume_stdin() {
+    cat >/dev/null
+}
+
+run_stage() {
+    local stage="$1"
+    consume_stdin
+    if [[ "$stage" == "${MEDIAOPS_STUB_FAIL_STAGE:-}" ]]; then
+        if [[ "${MEDIAOPS_STUB_FAIL_COMPLETES:-0}" == "1" ]]; then
+            mark_done "$stage"
+        fi
+        exit "${MEDIAOPS_STUB_FAIL_CODE:-1}"
+    fi
+    mark_done "$stage"
+    printf 'stub_stage=%s\n' "$stage"
+    exit 0
+}
+
+case "$command_string" in
+    true)
+        exit 0
+        ;;
+    "bash -s")
+        consume_stdin
+        printf 'Backup created: /var/backups/mediaops/stub\n'
+        printf 'Checksum file: /var/backups/mediaops/stub/SHA256SUMS\n'
+        exit 0
+        ;;
+    "bash -s -- preflight "*)
+        consume_stdin
+        printf 'remote_user=mediaops\n'
+        printf 'remote_host=stub-host\n'
+        printf 'worktree=clean\n'
+        printf 'old_commit=fedcba9876543210fedcba9876543210fedcba98\n'
+        printf 'target_commit=%s\n' "${words[4]}"
+        printf 'target_ref=%s\n' "${words[4]}"
+        printf 'database_migration=%s\n' "${MEDIAOPS_STUB_MIGRATION:-no}"
+        printf 'migration_authorized=%s\n' "${words[5]}"
+        printf 'database_backup=pending\n'
+        printf 'tests=backend-pytest,frontend-lint,frontend-test,frontend-build\n'
+        printf 'helper_version=1\n'
+        printf 'helper_subcommand=finalize\n'
+        exit 0
+        ;;
+    "bash -s -- git-sync "*)
+        run_stage git-sync
+        ;;
+    "bash -s -- backend-test "*)
+        run_stage backend-test
+        ;;
+    "bash -s -- frontend-build "*)
+        run_stage frontend-build
+        ;;
+    "bash -s -- migrate "*)
+        run_stage migrate
+        ;;
+    "bash -s -- finalize "*)
+        run_stage finalize
+        ;;
+    "bash -s -- write-stage-marker "*)
+        consume_stdin
+        mark_done "${words[5]}"
+        exit 0
+        ;;
+    "bash -s -- reset-stage-markers "*)
+        consume_stdin
+        : > "$markers"
+        exit 0
+        ;;
+    "bash -s -- verify-publish-marker "*)
+        consume_stdin
+        printf 'published_release=stub\n'
+        printf 'built_release=stub\n'
+        printf 'release_marker_parity=%s\n' "${MEDIAOPS_STUB_PARITY:-match}"
+        exit 0
+        ;;
+    "bash -s -- record-deployment "*)
+        consume_stdin
+        exit 0
+        ;;
+    "cat -- '/var/lib/mediaops/deploy-state/"*)
+        cat -- "$markers"
+        exit 0
+        ;;
+    "grep -q -- "*)
+        if [[ "$command_string" =~ \^([a-z-]+)=done ]]; then
+            if grep -q "^${BASH_REMATCH[1]}=done" "$markers"; then
+                exit 0
+            fi
+        fi
+        exit 1
+        ;;
+    "curl -fsS --max-time 10 http://127.0.0.1:8000/api/health")
+        printf '{"status": "ok", "service": "personal-media-ops-api", "version": "stub"}\n'
+        exit 0
+        ;;
+    "sudo -n /usr/local/sbin/mediaops-release restart-services")
+        exit 0
+        ;;
+    "sudo -n /usr/local/sbin/mediaops-release nginx-reload")
+        exit 0
+        ;;
+    "sudo -n /usr/local/sbin/mediaops-release verify")
+        exit 0
+        ;;
+    *)
+        printf 'stub-ssh: unhandled command: %s\n' "$command_string" >&2
+        exit 97
+        ;;
+esac
+STUB
+chmod +x "${STUB_BIN}/ssh"
+
+cat > "${STUB_BIN}/curl" <<'STUB'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+state="${MEDIAOPS_STUB_STATE:?MEDIAOPS_STUB_STATE is required}"
+mkdir -p -- "$state"
+printf 'curl %s\n' "$*" >> "${state}/curl.log"
+printf '{"status": "ok", "service": "personal-media-ops-api", "version": "stub"}\n200\n'
+STUB
+chmod +x "${STUB_BIN}/curl"
+
+bash -n "${STUB_BIN}/ssh" "${STUB_BIN}/curl"
+
+stub_state_reset() {
+    local state="$1"
+    mkdir -p -- "$state"
+    : > "${state}/markers"
+    : > "${state}/ssh.log"
+    : > "${state}/curl.log"
+}
+
+run_stubbed_deploy() {
+    local state="$1"
+    shift
+    PATH="${STUB_BIN}:${PATH}" MEDIAOPS_STUB_STATE="$state" \
+        "$DEPLOY" \
+        --host stub-mediaops \
+        --target-ref "$TARGET_COMMIT" \
+        "$@" 2>&1
+}
+
+# 1. Dry-run must never invoke ssh or curl, even with the stubs on PATH.
+state_dry="${STUB_ROOT}/state-dry"
+stub_state_reset "$state_dry"
+stub_dry_output="$(run_stubbed_deploy "$state_dry" --dry-run)"
+assert_contains "$stub_dry_output" "Dry run only"
+if [[ -s "${state_dry}/ssh.log" ]]; then
+    fail "dry-run must not invoke ssh"
+fi
+if [[ -s "${state_dry}/curl.log" ]]; then
+    fail "dry-run must not invoke curl"
+fi
+
+# 2. A full staged execute run succeeds and records every stage marker.
+state_ok="${STUB_ROOT}/state-ok"
+stub_state_reset "$state_ok"
+execute_output="$(run_stubbed_deploy "$state_ok" --execute)"
+assert_contains "$execute_output" "Deployment succeeded"
+assert_contains "$execute_output" "New commit: ${TARGET_COMMIT}"
+for stage in backup git-sync backend-test frontend-build finalize; do
+    grep -q "^${stage}=done" "${state_ok}/markers" ||
+        fail "stage marker missing after execute: ${stage}"
+done
+if grep -qF "bash -s -- migrate" "${state_ok}/ssh.log"; then
+    fail "migrate stage must not run without detected migrations"
+fi
+
+# 3. --resume skips stages already marked done for the same target commit.
+state_resume="${STUB_ROOT}/state-resume"
+stub_state_reset "$state_resume"
+{
+    printf 'backup=done 2026-07-26T00:00:00Z\n'
+    printf 'git-sync=done 2026-07-26T00:00:00Z\n'
+    printf 'backend-test=done 2026-07-26T00:00:00Z\n'
+} > "${state_resume}/markers"
+resume_output="$(run_stubbed_deploy "$state_resume" --execute --resume)"
+assert_contains "$resume_output" "skipping: backup"
+assert_contains "$resume_output" "skipping: git-sync"
+assert_contains "$resume_output" "skipping: backend-test"
+assert_contains "$resume_output" "Deployment succeeded"
+if grep -qx "bash -s" "${state_resume}/ssh.log"; then
+    fail "resume must not rerun the completed backup stage"
+fi
+if grep -qF "bash -s -- git-sync" "${state_resume}/ssh.log"; then
+    fail "resume must not rerun the completed git-sync stage"
+fi
+if grep -qF "bash -s -- backend-test" "${state_resume}/ssh.log"; then
+    fail "resume must not rerun the completed backend-test stage"
+fi
+grep -qF "bash -s -- frontend-build" "${state_resume}/ssh.log" ||
+    fail "resume must still run stages without a done marker"
+
+# 4. SSH exit 255 with a completed remote marker is a transport anomaly.
+state_255="${STUB_ROOT}/state-255"
+stub_state_reset "$state_255"
+transport_output="$(
+    MEDIAOPS_STUB_FAIL_STAGE=frontend-build \
+    MEDIAOPS_STUB_FAIL_CODE=255 \
+    MEDIAOPS_STUB_FAIL_COMPLETES=1 \
+        run_stubbed_deploy "$state_255" --execute
+)"
+assert_contains "$transport_output" \
+    "SSH transport anomaly, stage completed remotely: frontend-build"
+assert_contains "$transport_output" "Deployment succeeded"
+
+# 5. SSH exit 255 without a remote marker still fails with the stage name.
+state_255_fail="${STUB_ROOT}/state-255-fail"
+stub_state_reset "$state_255_fail"
+if transport_fail_output="$(
+    MEDIAOPS_STUB_FAIL_STAGE=frontend-build \
+    MEDIAOPS_STUB_FAIL_CODE=255 \
+        run_stubbed_deploy "$state_255_fail" --execute
+)"; then
+    fail "deployment must fail when SSH dies and the stage marker is absent"
+fi
+assert_contains "$transport_fail_output" "stage did not complete: frontend-build"
+
+# 5b. A stale marker from an earlier attempt must not satisfy the exit-255
+# recheck in a non-resume run: execute clears the marker file first.
+state_stale="${STUB_ROOT}/state-stale"
+stub_state_reset "$state_stale"
+printf 'frontend-build=done 2026-07-25T00:00:00Z\n' > "${state_stale}/markers"
+if stale_output="$(
+    MEDIAOPS_STUB_FAIL_STAGE=frontend-build \
+    MEDIAOPS_STUB_FAIL_CODE=255 \
+        run_stubbed_deploy "$state_stale" --execute
+)"; then
+    fail "a stale stage marker must not mask a failed stage in a non-resume run"
+fi
+assert_contains "$stale_output" "stage did not complete: frontend-build"
+
+# 6. Finalize fallback: helper v1 fails but release markers match the target.
+state_fallback="${STUB_ROOT}/state-fallback"
+stub_state_reset "$state_fallback"
+fallback_output="$(
+    MEDIAOPS_STUB_FAIL_STAGE=finalize \
+    MEDIAOPS_STUB_FAIL_CODE=23 \
+    MEDIAOPS_STUB_PARITY=match \
+        run_stubbed_deploy "$state_fallback" --execute
+)"
+assert_contains "$fallback_output" "finalize fallback succeeded"
+assert_contains "$fallback_output" "Deployment succeeded"
+for subcommand in restart-services nginx-reload verify; do
+    grep -qF "sudo -n /usr/local/sbin/mediaops-release ${subcommand}" \
+        "${state_fallback}/ssh.log" ||
+        fail "finalize fallback must invoke helper subcommand: ${subcommand}"
+done
+grep -q "^finalize=done" "${state_fallback}/markers" ||
+    fail "finalize fallback must record the finalize stage marker"
+
+# 7. Finalize fallback aborts when the release markers do not match.
+state_mismatch="${STUB_ROOT}/state-mismatch"
+stub_state_reset "$state_mismatch"
+if mismatch_output="$(
+    MEDIAOPS_STUB_FAIL_STAGE=finalize \
+    MEDIAOPS_STUB_FAIL_CODE=23 \
+    MEDIAOPS_STUB_PARITY=mismatch \
+        run_stubbed_deploy "$state_mismatch" --execute
+)"; then
+    fail "deployment must fail when finalize fails and markers do not match"
+fi
+assert_contains "$mismatch_output" "release markers do not match"
+if grep -qF "mediaops-release restart-services" "${state_mismatch}/ssh.log"; then
+    fail "fallback must not restart services when markers do not match"
+fi
+
+# 8. Authorized migrations run the migrate stage; unauthorized ones abort.
+state_migration="${STUB_ROOT}/state-migration"
+stub_state_reset "$state_migration"
+migration_output="$(
+    MEDIAOPS_STUB_MIGRATION=yes \
+        run_stubbed_deploy "$state_migration" --execute --allow-migrations
+)"
+assert_contains "$migration_output" "Deployment succeeded"
+grep -qF "bash -s -- migrate" "${state_migration}/ssh.log" ||
+    fail "authorized migration must run the migrate stage"
+grep -q "^migrate=done" "${state_migration}/markers" ||
+    fail "authorized migration must record the migrate stage marker"
+
+state_unauthorized="${STUB_ROOT}/state-unauthorized"
+stub_state_reset "$state_unauthorized"
+if unauthorized_output="$(
+    MEDIAOPS_STUB_MIGRATION=yes \
+        run_stubbed_deploy "$state_unauthorized" --execute
+)"; then
+    fail "deployment must fail when a migration is detected without --allow-migrations"
+fi
+assert_contains "$unauthorized_output" "not explicitly authorized"
+if grep -qF "bash -s -- migrate" "${state_unauthorized}/ssh.log"; then
+    fail "unauthorized migration must never reach the migrate stage"
 fi
 
 printf 'release_script_tests=passed\n'

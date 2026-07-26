@@ -16,7 +16,7 @@ healthcheck.sh [--base-url URL] [--with-ssh] [--host SSH_ALIAS]
 logs.sh SOURCE [--lines 1..5000] [--follow] [--host SSH_ALIAS]
 backup.sh [--host SSH_ALIAS] [--dry-run | --execute]
 deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
-          [--dry-run | --execute]
+          [--resume] [--dry-run | --execute]
 mediaops-release {version|status|publish-frontend|restart-services|nginx-check|nginx-reload|verify|finalize}
 ```
 
@@ -35,8 +35,28 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   invocation.
 - Authorized migrations run `uv run alembic upgrade head` after backup and all
   tests/builds, then verify runtime schema head before helper invocation.
-- The deploy script calls only
+- Deployment runs as isolated stages (`preflight`, `backup`, `git-sync`,
+  `backend-test`, `frontend-build`, `migrate`, `finalize`, `verify`), each in
+  its own SSH session; long-running stages add SSH keepalives. The
+  marker-tracked stages (`backup` through `finalize`) append
+  `<stage>=done <utc-timestamp>` to
+  `/var/lib/mediaops/deploy-state/<target-commit>.stages` only after remote
+  success; `preflight` and `verify` are not marker-tracked.
+- `--resume` skips stages already marked done for the same target commit;
+  `preflight` and `verify` always run. A non-resume execute run clears the
+  target commit's marker file first, so stale markers from earlier attempts
+  cannot satisfy the exit-255 recheck. Stages are idempotent and individually
+  re-runnable.
+- An SSH exit of 255 triggers exactly one reconnect to recheck the remote
+  stage marker; a `done` marker means the stage completed remotely, otherwise
+  the stage fails as usual.
+- The deploy script normally calls only
   `sudo -n /usr/local/sbin/mediaops-release finalize` for privileged work.
+  When the deployed helper v1 finalize fails but both `.mediaops-release`
+  markers already equal the target commit (the known immutable `.user.ini`
+  rsync failure), the script may complete activation with the individually
+  allowlisted `restart-services`, `nginx-reload`, and `verify` subcommands;
+  a marker mismatch aborts instead.
 - Helper version is `1`; its paths, services, binaries, and subcommands are
   fixed.
 - The installed helper may intentionally be `root:root 0750`; `mediaops` does
@@ -63,7 +83,10 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 | Backup failure | Stop before pull |
 | Target changes after backup | Stop before pull |
 | Test/build failure | Do not invoke `finalize` |
-| Helper failure | Report restricted-release stage; never claim success |
+| Stage SSH exit 255 with remote `done` marker | Warn and continue |
+| Stage SSH exit 255 without remote marker | Fail with the stage name |
+| Helper finalize failure with both release markers at target | Complete via allowlisted `restart-services`/`nginx-reload`/`verify` |
+| Helper failure without marker parity | Report restricted-release stage; never claim success |
 | Health failure | Report failed stage; never record success |
 | Extra/unknown helper argument | Exit 2 |
 | Helper mutation invoked without root | Exit 3 |
@@ -87,6 +110,10 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 - Release script tests cover dry-run, invalid args, helper version/allowlist,
   no direct root commands, no direct-user helper executability assumption, and
   gate ordering before `finalize`.
+- Stubbed (never real SSH) execute-path tests cover `--resume` stage
+  skipping, exit-255 marker recovery, the non-resume stale-marker reset, the
+  finalize `.user.ini` fallback, the helper rsync protect/exclude filter, and
+  that dry-run never invokes SSH.
 - Official Skill validation passes.
 - Backend pytest and frontend lint/test/build remain green.
 - Secret/artifact scans find no private keys, `.env`, database, logs, QR codes,

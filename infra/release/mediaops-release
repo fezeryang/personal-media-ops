@@ -118,11 +118,18 @@ publish_frontend_impl() {
     }
 
     log "Publishing frontend"
+    # The BaoTa panel keeps an immutable (chattr +i) .user.ini in the static
+    # root that even root cannot unlink; protect it from --delete and exclude
+    # it from transfer so rsync no longer exits 23 on a completed publish.
+    # This fix keeps HELPER_VERSION at "1"; it takes effect on the next
+    # reviewed helper installation.
     "$RSYNC" \
         --archive \
         --delete \
         --no-owner \
         --no-group \
+        --exclude='.user.ini' \
+        --filter='protect .user.ini' \
         "${FRONTEND_BUILD}/" \
         "${STATIC_ROOT}/"
 }

@@ -123,8 +123,12 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
-脚本依次确认身份与工作树、fetch 并固定目标、拒绝非 fast-forward 和未授权迁移、
-备份 SQLite、pull、运行后端同步/pytest、运行前端 ci/lint/test/build，然后只调用：
+脚本按阶段执行：`preflight`（身份、工作树、目标、迁移检测、helper 版本）、
+`backup`、`git-sync`、`backend-test`、`frontend-build`、`migrate`（仅授权时）、
+`finalize`、`verify`。每个阶段使用独立 SSH 会话，长时间运行的阶段附加
+keepalive；`backup` 到 `finalize` 这些标记阶段在远端成功后才在
+`/var/lib/mediaops/deploy-state/<target-commit>.stages` 记录
+`<stage>=done <UTC 时间戳>`。所有 gate 通过后，特权操作只调用：
 
 ```bash
 sudo -n /usr/local/sbin/mediaops-release finalize
@@ -133,6 +137,18 @@ sudo -n /usr/local/sbin/mediaops-release finalize
 包含 migration/schema 路径的发布默认停止。迁移和回滚方案经审查后，使用
 `--allow-migrations --execute` 显式授权；脚本会在备份、测试和构建成功后执行
 `uv run alembic upgrade head`，校验 revision 后才调用 `finalize`。
+
+中断后的重试可加 `--resume`：脚本读取目标 commit 的阶段标记，跳过已完成阶段，
+`preflight` 和 `verify` 始终重新执行。不带 `--resume` 的 execute 运行会先清空
+该目标 commit 的标记文件，避免历史标记干扰本次判定。某阶段 SSH 以 255 退出
+时，脚本重连一次检查远端标记；标记为 `done` 则输出 `SSH transport anomaly`
+警告并继续，否则按阶段名报告失败。
+
+已部署 helper v1 的 finalize 会因静态目录中不可变的 BaoTa `.user.ini` 在
+rsync `--delete` 时以 exit 23 中止。deploy.sh 会在 finalize 失败后核对发布端与
+构建端的 `.mediaops-release` 是否都等于目标 commit：一致时依次单独调用白名单内
+的 `restart-services`、`nginx-reload`、`verify` 完成激活；不一致则中止并报告
+可能的部分激活。
 
 任何 gate 失败都不会调用 `finalize`。helper 或健康检查失败时，脚本报告具体阶段并
 明确发布不成功，不会把部分准备或部分激活描述为成功。

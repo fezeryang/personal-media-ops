@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.bash
 source "${SCRIPT_DIR}/lib/common.bash"
 
+readonly DEPLOY_STATE_DIR="/var/lib/mediaops/deploy-state"
+
 DEPLOY_STAGE="argument-validation"
 
 deployment_failure() {
@@ -30,18 +32,22 @@ trap 'deployment_failure "$?" "$LINENO"' ERR
 
 usage() {
     cat <<'EOF'
-Usage: deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations] [--dry-run | --execute]
+Usage: deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
+                 [--resume] [--dry-run | --execute]
 
-Run a controlled deployment of GitHub main through the restricted release helper.
+Run a controlled, staged deployment of GitHub main through the restricted
+release helper. Every stage uses its own short-lived SSH connection and records
+a completion marker on the server, so an interrupted deployment can be resumed.
 
 Options:
   --host SSH_ALIAS  SSH config alias (default: MEDIAOPS_SSH_HOST or mediaops-prod)
   --target-ref REF  Expected origin/main commit or ref (default: origin/main)
   --allow-migrations
                     Permit reviewed Alembic migrations after backup and tests
+  --resume           Skip stages already recorded as done on the server for the
+                     same target commit (preflight and verify always run)
   --dry-run          Print the deployment plan without connecting (default)
   --execute          Back up, pull, test, build, finalize, and verify
-  -h, --help         Show this help
 
 Dry-run never connects to production. Execute mode never installs or modifies
 the release helper or sudoers and never reads .env, cookies, QR codes, browser
@@ -51,25 +57,300 @@ EOF
 
 print_plan() {
     cat <<'EOF'
-Phases:
-  confirm SSH identity and production worktree
-  fetch origin/main and resolve the target ref
-  reject non-fast-forward updates and unauthorized database migrations
-  record the old commit
-  create a consistent SQLite backup
-  git pull --ff-only origin main
-  uv sync --frozen
-  backend pytest
-  npm ci --include=dev
-  frontend lint
-  frontend test
-  frontend build
-  uv run alembic upgrade head (only for explicitly authorized migrations)
-  restricted release helper finalize
-  internal API health check
-  public frontend and API health checks
-  record and print old/new commits
+Stages (each in its own SSH session, recorded in /var/lib/mediaops/deploy-state/<target-commit>.stages):
+  preflight: confirm SSH identity, worktree, target ref, migration authorization, helper version
+  backup: create a consistent SQLite backup
+  git-sync: fetch origin/main and git pull --ff-only to the fixed target commit
+  backend-test: uv sync --frozen; backend pytest
+  frontend-build: npm ci; frontend lint, test, build; write the frontend release marker
+  migrate: uv run alembic upgrade head (only for explicitly authorized migrations)
+  finalize: restricted release helper finalize (marker-verified fallback for the
+            deployed helper's known .user.ini publish failure)
+  verify: internal API health, public health checks, deployment record
+
+Transport hardening:
+  long-running stages use SSH keepalives (ServerAliveInterval=15, CountMax=8)
+  an SSH exit of 255 triggers one reconnect to recheck the remote stage marker
+  --resume skips stages already marked done for the same target commit
+  without --resume, execute clears the target commit's stage markers first
 EOF
+}
+
+# --- stage marker helpers -----------------------------------------------
+
+resume_markers=""
+
+load_resume_markers() {
+    resume_markers="$(
+        mediaops_ssh "$host" \
+            "cat -- '${DEPLOY_STATE_DIR}/${target_commit}.stages' 2>/dev/null || true"
+    )"
+}
+
+stage_recorded_locally() {
+    local stage="$1"
+    [[ -n "$resume_markers" ]] && grep -q "^${stage}=done" <<<"$resume_markers"
+}
+
+stage_done_remotely() {
+    local stage="$1"
+    mediaops_ssh "$host" \
+        "grep -q -- '^${stage}=done' '${DEPLOY_STATE_DIR}/${target_commit}.stages'"
+}
+
+# A non-resume execute run starts from a clean marker file so a stale marker
+# from an earlier attempt can never satisfy the exit-255 marker recheck for a
+# stage that genuinely failed in this run.
+reset_stage_markers() {
+    mediaops_ssh "$host" \
+        "bash -s -- reset-stage-markers ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+state_dir="/var/lib/mediaops/deploy-state"
+mkdir -p -- "$state_dir"
+: > "${state_dir}/${target_commit}.stages"
+REMOTE
+}
+
+write_stage_marker() {
+    local stage="$1"
+    mediaops_ssh "$host" \
+        "bash -s -- write-stage-marker ${target_commit} ${stage}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+stage="$2"
+state_dir="/var/lib/mediaops/deploy-state"
+mkdir -p -- "$state_dir"
+printf '%s=done %s\n' "$stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+REMOTE
+}
+
+# Run one marker-tracked stage: honor --resume, and treat an SSH transport
+# error (exit 255) as recoverable when the remote marker proves completion.
+run_marker_stage() {
+    local stage="$1"
+    local runner="$2"
+    DEPLOY_STAGE="$stage"
+    mediaops_stage "Stage: ${stage}"
+    if [[ "$resume" == true ]] && stage_recorded_locally "$stage"; then
+        mediaops_info "resume: stage already completed for ${target_commit}; skipping: ${stage}"
+        return 0
+    fi
+    local status=0
+    "$runner" || status=$?
+    if ((status == 255)); then
+        mediaops_warn "stage=${stage} SSH exited 255 (transport error); reconnecting once to recheck the remote stage marker"
+        if stage_done_remotely "$stage"; then
+            mediaops_warn "SSH transport anomaly, stage completed remotely: ${stage}"
+            status=0
+        fi
+    fi
+    ((status == 0)) ||
+        deployment_abort "stage did not complete: ${stage}" "$status"
+}
+
+# --- stage runners (pipeline order) --------------------------------------
+
+stage_backup() {
+    "${SCRIPT_DIR}/backup.sh" --host "$host" --execute &&
+        write_stage_marker backup
+}
+
+stage_git_sync() {
+    mediaops_ssh_long "$host" "bash -s -- git-sync ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+repository="/opt/personal-media-ops"
+state_dir="/var/lib/mediaops/deploy-state"
+
+[[ -z "$(git -C "$repository" status --porcelain)" ]] || {
+    printf 'ERROR: worktree became dirty after preflight\n' >&2
+    exit 3
+}
+git -C "$repository" fetch origin main
+resolved_target="$(git -C "$repository" rev-parse origin/main)"
+[[ "$resolved_target" == "$target_commit" ]] || {
+    printf 'ERROR: origin/main changed after preflight: expected %s, found %s\n' \
+        "$target_commit" "$resolved_target" >&2
+    exit 3
+}
+git -C "$repository" merge-base --is-ancestor HEAD "$target_commit" || {
+    printf 'ERROR: target is no longer a fast-forward\n' >&2
+    exit 3
+}
+git -C "$repository" pull --ff-only origin main
+[[ "$(git -C "$repository" rev-parse HEAD)" == "$target_commit" ]] || {
+    printf 'ERROR: repository did not reach target commit\n' >&2
+    exit 3
+}
+mkdir -p -- "$state_dir"
+printf 'git-sync=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+printf 'git_sync=completed\n'
+REMOTE
+}
+
+stage_backend_test() {
+    mediaops_ssh_long "$host" "bash -s -- backend-test ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+repository="/opt/personal-media-ops"
+state_dir="/var/lib/mediaops/deploy-state"
+export PATH="${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+cd -- "${repository}/backend"
+uv sync --frozen
+uv run pytest
+mkdir -p -- "$state_dir"
+printf 'backend-test=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+printf 'backend_test=completed\n'
+REMOTE
+}
+
+stage_frontend_build() {
+    mediaops_ssh_long "$host" "bash -s -- frontend-build ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+repository="/opt/personal-media-ops"
+node_bin_dir="/www/server/nodejs/v22.22.3/bin"
+state_dir="/var/lib/mediaops/deploy-state"
+export PATH="${node_bin_dir}:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+cd -- "${repository}/frontend"
+npm ci --include=dev --cache "${HOME}/.npm-cache"
+npm run lint
+npm run test
+npm run build
+[[ -f "${repository}/frontend/dist/index.html" ]] || {
+    printf 'ERROR: frontend build did not create dist/index.html\n' >&2
+    exit 3
+}
+printf '%s\n' "$target_commit" > "${repository}/frontend/dist/.mediaops-release"
+mkdir -p -- "$state_dir"
+printf 'frontend-build=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+printf 'frontend_build=completed\n'
+REMOTE
+}
+
+stage_migrate() {
+    mediaops_ssh_long "$host" "bash -s -- migrate ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+repository="/opt/personal-media-ops"
+database_path="/var/lib/mediaops/mediaops.db"
+state_dir="/var/lib/mediaops/deploy-state"
+export PATH="${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+cd -- "${repository}/backend"
+MEDIAOPS_DATABASE_PATH="$database_path" uv run alembic upgrade head
+MEDIAOPS_DATABASE_PATH="$database_path" uv run python -c \
+    'from app.core.config import settings; from app.database_migrations import require_database_current; require_database_current(settings.database_path)'
+mkdir -p -- "$state_dir"
+printf 'migrate=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+printf 'database_migration=completed\n'
+REMOTE
+}
+
+stage_finalize() {
+    mediaops_ssh_long "$host" "bash -s -- finalize ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+state_dir="/var/lib/mediaops/deploy-state"
+
+sudo -n /usr/local/sbin/mediaops-release finalize
+mkdir -p -- "$state_dir"
+printf 'finalize=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+REMOTE
+}
+
+# Compare the published and built frontend release markers against the target
+# commit without touching any sensitive file.
+finalize_marker_parity() {
+    mediaops_ssh "$host" "bash -s -- verify-publish-marker ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+published_marker="/www/wwwroot/ops.fezern8n.com/.mediaops-release"
+built_marker="/opt/personal-media-ops/frontend/dist/.mediaops-release"
+published_commit="missing"
+built_commit="missing"
+if [[ -r "$published_marker" ]]; then
+    published_commit="$(tr -d '[:space:]' < "$published_marker")"
+fi
+if [[ -r "$built_marker" ]]; then
+    built_commit="$(tr -d '[:space:]' < "$built_marker")"
+fi
+printf 'published_release=%s\n' "$published_commit"
+printf 'built_release=%s\n' "$built_commit"
+if [[ "$published_commit" == "$target_commit" &&
+      "$built_commit" == "$target_commit" ]]; then
+    printf 'release_marker_parity=match\n'
+else
+    printf 'release_marker_parity=mismatch\n'
+fi
+REMOTE
+}
+
+# The deployed helper v1 aborts finalize when rsync cannot unlink the
+# immutable BaoTa .user.ini file, even though the publish itself completed.
+# If both release markers already equal the target commit, finish the
+# activation with the individually allowlisted helper subcommands instead.
+finalize_fallback() {
+    local finalize_status="$1"
+    local parity
+
+    mediaops_warn "helper finalize failed (exit=${finalize_status}); checking published release markers before any fallback"
+    parity="$(finalize_marker_parity)" ||
+        deployment_abort "could not inspect release markers after helper finalize failure" "$finalize_status"
+    printf '%s\n' "$parity"
+    grep -q '^release_marker_parity=match$' <<<"$parity" ||
+        deployment_abort "helper finalize failed and release markers do not match target ${target_commit}; production may be partially activated" "$finalize_status"
+
+    mediaops_warn "finalize fallback: publish already matches the target commit; completing activation with individual helper subcommands"
+    mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release restart-services' ||
+        deployment_abort "fallback restart-services did not succeed"
+    mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release nginx-reload' ||
+        deployment_abort "fallback nginx-reload did not succeed"
+    mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release verify' ||
+        deployment_abort "fallback verify did not succeed"
+    write_stage_marker finalize ||
+        deployment_abort "could not record the finalize stage marker after fallback"
+    mediaops_info "finalize fallback succeeded: restart-services, nginx-reload, and verify completed individually"
+}
+
+run_finalize_stage() {
+    DEPLOY_STAGE="finalize"
+    mediaops_stage "Stage: finalize"
+    printf 'Helper path: %s\n' "$MEDIAOPS_RELEASE_HELPER"
+    printf 'Helper subcommand: finalize\n'
+    if [[ "$resume" == true ]] && stage_recorded_locally finalize; then
+        mediaops_info "resume: stage already completed for ${target_commit}; skipping: finalize"
+        return 0
+    fi
+    local status=0
+    stage_finalize || status=$?
+    if ((status == 255)); then
+        mediaops_warn "stage=finalize SSH exited 255 (transport error); reconnecting once to recheck the remote stage marker"
+        if stage_done_remotely finalize; then
+            mediaops_warn "SSH transport anomaly, stage completed remotely: finalize"
+            status=0
+        fi
+    fi
+    if ((status != 0)); then
+        finalize_fallback "$status"
+    fi
 }
 
 record_deployment() {
@@ -77,8 +358,10 @@ record_deployment() {
     local old_commit="$2"
     local target_commit="$3"
 
-    mediaops_ssh "$ssh_host" "bash -s -- ${old_commit} ${target_commit}" <<'REMOTE'
+    mediaops_ssh "$ssh_host" \
+        "bash -s -- record-deployment ${old_commit} ${target_commit}" <<'REMOTE'
 set -Eeuo pipefail
+shift
 old_commit="$1"
 target_commit="$2"
 record_path="/var/lib/mediaops/deployments.log"
@@ -101,6 +384,7 @@ target_ref="origin/main"
 execute=false
 dry_run=false
 allow_migrations=false
+resume=false
 
 while (($# > 0)); do
     case "$1" in
@@ -120,6 +404,10 @@ while (($# > 0)); do
             ;;
         --allow-migrations)
             allow_migrations=true
+            shift
+            ;;
+        --resume)
+            resume=true
             shift
             ;;
         --dry-run)
@@ -159,6 +447,12 @@ printf 'Database backup: required before pull\n'
 printf 'Tests: uv sync --frozen; backend pytest; frontend npm ci, lint, test, build\n'
 printf 'Helper path: %s\n' "$MEDIAOPS_RELEASE_HELPER"
 printf 'Helper subcommand: finalize\n'
+if [[ "$resume" == true ]]; then
+    printf 'Resume mode: enabled (stages already marked done for the target commit are skipped)\n'
+else
+    printf 'Resume mode: disabled\n'
+fi
+printf 'Stage markers: %s/<target-commit>.stages\n' "$DEPLOY_STATE_DIR"
 print_plan
 
 if [[ "$execute" != true ]]; then
@@ -169,11 +463,12 @@ fi
 DEPLOY_STAGE="ssh-preflight"
 mediaops_require_ssh "$host"
 
-DEPLOY_STAGE="fetch-and-target-validation"
+DEPLOY_STAGE="preflight"
 preflight="$(
     mediaops_ssh "$host" \
-        "bash -s -- ${target_ref} ${allow_migrations}" <<'REMOTE'
+        "bash -s -- preflight ${target_ref} ${allow_migrations}" <<'REMOTE'
 set -Eeuo pipefail
+shift
 target_ref="$1"
 allow_migrations="$2"
 repository="/opt/personal-media-ops"
@@ -298,127 +593,40 @@ printf 'Database backup: pending\n'
 printf 'Tests: backend pytest; frontend lint, test, build\n'
 printf 'Helper call after all gates: finalize\n'
 
-DEPLOY_STAGE="sqlite-backup"
-backup_output="$("${SCRIPT_DIR}/backup.sh" --host "$host" --execute)"
-printf '%s\n' "$backup_output"
-printf 'Database backup: completed\n'
-
-DEPLOY_STAGE="git-sync-and-build"
-mediaops_ssh "$host" \
-    "bash -s -- ${target_commit} ${migration_state} ${migration_authorized}" <<'REMOTE'
-set -Eeuo pipefail
-target_commit="$1"
-migration_state="$2"
-migration_authorized="$3"
-repository="/opt/personal-media-ops"
-node_bin_dir="/www/server/nodejs/v22.22.3/bin"
-database_path="/var/lib/mediaops/mediaops.db"
-remote_stage="initialization"
-export PATH="${node_bin_dir}:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-
-remote_failure() {
-    local exit_code="$1"
-    local line_number="$2"
-    trap - ERR
-    printf 'ERROR: remote deployment failed stage=%s exit=%s line=%s\n' \
-        "$remote_stage" "$exit_code" "$line_number" >&2
-    exit "$exit_code"
-}
-trap 'remote_failure "$?" "$LINENO"' ERR
-
-remote_stage="worktree-recheck"
-[[ -z "$(git -C "$repository" status --porcelain)" ]] || {
-    printf 'ERROR: worktree became dirty after preflight\n' >&2
-    exit 3
-}
-
-remote_stage="target-recheck"
-git -C "$repository" fetch origin main
-resolved_target="$(git -C "$repository" rev-parse origin/main)"
-[[ "$resolved_target" == "$target_commit" ]] || {
-    printf 'ERROR: origin/main changed after preflight: expected %s, found %s\n' \
-        "$target_commit" "$resolved_target" >&2
-    exit 3
-}
-git -C "$repository" merge-base --is-ancestor HEAD "$target_commit" || {
-    printf 'ERROR: target is no longer a fast-forward\n' >&2
-    exit 3
-}
-
-remote_stage="git-pull"
-git -C "$repository" pull --ff-only origin main
-[[ "$(git -C "$repository" rev-parse HEAD)" == "$target_commit" ]] || {
-    printf 'ERROR: repository did not reach target commit\n' >&2
-    exit 3
-}
-
-remote_stage="backend-dependency-sync"
-(
-    cd -- "${repository}/backend"
-    uv sync --frozen
-)
-
-remote_stage="backend-pytest"
-(
-    cd -- "${repository}/backend"
-    uv run pytest
-)
-
-remote_stage="frontend-npm-ci"
-(
-    cd -- "${repository}/frontend"
-    npm ci --include=dev --cache "${HOME}/.npm-cache"
-)
-
-remote_stage="frontend-lint"
-(
-    cd -- "${repository}/frontend"
-    npm run lint
-)
-
-remote_stage="frontend-test"
-(
-    cd -- "${repository}/frontend"
-    npm run test
-)
-
-remote_stage="frontend-build"
-(
-    cd -- "${repository}/frontend"
-    npm run build
-)
-
-[[ -f "${repository}/frontend/dist/index.html" ]] || {
-    printf 'ERROR: frontend build did not create dist/index.html\n' >&2
-    exit 3
-}
-
-if [[ "$migration_state" == "yes" ]]; then
-    [[ "$migration_authorized" == "true" ]] || {
-        printf 'ERROR: migration stage reached without authorization\n' >&2
-        exit 4
-    }
-    remote_stage="database-migration"
-    (
-        cd -- "${repository}/backend"
-        MEDIAOPS_DATABASE_PATH="$database_path" uv run alembic upgrade head
-        MEDIAOPS_DATABASE_PATH="$database_path" uv run python -c \
-            'from app.core.config import settings; from app.database_migrations import require_database_current; require_database_current(settings.database_path)'
-    )
+if [[ "$resume" == true ]]; then
+    DEPLOY_STAGE="resume-state"
+    load_resume_markers
+    if [[ -n "$resume_markers" ]]; then
+        mediaops_info "resume: completed stages recorded for ${target_commit}:"
+        printf '%s\n' "$resume_markers"
+    else
+        mediaops_info "resume: no completed stages recorded for ${target_commit}"
+    fi
+else
+    DEPLOY_STAGE="stage-state"
+    reset_stage_markers
+    mediaops_info "non-resume run: cleared stage markers for ${target_commit}"
 fi
 
-printf '%s\n' "$target_commit" > "${repository}/frontend/dist/.mediaops-release"
-printf 'remote_build=completed\n'
-REMOTE
+run_marker_stage backup stage_backup
+printf 'Database backup: completed\n'
 
-DEPLOY_STAGE="restricted-release-finalize"
-mediaops_stage "Restricted production activation"
-printf 'Helper path: %s\n' "$MEDIAOPS_RELEASE_HELPER"
-printf 'Helper subcommand: finalize\n'
-mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release finalize'
+run_marker_stage git-sync stage_git_sync
+run_marker_stage backend-test stage_backend_test
+run_marker_stage frontend-build stage_frontend_build
 
-DEPLOY_STAGE="internal-health-check"
-mediaops_stage "Internal API health check"
+if [[ "$migration_state" == "yes" ]]; then
+    [[ "$migration_authorized" == "true" ]] ||
+        deployment_abort "migration stage reached without authorization" 4
+    run_marker_stage migrate stage_migrate
+else
+    mediaops_info "migrate: no database migration detected; stage skipped"
+fi
+
+run_finalize_stage
+
+DEPLOY_STAGE="verify"
+mediaops_stage "Stage: verify"
 internal_health="$(
     mediaops_ssh "$host" \
         'curl -fsS --max-time 10 http://127.0.0.1:8000/api/health'
@@ -428,7 +636,6 @@ grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$internal_health" &&
     deployment_abort "internal API returned an invalid health payload"
 printf '%s\n' "$internal_health"
 
-DEPLOY_STAGE="public-health-check"
 "${SCRIPT_DIR}/healthcheck.sh" --host "$host"
 
 DEPLOY_STAGE="deployment-record"

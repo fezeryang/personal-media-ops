@@ -27,7 +27,8 @@ finalize
 ```
 
 Use `sudo -n`; never request a password or root shell. The full orchestrator
-calls only `finalize`. Repository sources are:
+normally calls only `finalize`; the reviewed `.user.ini` fallback below is the
+sole exception and uses only allowlisted subcommands. Repository sources are:
 
 ```text
 infra/release/mediaops-release
@@ -39,24 +40,43 @@ never copy or overwrite the installed helper or sudoers.
 
 ## Standard Sequence
 
-1. Confirm SSH identity, main branch, and clean worktree.
-2. Fetch `origin/main`; resolve `--target-ref`.
-3. Require the target to equal `origin/main` and be a fast-forward.
-4. Detect migration/schema paths. Stop unless `--allow-migrations` was
-   explicitly supplied after migration and rollback review.
-5. Record old and target commits, tests, helper version, and `finalize`.
-6. Back up SQLite with `scripts/server/backup.sh --execute`.
-7. Re-fetch and ensure the target did not change.
-8. Run `git pull --ff-only origin main`.
-9. Run `uv sync --frozen` and backend pytest.
-10. Run frontend `npm ci --include=dev`, lint, test, and build.
-11. For authorized schema changes, run `uv run alembic upgrade head` against
-    the fixed production SQLite path and verify the database is at head.
-12. Write the target commit to `frontend/dist/.mediaops-release`.
-13. Invoke `sudo -n /usr/local/sbin/mediaops-release finalize`.
-14. Verify the localhost API.
-15. Verify the public frontend, health API, and SPA route.
-16. Record success and print old/new commits.
+Deployment runs as isolated stages, each in its own SSH session; long-running
+stages add SSH keepalives. Marker-tracked stages (`backup` through `finalize`)
+append `<stage>=done <utc-timestamp>` to
+`/var/lib/mediaops/deploy-state/<target-commit>.stages` after remote success;
+`--resume` skips stages already recorded for the same target commit
+(`preflight` and `verify` always run), while a non-resume execute run clears
+the target commit's marker file first.
+
+1. `preflight`: confirm SSH identity, main branch, clean worktree; fetch
+   `origin/main`; resolve `--target-ref`; require the target to equal
+   `origin/main` and be a fast-forward; detect migration/schema paths and stop
+   unless `--allow-migrations` was explicitly supplied after migration and
+   rollback review; record old and target commits, tests, helper version, and
+   `finalize`.
+2. `backup`: back up SQLite with `scripts/server/backup.sh --execute`.
+3. `git-sync`: re-fetch, ensure the target did not change, run
+   `git pull --ff-only origin main`, and confirm HEAD equals the target.
+4. `backend-test`: run `uv sync --frozen` and backend pytest.
+5. `frontend-build`: run frontend `npm ci --include=dev`, lint, test, build,
+   and write the target commit to `frontend/dist/.mediaops-release`.
+6. `migrate` (authorized schema changes only): run
+   `uv run alembic upgrade head` against the fixed production SQLite path and
+   verify the database is at head.
+7. `finalize`: invoke `sudo -n /usr/local/sbin/mediaops-release finalize`.
+8. `verify`: verify the localhost API, the public frontend, health API, and
+   SPA route; record success and print old/new commits.
+
+If a stage's SSH invocation exits 255 (transport error), the orchestrator
+reconnects once and rechecks the remote stage marker; a `done` marker means
+the stage completed remotely and the deployment continues, otherwise the stage
+fails with its name.
+
+If the deployed helper v1 `finalize` fails but both the published and built
+`.mediaops-release` markers already equal the target commit (the known
+immutable BaoTa `.user.ini` rsync exit-23 failure), the orchestrator completes
+activation with the individually allowlisted `restart-services`,
+`nginx-reload`, and `verify` subcommands; a marker mismatch aborts instead.
 
 ## Helper Responsibilities
 
