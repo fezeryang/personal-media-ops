@@ -1,6 +1,8 @@
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -23,6 +25,45 @@ def _text(value: object) -> str | None:
     return normalized or None
 
 
+_COUNT_UNIT_MULTIPLIERS = {
+    "万": 10_000,
+    "w": 10_000,
+    "W": 10_000,
+    "亿": 100_000_000,
+}
+_ABBREVIATED_COUNT_PATTERN = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
+_MAX_COUNT_TEXT_LENGTH = 64
+# Crawled text is not trusted input: ``Decimal("1E+9999999")`` parses fine but
+# overflows the decimal context on multiplication, and a merely large exponent
+# would materialise a multi-hundred-megabyte int. Reject implausible magnitudes
+# before any arithmetic; real engagement counts stay far below this bound.
+_MAX_ABBREVIATED_AMOUNT = Decimal(10) ** 12
+
+
+def _integer_from_string(value: str) -> int | None:
+    normalized = value.strip().replace(",", "")
+    if normalized.endswith("+"):
+        normalized = normalized[:-1].strip()
+    multiplier = _COUNT_UNIT_MULTIPLIERS.get(normalized[-1:], 1)
+    if multiplier != 1:
+        normalized = normalized[:-1].strip()
+    if not normalized or len(normalized) > _MAX_COUNT_TEXT_LENGTH:
+        return None
+    if multiplier == 1:
+        # isdecimal() (not isdigit()) matches exactly what int() accepts:
+        # superscripts like "²" are isdigit() yet crash int().
+        return int(normalized) if normalized.isdecimal() else None
+    if _ABBREVIATED_COUNT_PATTERN.fullmatch(normalized) is None:
+        return None
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount < 0 or amount > _MAX_ABBREVIATED_AMOUNT:
+        return None
+    return int(amount * multiplier)
+
+
 def _integer(value: object) -> int | None:
     if isinstance(value, bool):
         return None
@@ -31,9 +72,7 @@ def _integer(value: object) -> int | None:
     if isinstance(value, float):
         return int(value) if value >= 0 and value.is_integer() else None
     if isinstance(value, str):
-        normalized = value.strip().replace(",", "")
-        if normalized.isdigit():
-            return int(normalized)
+        return _integer_from_string(value)
     return None
 
 
@@ -60,6 +99,7 @@ class CrawlerPlatformAdapter(ABC):
     display_name: str
     storage_directories: tuple[str, ...]
     verification_status: Literal["verified", "code_ready"]
+    headless_browser: bool
 
     def capability(self, enabled: bool) -> CrawlerPlatformCapability:
         return CrawlerPlatformCapability(
@@ -110,6 +150,8 @@ class CrawlerPlatformAdapter(ABC):
             "false",
             "--enable-sub-comments",
             "false",
+            "--headless",
+            "true" if self.headless_browser else "false",
         ]
 
     def content_result_files(self, task_dir: Path) -> list[Path]:
@@ -182,6 +224,7 @@ class BilibiliAdapter(CrawlerPlatformAdapter):
             display_name="哔哩哔哩",
             storage_directories=("bili", "bilibili"),
             verification_status="verified",
+            headless_browser=True,
         )
 
     def normalize_result(self, raw: RawResult) -> CrawlerResultItem:
@@ -211,7 +254,8 @@ class XiaohongshuAdapter(CrawlerPlatformAdapter):
             platform="xhs",
             display_name="小红书",
             storage_directories=("xhs",),
-            verification_status="code_ready",
+            verification_status="verified",
+            headless_browser=True,
         )
 
     def normalize_result(self, raw: RawResult) -> CrawlerResultItem:
@@ -240,6 +284,10 @@ class DouyinAdapter(CrawlerPlatformAdapter):
             display_name="抖音",
             storage_directories=("dy", "douyin"),
             verification_status="code_ready",
+            # douyin.com serves a captcha interstitial to headless browsers,
+            # so the reviewed Runner must drive a headful browser on a
+            # virtual display for this platform.
+            headless_browser=False,
         )
 
     def normalize_result(self, raw: RawResult) -> CrawlerResultItem:

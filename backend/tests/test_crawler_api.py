@@ -54,7 +54,7 @@ def test_capabilities_report_registry_and_global_limit(
         for item in response.json()["platforms"]
     ] == [
         ("bili", True, "verified"),
-        ("xhs", True, "code_ready"),
+        ("xhs", True, "verified"),
         ("dy", True, "code_ready"),
     ]
 

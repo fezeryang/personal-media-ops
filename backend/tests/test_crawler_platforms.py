@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from app.crawler.adapters import _integer
 from app.crawler.registry import (
     PlatformDisabledError,
     UnsupportedPlatformError,
@@ -16,7 +17,7 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
     assert capabilities[0].enabled is True
     assert capabilities[0].verification_status == "verified"
     assert capabilities[1].enabled is False
-    assert capabilities[1].verification_status == "code_ready"
+    assert capabilities[1].verification_status == "verified"
     assert capabilities[2].enabled is False
     assert capabilities[2].verification_status == "code_ready"
     assert all(item.crawler_types[0].value == "search" for item in capabilities)
@@ -49,6 +50,27 @@ def test_adapter_builds_fixed_safe_runner_arguments(platform: str) -> None:
     assert arguments[arguments.index("--enable-comments") + 1] == "false"
     assert arguments[arguments.index("--enable-sub-comments") + 1] == "false"
     assert "--enable-proxy" not in arguments
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("bili", "true"), ("xhs", "true"), ("dy", "false")],
+)
+def test_adapter_requests_headful_browser_only_for_douyin(
+    platform: str,
+    expected: str,
+) -> None:
+    adapter = platform_registry.get(platform)
+
+    arguments = adapter.build_runner_arguments(
+        keywords="AI",
+        requested_count=5,
+        output_dir=Path("/fixed/output"),
+        qrcode_path=Path("/fixed/qrcode.png"),
+    )
+
+    assert adapter.headless_browser is (expected == "true")
+    assert arguments[arguments.index("--headless") + 1] == expected
 
 
 @pytest.mark.parametrize(
@@ -147,6 +169,104 @@ def test_adapters_normalize_platform_results(
             assert result.metrics.play_count == value
         else:
             assert getattr(result, field) == value
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("399", 399),
+        ("0", 0),
+        (" 399 ", 399),
+        ("１２３", 123),
+        ("1544", 1544),
+        ("1,544", 1544),
+        ("5.7万", 57000),
+        ("2.1万", 21000),
+        ("3亿", 300000000),
+        ("1.2w", 12000),
+        ("1.2W", 12000),
+        ("1000+", 1000),
+        ("1.5万+", 15000),
+        # Sub-integer remainders of abbreviated counts truncate toward zero.
+        ("1.0000001万", 10000),
+        ("0.0万", 0),
+        (7, 7),
+        (0, 0),
+        (7.0, 7),
+        (0.0, 0),
+        (7.5, None),
+        (True, None),
+        (False, None),
+        (-3, None),
+        (-1.0, None),
+        ("-5", None),
+        ("-5.7万", None),
+        ("5.7", None),
+        ("赞", None),
+        ("", None),
+        ("   ", None),
+        ("-", None),
+        ("万", None),
+        ("+", None),
+        ("²", None),
+        ("NaN", None),
+        ("Infinity", None),
+        ("NaN万", None),
+        ("Infinity万", None),
+        # Implausible magnitudes are rejected before any Decimal arithmetic:
+        # multiplying them would overflow the decimal context or materialise a
+        # multi-hundred-megabyte int from untrusted crawled text.
+        ("1E+9999999万", None),
+        ("10000000000000万", None),
+        ("999999999999万", 9999999999990000),
+        ("1..5万", None),
+        ("1_2万", None),
+        ("1e3万", None),
+        (".5万", None),
+        ("1.万", None),
+        ("赞万", None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (None, None),
+    ],
+)
+def test_integer_parses_plain_and_abbreviated_counts(
+    value: object,
+    expected: int | None,
+) -> None:
+    assert _integer(value) == expected
+
+
+def test_integer_rejects_oversized_plain_numeric_text() -> None:
+    assert _integer("9" * 5000) is None
+
+
+def test_xhs_adapter_normalizes_abbreviated_metric_counts() -> None:
+    raw = {
+        "note_id": "note-prod-1",
+        "type": "normal",
+        "title": "Production note",
+        "desc": "Production description",
+        "nickname": "Author",
+        "note_url": "https://www.xiaohongshu.com/explore/note-prod-1",
+        "image_list": "https://example.test/a.jpg,https://example.test/b.jpg",
+        "time": 1753500000000,
+        "source_keyword": "AI",
+        "liked_count": "5.7万",
+        "collected_count": "2.1万",
+        "comment_count": "399",
+        "share_count": "1544",
+    }
+
+    result = platform_registry.get("xhs").normalize_result(raw)
+
+    assert result.platform == "xhs"
+    assert result.content_id == "note-prod-1"
+    assert result.published_at == 1753500000000
+    assert result.metrics.like_count == 57000
+    assert result.metrics.favorite_count == 21000
+    assert result.metrics.comment_count == 399
+    assert result.metrics.share_count == 1544
 
 
 def test_adapter_rejects_unsafe_result_urls() -> None:

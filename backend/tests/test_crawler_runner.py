@@ -1,4 +1,6 @@
 import importlib.util
+import os
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -24,6 +26,7 @@ def runner_arguments(
     output_root: Path,
     qrcode_root: Path,
     platform: str,
+    headless: str = "true",
 ) -> list[str]:
     return [
         str(RUNNER_PATH),
@@ -46,6 +49,8 @@ def runner_arguments(
         "false",
         "--enable-sub-comments",
         "false",
+        "--headless",
+        headless,
     ]
 
 
@@ -72,6 +77,51 @@ def test_runner_accepts_only_registered_platform_contract(
     assert arguments.max_concurrency_num == 1
     assert arguments.enable_comments is False
     assert arguments.enable_sub_comments is False
+    assert arguments.headless is True
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("true", True), ("false", False)],
+)
+def test_runner_parses_headless_browser_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: bool,
+) -> None:
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        runner_arguments(output_root, qrcode_root, "dy", headless=value),
+    )
+
+    assert load_runner().parse_arguments().headless is expected
+
+
+def test_runner_defaults_to_headless_for_previous_release_workers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deployment installs this runner before the Worker restarts.
+
+    A previous-release Worker calls the newly installed runner without
+    ``--headless``; that must keep the historical headless behaviour instead
+    of failing the task with an argparse usage error.
+    """
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    arguments = runner_arguments(output_root, qrcode_root, "dy")
+    del arguments[arguments.index("--headless") : arguments.index("--headless") + 2]
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    assert load_runner().parse_arguments().headless is True
 
 
 @pytest.mark.parametrize(
@@ -119,6 +169,100 @@ def test_runner_rejects_paths_outside_configured_roots(
         load_runner().parse_arguments()
 
 
+def _record_execv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, list[str]]]:
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_execv(path: str, arguments: list[str]) -> None:
+        calls.append((path, list(arguments)))
+
+    monkeypatch.setattr(os, "execv", fake_execv)
+    return calls
+
+
+def test_runner_reexecs_headful_run_under_xvfb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+    monkeypatch.delenv("DISPLAY", raising=False)
+    # setenv (not delenv) so monkeypatch always restores the marker this test
+    # makes the runner write into the real process environment.
+    monkeypatch.setenv(runner.XVFB_WRAPPED_ENVIRONMENT_MARKER, "")
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(sys, "argv", [str(RUNNER_PATH), "--platform", "dy"])
+    calls = _record_execv(monkeypatch)
+
+    runner.ensure_virtual_display(False)
+
+    assert calls == [
+        (
+            "/usr/bin/xvfb-run",
+            ["xvfb-run", "-a", sys.executable, str(RUNNER_PATH), "--platform", "dy"],
+        )
+    ]
+    assert os.environ[runner.XVFB_WRAPPED_ENVIRONMENT_MARKER] == "1"
+
+
+@pytest.mark.parametrize(
+    ("headless", "display", "wrapped"),
+    [
+        (True, None, None),
+        (False, ":99", None),
+    ],
+)
+def test_runner_skips_xvfb_reexec_when_not_needed(
+    monkeypatch: pytest.MonkeyPatch,
+    headless: bool,
+    display: str | None,
+    wrapped: str | None,
+) -> None:
+    runner = load_runner()
+    for name, value in (
+        ("DISPLAY", display),
+        (runner.XVFB_WRAPPED_ENVIRONMENT_MARKER, wrapped),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    calls = _record_execv(monkeypatch)
+
+    runner.ensure_virtual_display(headless)
+
+    assert calls == []
+
+
+def test_runner_fails_when_xvfb_wrapper_did_not_establish_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv(runner.XVFB_WRAPPED_ENVIRONMENT_MARKER, "1")
+    calls = _record_execv(monkeypatch)
+
+    with pytest.raises(SystemExit, match="did not provide DISPLAY"):
+        runner.ensure_virtual_display(False)
+
+    assert calls == []
+
+
+def test_runner_fails_headful_run_without_xvfb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv(runner.XVFB_WRAPPED_ENVIRONMENT_MARKER, raising=False)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    calls = _record_execv(monkeypatch)
+
+    with pytest.raises(SystemExit, match="xvfb-run"):
+        runner.ensure_virtual_display(False)
+
+    assert calls == []
+
+
 def test_runner_forces_mediacrawler_safety_flags() -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
 
@@ -127,3 +271,6 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     assert '"--enable_ip_proxy",\n        "false"' in source
     assert '"--max_concurrency_num",\n        "1"' in source
     assert "config.ENABLE_IP_PROXY = False" in source
+    assert "config.HEADLESS = args.headless" in source
+    assert "config.CDP_HEADLESS = args.headless" in source
+    assert '"--headless",\n        "true" if args.headless else "false"' in source

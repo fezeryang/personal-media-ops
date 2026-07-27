@@ -4,6 +4,7 @@ import argparse
 import base64
 import os
 import runpy
+import shutil
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +13,7 @@ from uuid import UUID
 MEDIACRAWLER_ROOT = Path("/opt/mediacrawler")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/mediaops/crawler-output")
 DEFAULT_QRCODE_ROOT = Path("/var/lib/mediaops/qrcodes")
+XVFB_WRAPPED_ENVIRONMENT_MARKER = "MEDIAOPS_XVFB_WRAPPED"
 
 
 def parse_bool(value: str) -> bool:
@@ -53,6 +55,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--max-concurrency-num", required=True, type=int)
     parser.add_argument("--enable-comments", required=True, type=parse_bool)
     parser.add_argument("--enable-sub-comments", required=True, type=parse_bool)
+    # Deployment installs this runner copy (runner-sync) several stages before
+    # the Worker restarts (finalize), so a previous-release Worker can call a
+    # newly installed runner without this argument. Defaulting to the historical
+    # hardcoded headless mode keeps that window working instead of failing every
+    # task with an argparse usage error; the Worker always passes it explicitly.
+    parser.add_argument("--headless", type=parse_bool, default=True)
     args = parser.parse_args()
 
     if not 1 <= args.requested_count <= 20:
@@ -89,6 +97,35 @@ def parse_arguments() -> argparse.Namespace:
     return args
 
 
+def ensure_virtual_display(headless: bool) -> None:
+    """Re-exec under ``xvfb-run`` when a headful browser has no display.
+
+    Douyin serves a captcha interstitial to headless browsers, so that
+    platform must run headful. On a server there is no X display, so the
+    whole process is replaced by ``xvfb-run`` before any MediaCrawler import
+    or output mutation happens. ``MEDIAOPS_XVFB_WRAPPED`` marks the wrapped
+    process so the re-exec can never loop.
+    """
+    if headless:
+        return
+    if os.environ.get("DISPLAY", "").strip():
+        return
+    if os.environ.get(XVFB_WRAPPED_ENVIRONMENT_MARKER):
+        raise SystemExit(
+            "xvfb-run did not provide DISPLAY for headful browsing"
+        )
+
+    xvfb_run = shutil.which("xvfb-run")
+    if xvfb_run is None:
+        raise SystemExit(
+            "headful browsing needs a virtual display but xvfb-run was not "
+            "found; install xvfb on this host before enabling this platform"
+        )
+
+    os.environ[XVFB_WRAPPED_ENVIRONMENT_MARKER] = "1"
+    os.execv(xvfb_run, ["xvfb-run", "-a", sys.executable, *sys.argv])
+
+
 def configure_node_runtime() -> None:
     node_binary_value = os.getenv("MEDIAOPS_NODE_BINARY")
     if not node_binary_value:
@@ -107,6 +144,7 @@ def configure_node_runtime() -> None:
 
 def main() -> None:
     args = parse_arguments()
+    ensure_virtual_display(args.headless)
     if not MEDIACRAWLER_ROOT.is_dir():
         raise SystemExit(f"MediaCrawler root does not exist: {MEDIACRAWLER_ROOT}")
 
@@ -122,8 +160,8 @@ def main() -> None:
 
     config.ENABLE_CDP_MODE = False
     config.CDP_CONNECT_EXISTING = False
-    config.HEADLESS = True
-    config.CDP_HEADLESS = True
+    config.HEADLESS = args.headless
+    config.CDP_HEADLESS = args.headless
     config.MAX_CONCURRENCY_NUM = 1
     config.CRAWLER_MAX_NOTES_COUNT = args.requested_count
     config.ENABLE_GET_COMMENTS = False
@@ -187,7 +225,7 @@ def main() -> None:
         "--enable_ip_proxy",
         "false",
         "--headless",
-        "true",
+        "true" if args.headless else "false",
         "--save_data_option",
         "jsonl",
         "--save_data_path",
