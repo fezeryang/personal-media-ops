@@ -34,6 +34,13 @@ Adapters implement capability metadata, fixed Runner arguments,
   needs `xvfb`; API callers never choose this value. A Runner installed before
   the matching Worker restarts defaults a missing `--headless` argument to the
   historical headless mode for deployment-window compatibility.
+- Douyin may redirect again after its initial `goto()` completes, destroying
+  the JavaScript execution context while MediaCrawler reads the user agent.
+  The reviewed Runner installs an in-process integration patch only for `dy`:
+  the exact Playwright `Execution context was destroyed` error waits for
+  `domcontentloaded` and retries client creation at most three times. Other
+  Playwright errors and retry exhaustion propagate unchanged; MediaCrawler
+  source files are never edited.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
@@ -55,6 +62,9 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Headful run without `DISPLAY`, `xvfb-run` available | Runner re-execs once under `xvfb-run -a` |
 | Headful run without `DISPLAY` or `xvfb-run` | Runner exits before MediaCrawler import or output mutation |
 | Xvfb-wrapped run still has no `DISPLAY` | Runner exits explicitly; never loops or silently continues |
+| Douyin client creation hits the exact navigation-context race | Wait for `domcontentloaded`; retry up to the fixed limit |
+| Douyin client creation hits another Playwright error | Propagate immediately without retry |
+| Douyin navigation race exceeds three attempts | Propagate the final error and fail the task |
 | Malformed or oversized metric text | Normalized metric is `null` |
 
 ## 5. Good / Base / Bad Cases
@@ -68,6 +78,8 @@ Adapters implement capability metadata, fixed Runner arguments,
   controls through the task API.
 - Bad: hard-code every platform to headless or continue a headful run after an
   Xvfb wrapper failed to establish `DISPLAY`.
+- Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
+  or loop indefinitely around browser startup.
 
 ## 6. Tests Required
 
@@ -75,8 +87,9 @@ Test registry truthfulness, disabled/unknown platforms, fixed commands,
 platform JSONL samples, unsafe URLs/paths, QR progression, result caps, and
 cross-platform competing claims. Assert per-platform `--headless` arguments,
 legacy missing-argument compatibility, Xvfb re-exec/failure paths, abbreviated
-metric parsing, and malformed/oversized metric rejection. Real platform tests
-require explicit authorization and are not part of unit tests.
+metric parsing, malformed/oversized metric rejection, Douyin navigation-race
+recovery, unrelated-error propagation, and bounded retry exhaustion. Real
+platform tests require explicit authorization and are not part of unit tests.
 
 ## 7. Wrong vs Correct
 
@@ -104,4 +117,19 @@ Correct:
 ```python
 config.HEADLESS = args.headless
 config.CDP_HEADLESS = args.headless
+```
+
+Wrong:
+
+```python
+# Editing MediaCrawler core or retrying every browser failure hides real bugs.
+while True:
+    await crawler.create_douyin_client(proxy)
+```
+
+Correct:
+
+```python
+if args.platform == "dy":
+    install_douyin_navigation_retry()
 ```

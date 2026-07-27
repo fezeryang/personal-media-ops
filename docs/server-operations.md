@@ -202,6 +202,11 @@ Adapter 把抖音标记为需要有头浏览器，Runner 收到 `--headless fals
 静默降级。安装系统软件属于管理员职责，不在自动化边界内。B 站与小红书保持无头运行，
 不受此改动影响。
 
+有头模式下抖音首页可能在初次加载后继续重定向，使 MediaCrawler 创建 HTTP 客户端时
+读取 `navigator.userAgent` 遇到 `Execution context was destroyed`。Runner 对
+Douyin 的这个精确错误等待 `domcontentloaded` 后最多重试 3 次；不匹配的错误不重试，
+也不修改第三方 MediaCrawler 文件。
+
 ## Permission Boundary
 
 `mediaops` 可执行 Git 检查/拉取、依赖安装、测试、前端构建、允许范围内的日志读取、

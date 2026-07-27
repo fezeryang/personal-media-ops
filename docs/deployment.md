@@ -130,6 +130,12 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 `xvfb-run -a` 重新 exec 自身（用 `MEDIAOPS_XVFB_WRAPPED` 标记防止循环）；服务器必须
 安装 `xvfb`，否则 Runner 会明确报错退出。B 站与小红书行为不变，仍为无头运行。
 
+抖音首页在 `goto()` 返回后仍可能发生一次重定向，MediaCrawler 随即读取
+`navigator.userAgent` 时会收到 Playwright `Execution context was destroyed`。
+仓库 Runner 只在 `dy` 平台、只对该精确导航竞态，在等待
+`domcontentloaded` 后最多重试客户端初始化 3 次；其他 Playwright 异常和重试耗尽
+仍直接失败。补丁在进程内安装到集成 seam，不复制或修改 `/opt/mediacrawler` 源码。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner
