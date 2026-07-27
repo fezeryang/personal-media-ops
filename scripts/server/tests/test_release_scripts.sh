@@ -307,6 +307,19 @@ case "$command_string" in
         printf 'release_marker_parity=%s\n' "${MEDIAOPS_STUB_PARITY:-match}"
         exit 0
         ;;
+    "bash -s -- verify-sni-loopback "*)
+        consume_stdin
+        if [[ "${MEDIAOPS_STUB_SNI_FAIL:-0}" == "1" ]]; then
+            printf 'sni_frontend=failed\n' >&2
+            exit 22
+        fi
+        printf 'api=active\n'
+        printf 'worker=active\n'
+        printf 'sni_frontend=ok http=200 host=ops.example.test\n'
+        printf 'sni_public_api=ok http=200 host=ops.example.test\n'
+        printf 'sni_crawler_route=ok http=200 host=ops.example.test\n'
+        exit 0
+        ;;
     "bash -s -- record-deployment "*)
         consume_stdin
         exit 0
@@ -350,7 +363,25 @@ set -Eeuo pipefail
 state="${MEDIAOPS_STUB_STATE:?MEDIAOPS_STUB_STATE is required}"
 mkdir -p -- "$state"
 printf 'curl %s\n' "$*" >> "${state}/curl.log"
-printf '{"status": "ok", "service": "personal-media-ops-api", "version": "stub"}\n200\n'
+case "${MEDIAOPS_STUB_CURL_MODE:-ok}" in
+    ok)
+        printf '{"status": "ok", "service": "personal-media-ops-api", "version": "stub"}\n200\n'
+        ;;
+    connection-failed)
+        printf 'curl: simulated TLS reset\n' >&2
+        exit 35
+        ;;
+    http-403)
+        printf 'blocked\n403\n'
+        ;;
+    http-500)
+        printf 'origin failure\n500\n'
+        ;;
+    *)
+        printf 'unknown stub curl mode\n' >&2
+        exit 2
+        ;;
+esac
 STUB
 chmod +x "${STUB_BIN}/curl"
 
@@ -368,6 +399,8 @@ run_stubbed_deploy() {
     local state="$1"
     shift
     PATH="${STUB_BIN}:${PATH}" MEDIAOPS_STUB_STATE="$state" \
+        MEDIAOPS_STUB_CURL_MODE="${MEDIAOPS_STUB_CURL_MODE:-ok}" \
+        MEDIAOPS_STUB_SNI_FAIL="${MEDIAOPS_STUB_SNI_FAIL:-0}" \
         "$DEPLOY" \
         --host stub-mediaops \
         --target-ref "$TARGET_COMMIT" \
@@ -545,6 +578,49 @@ fi
 assert_contains "$unauthorized_output" "not explicitly authorized"
 if grep -qF "bash -s -- migrate" "${state_unauthorized}/ssh.log"; then
     fail "unauthorized migration must never reach the migrate stage"
+fi
+
+# 9. The known external observer failure is non-blocking only when production
+# helper/SNI loopback verification succeeds.
+state_observer="${STUB_ROOT}/state-observer"
+stub_state_reset "$state_observer"
+observer_output="$(
+    MEDIAOPS_STUB_CURL_MODE=connection-failed \
+        run_stubbed_deploy "$state_observer" --execute
+)"
+assert_contains "$observer_output" \
+    "external observer failure recorded as non-blocking"
+assert_contains "$observer_output" "External observer: failed-nonblocking"
+grep -qF "bash -s -- verify-sni-loopback" "${state_observer}/ssh.log" ||
+    fail "observer transport failure must trigger production SNI loopback"
+
+# 10. The exception never hides a failed production SNI loopback.
+state_sni_fail="${STUB_ROOT}/state-sni-fail"
+stub_state_reset "$state_sni_fail"
+if sni_fail_output="$(
+    MEDIAOPS_STUB_CURL_MODE=http-403 \
+    MEDIAOPS_STUB_SNI_FAIL=1 \
+        run_stubbed_deploy "$state_sni_fail" --execute
+)"; then
+    fail "deployment must fail when observer and production SNI checks both fail"
+fi
+assert_contains "$sni_fail_output" \
+    "production SNI loopback verification did not pass"
+
+# 11. An arbitrary public HTTP failure is not an observer exception.
+state_public_500="${STUB_ROOT}/state-public-500"
+stub_state_reset "$state_public_500"
+if public_500_output="$(
+    MEDIAOPS_STUB_CURL_MODE=http-500 \
+        run_stubbed_deploy "$state_public_500" --execute
+)"; then
+    fail "deployment must fail on a public HTTP 500"
+fi
+assert_contains "$public_500_output" \
+    "failed outside the approved external-observer exception"
+if grep -qF "bash -s -- verify-sni-loopback" \
+    "${state_public_500}/ssh.log"; then
+    fail "public HTTP 500 must not use the observer exception"
 fi
 
 printf 'release_script_tests=passed\n'

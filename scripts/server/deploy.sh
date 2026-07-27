@@ -396,25 +396,79 @@ record_deployment() {
     local ssh_host="$1"
     local old_commit="$2"
     local target_commit="$3"
+    local external_observer="$4"
 
     mediaops_ssh "$ssh_host" \
-        "bash -s -- record-deployment ${old_commit} ${target_commit}" <<'REMOTE'
+        "bash -s -- record-deployment ${old_commit} ${target_commit} ${external_observer}" <<'REMOTE'
 set -Eeuo pipefail
 shift
 old_commit="$1"
 target_commit="$2"
+external_observer="$3"
 record_path="/var/lib/mediaops/deployments.log"
 
 if [[ -w "$(dirname -- "$record_path")" ]] &&
    { [[ ! -e "$record_path" ]] || [[ -w "$record_path" ]]; }; then
-    printf '%s result=succeeded old_commit=%s target_commit=%s user=%s\n' \
+    printf '%s result=succeeded old_commit=%s target_commit=%s external_observer=%s user=%s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$old_commit" \
         "$target_commit" \
+        "$external_observer" \
         "$(id -un)" >> "$record_path"
 else
     printf 'WARNING: deployment record is not writable: %s\n' "$record_path" >&2
 fi
+REMOTE
+}
+
+verify_server_sni_loopback() {
+    mediaops_ssh "$host" \
+        "bash -s -- verify-sni-loopback ${MEDIAOPS_PUBLIC_URL#https://}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+public_host="$1"
+
+[[ "$public_host" =~ ^[A-Za-z0-9.-]+$ ]] || {
+    printf 'ERROR: invalid public host for SNI loopback verification\n' >&2
+    exit 3
+}
+
+sudo -n /usr/local/sbin/mediaops-release status
+
+check_sni_route() {
+    local label="$1"
+    local path="$2"
+    local require_health_json="$3"
+    local response
+    local status
+    local body
+
+    response="$(
+        curl -sS -L --max-time 15 \
+            --resolve "${public_host}:443:127.0.0.1" \
+            -w $'\n%{http_code}' \
+            "https://${public_host}${path}"
+    )"
+    status="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    [[ "$status" =~ ^2[0-9][0-9]$ ]] || {
+        printf 'ERROR: sni_%s=http-%s\n' "$label" "$status" >&2
+        return 1
+    }
+    if [[ "$require_health_json" == "yes" ]]; then
+        grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$body" &&
+            grep -Eq '"service"[[:space:]]*:[[:space:]]*"personal-media-ops-api"' <<<"$body" ||
+            {
+                printf 'ERROR: sni_%s=invalid-health-payload\n' "$label" >&2
+                return 1
+            }
+    fi
+    printf 'sni_%s=ok http=%s host=%s\n' "$label" "$status" "$public_host"
+}
+
+check_sni_route frontend / no
+check_sni_route public_api /api/health yes
+check_sni_route crawler_route /crawler/tasks no
 REMOTE
 }
 
@@ -676,10 +730,38 @@ grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$internal_health" &&
     deployment_abort "internal API returned an invalid health payload"
 printf '%s\n' "$internal_health"
 
-"${SCRIPT_DIR}/healthcheck.sh" --host "$host"
+external_observer_status="passed"
+public_health_status=0
+public_health_output=""
+public_health_output="$(
+    "${SCRIPT_DIR}/healthcheck.sh" --host "$host" 2>&1
+)" || public_health_status=$?
+printf '%s\n' "$public_health_output"
+if ((public_health_status != 0)); then
+    if ! grep -Eq \
+        '^(frontend|public_api|crawler_route)=(connection-failed|http-(403|525))[[:space:]]' \
+        <<<"$public_health_output"; then
+        deployment_abort \
+            "public health check failed outside the approved external-observer exception" \
+            "$public_health_status"
+    fi
+    mediaops_warn \
+        "external observer could not validate the public route; checking helper, Nginx, services, localhost API, and the public hostname/certificate through production SNI loopback"
+    verify_server_sni_loopback ||
+        deployment_abort \
+            "external observer failed and production SNI loopback verification did not pass" \
+            "$public_health_status"
+    external_observer_status="failed-nonblocking"
+    mediaops_warn \
+        "external observer failure recorded as non-blocking after production SNI loopback verification passed"
+fi
 
 DEPLOY_STAGE="deployment-record"
-record_deployment "$host" "$old_commit" "$target_commit"
+record_deployment \
+    "$host" \
+    "$old_commit" \
+    "$target_commit" \
+    "$external_observer_status"
 
 DEPLOY_STAGE="complete"
 mediaops_stage "Deployment succeeded"
@@ -689,5 +771,6 @@ printf 'Database migration: %s\n' "$migration_state"
 printf 'Migration authorization: %s\n' "$migration_authorized"
 printf 'Database backup: completed\n'
 printf 'Helper subcommand: finalize\n'
+printf 'External observer: %s\n' "$external_observer_status"
 printf 'Deployment success: yes\n'
 printf 'Rollback preparation: retain the pre-deployment backup and use a reviewed Git revert; never use git reset --hard\n'
