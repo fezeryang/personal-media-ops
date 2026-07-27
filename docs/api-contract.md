@@ -28,9 +28,10 @@ controls, or concurrency controls.
 }
 ```
 
-The registry contains `bili`, `xhs`, and `dy`. `bili` is production-verified.
-`xhs` and `dy` report `code_ready` and are disabled unless
-`MEDIAOPS_ENABLED_PLATFORMS` explicitly enables them after operator approval.
+The registry contains `bili`, `xhs`, and `dy`. `bili` and `xhs` are
+production-verified. `dy` reports `code_ready`. `xhs` and `dy` are disabled
+unless `MEDIAOPS_ENABLED_PLATFORMS` explicitly enables them after operator
+approval.
 
 ## Create a task
 

@@ -11,10 +11,12 @@ add local rules, but may not weaken the safety requirements below.
 Current capabilities are a platform Adapter registry, Bilibili keyword
 collection, FastAPI APIs, versioned SQLite migrations, a single-concurrency
 Worker, external MediaCrawler integration, a React workbench, log/QR/result
-views, and same-origin Nginx deployment. Xiaohongshu and Douyin adapters are
-code-ready but must not be described as production-verified until real
-operator validation is recorded. Never present unfinished modules or
-synthetic data as working product behavior.
+views, and same-origin Nginx deployment. The Xiaohongshu adapter is
+production-verified by a recorded real operator task (2026-07-26, task
+882701a1-fbb6-4d0c-aa58-662692296879). The Douyin adapter is code-ready but
+must not be described as production-verified until real operator validation
+is recorded. Never present unfinished modules or synthetic data as working
+product behavior.
 
 ## End-to-End Agent Workflow
 

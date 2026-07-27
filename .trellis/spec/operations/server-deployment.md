@@ -18,6 +18,7 @@ backup.sh [--host SSH_ALIAS] [--dry-run | --execute]
 deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
           [--resume] [--dry-run | --execute]
 mediaops-release {version|status|publish-frontend|restart-services|nginx-check|nginx-reload|verify|finalize}
+command -v xvfb-run
 ```
 
 `SOURCE` is exactly one of `--api`, `--worker`, `--nginx-access`,
@@ -75,6 +76,11 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   `sudo -n /usr/local/sbin/mediaops-release version`, which exercises the
   reviewed sudoers entry without weakening the helper mode.
 - Helper and sudoers sources are never installed by deployment code.
+- Before enabling `dy`, the operator must confirm that `xvfb-run` is available
+  on the production host. Installing `xvfb` is an administrator-owned system
+  change and is outside `deploy.sh` and the restricted helper. The reviewed
+  Runner exits explicitly when a headful run has neither `DISPLAY` nor
+  `xvfb-run`.
 - Success is recorded only after internal and public checks pass.
 
 ## 4. Validation & Error Matrix
@@ -99,6 +105,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 | Helper finalize failure with both release markers at target | Complete via allowlisted `restart-services`/`nginx-reload`/`verify` |
 | Helper failure without marker parity | Report restricted-release stage; never claim success |
 | Health failure | Report failed stage; never record success |
+| `dy` enablement requested without `xvfb-run` | Do not enable `dy`; report the administrator prerequisite |
+| Xvfb wrapper returns without `DISPLAY` | Runner fails explicitly; never claim a runnable Douyin task |
 | Extra/unknown helper argument | Exit 2 |
 | Helper mutation invoked without root | Exit 3 |
 
@@ -111,8 +119,12 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
 - Good: a `root:root 0750` installed helper passes preflight through its exact
   `sudo -n ... version` allowlist entry even though `[[ -x helper ]]` is false
   for `mediaops`.
+- Good: check `command -v xvfb-run` read-only before an approved `dy`
+  enablement, then validate one real task with global concurrency still at one.
 - Bad: direct sudo rsync/systemctl/Nginx, arbitrary helper arguments, helper
   installation, password prompts, or reporting partial activation as success.
+- Bad: silently install system packages from deployment automation or enable
+  `dy` while its required virtual-display executable is absent.
 
 ## 6. Tests Required
 
@@ -129,6 +141,8 @@ mediaops-release {version|status|publish-frontend|restart-services|nginx-check|n
   that dry-run never invokes SSH.
 - Official Skill validation passes.
 - Backend pytest and frontend lint/test/build remain green.
+- Runner unit tests assert Xvfb re-exec, missing-Xvfb failure, wrapped-without-
+  `DISPLAY` failure, and legacy missing-`--headless` compatibility.
 - Secret/artifact scans find no private keys, `.env`, database, logs, QR codes,
   cookies, or runtime output.
 - Real `finalize`, publish, restart, and reload are never used for local
@@ -148,6 +162,7 @@ sudo /www/server/nginx/sbin/nginx -s reload
 
 ```bash
 sudo -n /usr/local/sbin/mediaops-release version
+ssh -o BatchMode=yes mediaops-prod 'command -v xvfb-run'
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 scripts/server/deploy.sh \
   --target-ref <origin-main-sha> \
@@ -155,4 +170,5 @@ scripts/server/deploy.sh \
   --execute
 ```
 
-The second command is a real release and requires explicit user authorization.
+The `--execute` deployment command is a real release and requires explicit
+user authorization.

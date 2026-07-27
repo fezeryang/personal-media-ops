@@ -29,6 +29,10 @@ responses with Zod before returning inferred TypeScript types.
   state, fixed crawler/login options, count bounds, and comment support.
 - The create form derives its platform and fixed labels from capabilities. It
   sends only `platform`, `crawler_type`, `keywords`, and `requested_count`.
+- Platform labels preserve both capability dimensions:
+  `verified + enabled` is `已验证`, `verified + disabled` is `已验证，未启用`,
+  `code_ready + enabled` is `代码就绪`, and `code_ready + disabled` is
+  `代码就绪，未启用`. Never infer verification from enabled state.
 - Task status remains the six-value backend enum.
 - Results are a paginated unified schema with safe nullable URLs, publication
   time, source keyword, and nullable numeric metrics.
@@ -48,7 +52,8 @@ responses with Zod before returning inferred TypeScript types.
 | QR 404 | Return `null` as not-ready |
 | QR non-PNG | Throw QR-format `ApiError(502)` |
 | Non-HTTP(S) result URL | Zod rejects the response |
-| Disabled capability | Show it as disabled; never submit it |
+| Disabled verified capability | Show `已验证，未启用`; never submit it |
+| Disabled code-ready capability | Show `代码就绪，未启用`; never submit it |
 
 ### 5. Good / Base / Bad Cases
 
@@ -62,7 +67,9 @@ responses with Zod before returning inferred TypeScript types.
 
 Test capability parsing, exact create body, encoded IDs, bounded logs,
 pagination, QR behavior, unified result formatting, unsafe URLs, active status
-logic, and capability-driven form submission.
+logic, capability-driven form submission, and all enabled/verification label
+combinations. At minimum, assert that a disabled verified option stays disabled
+without being mislabeled as code-ready.
 
 ### 7. Wrong vs Correct
 
@@ -76,6 +83,21 @@ Correct:
 
 ```typescript
 const result = await requestJson(path, crawlerResultSchema, { signal });
+```
+
+Wrong:
+
+```typescript
+const label = capability.enabled ? "已验证" : "代码就绪，未启用";
+```
+
+Correct:
+
+```typescript
+const label = capabilityStatusLabel(
+  capability.enabled,
+  capability.verification_status,
+);
 ```
 
 Use `unknown` at untrusted boundaries and narrow explicitly. TypeScript `any`

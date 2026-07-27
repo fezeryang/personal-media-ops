@@ -185,6 +185,17 @@ ssh -o BatchMode=yes mediaops-prod \
 `deploy.sh` 不会覆盖 helper 或 sudoers。不得尝试 root shell、额外参数、任意命令
 或 direct sudo rsync/systemctl/Nginx。
 
+## Douyin Headful Browser
+
+抖音站点对无头浏览器返回“验证码中间页”，MediaCrawler 点击登录按钮会超时，任务在
+生成二维码前失败。同一台服务器上有头浏览器配虚拟显示可正常打开登录弹窗，因此
+Adapter 把抖音标记为需要有头浏览器，Runner 收到 `--headless false` 且没有可用
+`DISPLAY` 时会自动以 `xvfb-run -a` 重新 exec 自身。
+
+服务器必须安装 `xvfb`（提供 `/usr/bin/xvfb-run`），缺失时 Runner 直接报错退出而不是
+静默降级。安装系统软件属于管理员职责，不在自动化边界内。B 站与小红书保持无头运行，
+不受此改动影响。
+
 ## Permission Boundary
 
 `mediaops` 可执行 Git 检查/拉取、依赖安装、测试、前端构建、允许范围内的日志读取、
