@@ -43,10 +43,11 @@ Adapters implement capability metadata, fixed Runner arguments,
   source files are never edited.
 - Douyin's visible login entry keeps the exact text `登录`, but its HTML tag is
   not stable. The Runner first accepts the automatically visible
-  `#login-panel-new`; otherwise it examines exact-text entries, clicks only a
+  `#login-panel-new`; otherwise it examines exact-text entries every 0.5
+  seconds for at most 40 scans to span the WAF reload window, clicks only a
   visible one with a short timeout, and confirms the dialog became visible.
-  Missing entries and failed dialog confirmation fail explicitly without
-  fuzzy matching or an unbounded retry.
+  Missing entries and failed dialog confirmation fail explicitly without fuzzy
+  matching or an unbounded retry.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
@@ -72,6 +73,7 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin client creation hits another Playwright error | Propagate immediately without retry |
 | Douyin navigation race exceeds three attempts | Propagate the final error and fail the task |
 | Douyin login dialog is already visible | Continue without clicking another entry |
+| Douyin login entry is briefly absent during the WAF reload | Poll every 0.5 seconds for at most 40 scans |
 | Douyin login entry tag changes but exact visible text remains | Click the visible exact-text entry and confirm the dialog |
 | Douyin has no visible exact-text entry or no dialog after click | Fail explicitly after bounded attempts |
 | Malformed or oversized metric text | Normalized metric is `null` |

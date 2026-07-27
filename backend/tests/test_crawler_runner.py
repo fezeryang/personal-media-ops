@@ -284,10 +284,21 @@ class FakeDouyinLoginEntry:
 
 
 class FakeDouyinLoginEntries:
-    def __init__(self, entries: list[FakeDouyinLoginEntry]) -> None:
+    def __init__(
+        self,
+        entries: list[FakeDouyinLoginEntry],
+        *,
+        empty_scans: int = 0,
+    ) -> None:
         self.entries = entries
+        self.empty_scans = empty_scans
+        self.count_calls = 0
 
     async def count(self) -> int:
+        self.count_calls += 1
+        if self.empty_scans > 0:
+            self.empty_scans -= 1
+            return 0
         return len(self.entries)
 
     def nth(self, index: int) -> FakeDouyinLoginEntry:
@@ -300,9 +311,13 @@ class FakeDouyinLoginPage:
         *,
         dialog_visible: bool,
         entries: list[FakeDouyinLoginEntry],
+        empty_entry_scans: int = 0,
     ) -> None:
         self.dialog_visible = dialog_visible
-        self.entries = FakeDouyinLoginEntries(entries)
+        self.entries = FakeDouyinLoginEntries(
+            entries,
+            empty_scans=empty_entry_scans,
+        )
         self.wait_calls: list[tuple[str, str, int]] = []
         self.locator_calls: list[str] = []
 
@@ -384,8 +399,38 @@ def test_runner_fails_clearly_when_douyin_login_entry_is_absent() -> None:
             runner.open_douyin_login_dialog(
                 FakeDouyinLogin(page),
                 FakeDouyinNavigationError,
+                entry_scan_attempts=1,
+                entry_scan_delay_seconds=0,
             )
         )
+
+
+def test_runner_waits_for_douyin_login_entry_during_waf_reload() -> None:
+    runner = load_runner()
+    visible_entry = FakeDouyinLoginEntry(visible=True)
+    page = FakeDouyinLoginPage(
+        dialog_visible=False,
+        entries=[visible_entry],
+        empty_entry_scans=1,
+    )
+
+    async def show_dialog_after_click(*, timeout: int) -> None:
+        visible_entry.click_calls.append(timeout)
+        page.dialog_visible = True
+
+    visible_entry.click = show_dialog_after_click  # type: ignore[method-assign]
+
+    asyncio.run(
+        runner.open_douyin_login_dialog(
+            FakeDouyinLogin(page),
+            FakeDouyinNavigationError,
+            entry_scan_attempts=2,
+            entry_scan_delay_seconds=0,
+        )
+    )
+
+    assert page.entries.count_calls == 2
+    assert visible_entry.click_calls == [5_000]
 
 
 class FakeDouyinPage:

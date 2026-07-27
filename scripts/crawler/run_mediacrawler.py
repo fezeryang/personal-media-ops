@@ -20,6 +20,8 @@ DOUYIN_NAVIGATION_ERROR = "Execution context was destroyed"
 DOUYIN_CLIENT_RETRY_ATTEMPTS = 3
 DOUYIN_LOGIN_DIALOG_SELECTOR = "xpath=//div[@id='login-panel-new']"
 DOUYIN_LOGIN_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='登录']"
+DOUYIN_LOGIN_ENTRY_SCAN_ATTEMPTS = 40
+DOUYIN_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
 
 
 def parse_bool(value: str) -> bool:
@@ -192,6 +194,8 @@ async def open_douyin_login_dialog(
     *,
     dialog_timeout_ms: int = 10_000,
     click_timeout_ms: int = 5_000,
+    entry_scan_attempts: int = DOUYIN_LOGIN_ENTRY_SCAN_ATTEMPTS,
+    entry_scan_delay_seconds: float = DOUYIN_LOGIN_ENTRY_SCAN_DELAY_SECONDS,
 ) -> None:
     """Open Douyin login without depending on the entry element's HTML tag."""
     context_page = getattr(login, "context_page", None)
@@ -209,25 +213,42 @@ async def open_douyin_login_dialog(
         last_error: BaseException = initial_error
 
     login_entries = context_page.locator(DOUYIN_LOGIN_ENTRY_SELECTOR)
-    for index in range(await login_entries.count()):
-        entry = login_entries.nth(index)
+    for scan_attempt in range(entry_scan_attempts):
+        visible_entry_seen = False
         try:
-            if not await entry.is_visible():
-                continue
-            await entry.click(timeout=click_timeout_ms)
-            await context_page.wait_for_selector(
-                DOUYIN_LOGIN_DIALOG_SELECTOR,
-                state="visible",
-                timeout=dialog_timeout_ms,
-            )
-            print(
-                "[MediaOps] Opened Douyin login dialog through a visible "
-                "exact-text login entry",
-                flush=True,
-            )
-            return
+            entry_count = await login_entries.count()
         except retryable_error as error:
             last_error = error
+            entry_count = 0
+
+        for index in range(entry_count):
+            entry = login_entries.nth(index)
+            try:
+                if not await entry.is_visible():
+                    continue
+                visible_entry_seen = True
+                await entry.click(timeout=click_timeout_ms)
+                await context_page.wait_for_selector(
+                    DOUYIN_LOGIN_DIALOG_SELECTOR,
+                    state="visible",
+                    timeout=dialog_timeout_ms,
+                )
+                print(
+                    "[MediaOps] Opened Douyin login dialog through a visible "
+                    "exact-text login entry",
+                    flush=True,
+                )
+                return
+            except retryable_error as error:
+                last_error = error
+
+        if visible_entry_seen:
+            break
+        if (
+            scan_attempt + 1 < entry_scan_attempts
+            and entry_scan_delay_seconds > 0
+        ):
+            await asyncio.sleep(entry_scan_delay_seconds)
 
     raise RuntimeError(
         "Douyin login entry was not visible or did not open the login dialog"
