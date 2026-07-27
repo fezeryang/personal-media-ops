@@ -41,6 +41,12 @@ Adapters implement capability metadata, fixed Runner arguments,
   `domcontentloaded` and retries client creation at most three times. Other
   Playwright errors and retry exhaustion propagate unchanged; MediaCrawler
   source files are never edited.
+- Douyin's visible login entry keeps the exact text `登录`, but its HTML tag is
+  not stable. The Runner first accepts the automatically visible
+  `#login-panel-new`; otherwise it examines exact-text entries, clicks only a
+  visible one with a short timeout, and confirms the dialog became visible.
+  Missing entries and failed dialog confirmation fail explicitly without
+  fuzzy matching or an unbounded retry.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
@@ -65,6 +71,9 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin client creation hits the exact navigation-context race | Wait for `domcontentloaded`; retry up to the fixed limit |
 | Douyin client creation hits another Playwright error | Propagate immediately without retry |
 | Douyin navigation race exceeds three attempts | Propagate the final error and fail the task |
+| Douyin login dialog is already visible | Continue without clicking another entry |
+| Douyin login entry tag changes but exact visible text remains | Click the visible exact-text entry and confirm the dialog |
+| Douyin has no visible exact-text entry or no dialog after click | Fail explicitly after bounded attempts |
 | Malformed or oversized metric text | Normalized metric is `null` |
 
 ## 5. Good / Base / Bad Cases
@@ -88,8 +97,10 @@ platform JSONL samples, unsafe URLs/paths, QR progression, result caps, and
 cross-platform competing claims. Assert per-platform `--headless` arguments,
 legacy missing-argument compatibility, Xvfb re-exec/failure paths, abbreviated
 metric parsing, malformed/oversized metric rejection, Douyin navigation-race
-recovery, unrelated-error propagation, and bounded retry exhaustion. Real
-platform tests require explicit authorization and are not part of unit tests.
+recovery, unrelated-error propagation, bounded retry exhaustion, automatic
+Douyin login-dialog detection, visible exact-text fallback, and missing-entry
+failure. Real platform tests require explicit authorization and are not part
+of unit tests.
 
 ## 7. Wrong vs Correct
 

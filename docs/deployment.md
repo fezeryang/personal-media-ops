@@ -136,6 +136,11 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 `domcontentloaded` 后最多重试客户端初始化 3 次；其他 Playwright 异常和重试耗尽
 仍直接失败。补丁在进程内安装到集成 seam，不复制或修改 `/opt/mediacrawler` 源码。
 
+抖音主页的登录入口不再保证是 `<p>登录</p>`。Runner 会先保留
+`#login-panel-new` 自动弹出的既有路径；若弹窗未出现，则只枚举文本严格等于“登录”的
+可见元素，逐个用短超时点击并确认登录弹窗已可见。没有可用入口或点击后仍无弹窗时会
+明确失败，不使用模糊文本点击，也不无限重试。这个兼容补丁同样只安装在 `dy` 进程内。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner

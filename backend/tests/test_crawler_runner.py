@@ -268,6 +268,126 @@ class FakeDouyinNavigationError(Exception):
     pass
 
 
+class FakeDouyinLoginEntry:
+    def __init__(self, *, visible: bool, click_error: Exception | None = None) -> None:
+        self.visible = visible
+        self.click_error = click_error
+        self.click_calls: list[int] = []
+
+    async def is_visible(self) -> bool:
+        return self.visible
+
+    async def click(self, *, timeout: int) -> None:
+        self.click_calls.append(timeout)
+        if self.click_error is not None:
+            raise self.click_error
+
+
+class FakeDouyinLoginEntries:
+    def __init__(self, entries: list[FakeDouyinLoginEntry]) -> None:
+        self.entries = entries
+
+    async def count(self) -> int:
+        return len(self.entries)
+
+    def nth(self, index: int) -> FakeDouyinLoginEntry:
+        return self.entries[index]
+
+
+class FakeDouyinLoginPage:
+    def __init__(
+        self,
+        *,
+        dialog_visible: bool,
+        entries: list[FakeDouyinLoginEntry],
+    ) -> None:
+        self.dialog_visible = dialog_visible
+        self.entries = FakeDouyinLoginEntries(entries)
+        self.wait_calls: list[tuple[str, str, int]] = []
+        self.locator_calls: list[str] = []
+
+    async def wait_for_selector(
+        self,
+        selector: str,
+        *,
+        state: str,
+        timeout: int,
+    ) -> None:
+        self.wait_calls.append((selector, state, timeout))
+        if not self.dialog_visible:
+            raise FakeDouyinNavigationError("Timeout waiting for login dialog")
+
+    def locator(self, selector: str) -> FakeDouyinLoginEntries:
+        self.locator_calls.append(selector)
+        return self.entries
+
+
+class FakeDouyinLogin:
+    def __init__(self, page: FakeDouyinLoginPage) -> None:
+        self.context_page = page
+
+
+def test_runner_keeps_auto_opened_douyin_login_dialog() -> None:
+    runner = load_runner()
+    page = FakeDouyinLoginPage(dialog_visible=True, entries=[])
+
+    asyncio.run(
+        runner.open_douyin_login_dialog(
+            FakeDouyinLogin(page),
+            FakeDouyinNavigationError,
+        )
+    )
+
+    assert page.wait_calls == [
+        (runner.DOUYIN_LOGIN_DIALOG_SELECTOR, "visible", 10_000)
+    ]
+    assert page.locator_calls == []
+
+
+def test_runner_clicks_visible_douyin_login_entry_when_tag_changes() -> None:
+    runner = load_runner()
+    hidden_entry = FakeDouyinLoginEntry(visible=False)
+    visible_entry = FakeDouyinLoginEntry(visible=True)
+    page = FakeDouyinLoginPage(
+        dialog_visible=False,
+        entries=[hidden_entry, visible_entry],
+    )
+
+    async def show_dialog_after_click(*, timeout: int) -> None:
+        visible_entry.click_calls.append(timeout)
+        page.dialog_visible = True
+
+    visible_entry.click = show_dialog_after_click  # type: ignore[method-assign]
+
+    asyncio.run(
+        runner.open_douyin_login_dialog(
+            FakeDouyinLogin(page),
+            FakeDouyinNavigationError,
+        )
+    )
+
+    assert page.locator_calls == [runner.DOUYIN_LOGIN_ENTRY_SELECTOR]
+    assert hidden_entry.click_calls == []
+    assert visible_entry.click_calls == [5_000]
+    assert page.wait_calls == [
+        (runner.DOUYIN_LOGIN_DIALOG_SELECTOR, "visible", 10_000),
+        (runner.DOUYIN_LOGIN_DIALOG_SELECTOR, "visible", 10_000),
+    ]
+
+
+def test_runner_fails_clearly_when_douyin_login_entry_is_absent() -> None:
+    runner = load_runner()
+    page = FakeDouyinLoginPage(dialog_visible=False, entries=[])
+
+    with pytest.raises(RuntimeError, match="login entry"):
+        asyncio.run(
+            runner.open_douyin_login_dialog(
+                FakeDouyinLogin(page),
+                FakeDouyinNavigationError,
+            )
+        )
+
+
 class FakeDouyinPage:
     def __init__(self) -> None:
         self.load_state_calls: list[tuple[str, int]] = []

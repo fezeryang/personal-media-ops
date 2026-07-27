@@ -207,6 +207,11 @@ Adapter 把抖音标记为需要有头浏览器，Runner 收到 `--headless fals
 Douyin 的这个精确错误等待 `domcontentloaded` 后最多重试 3 次；不匹配的错误不重试，
 也不修改第三方 MediaCrawler 文件。
 
+生产诊断还确认抖音主页会先经过短暂 WAF challenge，进入实际页面后的可见登录入口
+文本仍为“登录”，但元素不再固定为 `<p>`。Runner 保留自动弹窗检查；未自动弹出时，
+只点击文本严格匹配且可见的登录入口，并在固定超时内确认
+`#login-panel-new`。入口缺失或弹窗未出现会明确失败，不进行无界选择器重试。
+
 ## Permission Boundary
 
 `mediaops` 可执行 Git 检查/拉取、依赖安装、测试、前端构建、允许范围内的日志读取、

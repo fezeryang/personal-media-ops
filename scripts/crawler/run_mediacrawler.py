@@ -18,6 +18,8 @@ DEFAULT_QRCODE_ROOT = Path("/var/lib/mediaops/qrcodes")
 XVFB_WRAPPED_ENVIRONMENT_MARKER = "MEDIAOPS_XVFB_WRAPPED"
 DOUYIN_NAVIGATION_ERROR = "Execution context was destroyed"
 DOUYIN_CLIENT_RETRY_ATTEMPTS = 3
+DOUYIN_LOGIN_DIALOG_SELECTOR = "xpath=//div[@id='login-panel-new']"
+DOUYIN_LOGIN_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='登录']"
 
 
 def parse_bool(value: str) -> bool:
@@ -184,9 +186,58 @@ async def create_douyin_client_with_navigation_retry(
     raise AssertionError("unreachable Douyin client retry state")
 
 
+async def open_douyin_login_dialog(
+    login: object,
+    retryable_error: type[BaseException],
+    *,
+    dialog_timeout_ms: int = 10_000,
+    click_timeout_ms: int = 5_000,
+) -> None:
+    """Open Douyin login without depending on the entry element's HTML tag."""
+    context_page = getattr(login, "context_page", None)
+    if context_page is None:
+        raise RuntimeError("Douyin login has no context page")
+
+    try:
+        await context_page.wait_for_selector(
+            DOUYIN_LOGIN_DIALOG_SELECTOR,
+            state="visible",
+            timeout=dialog_timeout_ms,
+        )
+        return
+    except retryable_error as initial_error:
+        last_error: BaseException = initial_error
+
+    login_entries = context_page.locator(DOUYIN_LOGIN_ENTRY_SELECTOR)
+    for index in range(await login_entries.count()):
+        entry = login_entries.nth(index)
+        try:
+            if not await entry.is_visible():
+                continue
+            await entry.click(timeout=click_timeout_ms)
+            await context_page.wait_for_selector(
+                DOUYIN_LOGIN_DIALOG_SELECTOR,
+                state="visible",
+                timeout=dialog_timeout_ms,
+            )
+            print(
+                "[MediaOps] Opened Douyin login dialog through a visible "
+                "exact-text login entry",
+                flush=True,
+            )
+            return
+        except retryable_error as error:
+            last_error = error
+
+    raise RuntimeError(
+        "Douyin login entry was not visible or did not open the login dialog"
+    ) from last_error
+
+
 def install_douyin_navigation_retry() -> None:
-    """Patch only the reviewed integration seam, never MediaCrawler source."""
+    """Patch reviewed Douyin integration seams, never MediaCrawler source."""
     from media_platform.douyin.core import DouYinCrawler
+    from media_platform.douyin.login import DouYinLogin
     from playwright.async_api import Error as PlaywrightError
 
     original_create_client = DouYinCrawler.create_douyin_client
@@ -202,7 +253,11 @@ def install_douyin_navigation_retry() -> None:
             PlaywrightError,
         )
 
+    async def popup_login_dialog(login: object) -> None:
+        await open_douyin_login_dialog(login, PlaywrightError)
+
     DouYinCrawler.create_douyin_client = create_client_with_retry
+    DouYinLogin.popup_login_dialog = popup_login_dialog
 
 
 def main() -> None:
