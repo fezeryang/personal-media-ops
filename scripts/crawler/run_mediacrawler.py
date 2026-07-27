@@ -18,10 +18,11 @@ DEFAULT_QRCODE_ROOT = Path("/var/lib/mediaops/qrcodes")
 XVFB_WRAPPED_ENVIRONMENT_MARKER = "MEDIAOPS_XVFB_WRAPPED"
 DOUYIN_NAVIGATION_ERROR = "Execution context was destroyed"
 DOUYIN_CLIENT_RETRY_ATTEMPTS = 3
-DOUYIN_LOGIN_DIALOG_SELECTOR = "xpath=//div[@id='login-panel-new']"
+DOUYIN_LOGIN_DIALOG_SELECTOR = '#login-panel-new, [id^="login-full-panel-"]'
 DOUYIN_LOGIN_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='登录']"
 DOUYIN_LOGIN_ENTRY_SCAN_ATTEMPTS = 40
 DOUYIN_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
+DOUYIN_PROCESS_NICE_INCREMENT = 10
 
 
 def parse_bool(value: str) -> bool:
@@ -132,6 +133,22 @@ def ensure_virtual_display(headless: bool) -> None:
 
     os.environ[XVFB_WRAPPED_ENVIRONMENT_MARKER] = "1"
     os.execv(xvfb_run, ["xvfb-run", "-a", sys.executable, *sys.argv])
+
+
+def lower_platform_process_priority(platform: str) -> None:
+    """Keep Douyin's WAF proof-of-work from starving API and SSH processes."""
+    if platform != "dy":
+        return
+    try:
+        niceness = os.nice(DOUYIN_PROCESS_NICE_INCREMENT)
+    except OSError as error:
+        raise SystemExit(
+            "unable to lower Douyin process priority before browser startup"
+        ) from error
+    print(
+        f"[MediaOps] Douyin browser process niceness: {niceness}",
+        flush=True,
+    )
 
 
 def configure_node_runtime() -> None:
@@ -284,6 +301,7 @@ def install_douyin_navigation_retry() -> None:
 def main() -> None:
     args = parse_arguments()
     ensure_virtual_display(args.headless)
+    lower_platform_process_priority(args.platform)
     if not MEDIACRAWLER_ROOT.is_dir():
         raise SystemExit(f"MediaCrawler root does not exist: {MEDIACRAWLER_ROOT}")
 

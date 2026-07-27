@@ -264,6 +264,47 @@ def test_runner_fails_headful_run_without_xvfb(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("platform", "expected_calls"),
+    [
+        ("dy", [10]),
+        ("bili", []),
+        ("xhs", []),
+    ],
+)
+def test_runner_lowers_only_douyin_process_priority(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    expected_calls: list[int],
+) -> None:
+    runner = load_runner()
+    calls: list[int] = []
+
+    def fake_nice(increment: int) -> int:
+        calls.append(increment)
+        return 10
+
+    monkeypatch.setattr(os, "nice", fake_nice)
+
+    runner.lower_platform_process_priority(platform)
+
+    assert calls == expected_calls
+
+
+def test_runner_fails_clearly_when_douyin_priority_cannot_be_lowered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+
+    def fail_nice(increment: int) -> int:
+        raise OSError("not supported")
+
+    monkeypatch.setattr(os, "nice", fail_nice)
+
+    with pytest.raises(SystemExit, match="process priority"):
+        runner.lower_platform_process_priority("dy")
+
+
 class FakeDouyinNavigationError(Exception):
     pass
 
@@ -340,6 +381,14 @@ class FakeDouyinLoginPage:
 class FakeDouyinLogin:
     def __init__(self, page: FakeDouyinLoginPage) -> None:
         self.context_page = page
+
+
+def test_runner_accepts_legacy_and_current_douyin_login_dialogs() -> None:
+    runner = load_runner()
+
+    assert runner.DOUYIN_LOGIN_DIALOG_SELECTOR == (
+        '#login-panel-new, [id^="login-full-panel-"]'
+    )
 
 
 def test_runner_keeps_auto_opened_douyin_login_dialog() -> None:

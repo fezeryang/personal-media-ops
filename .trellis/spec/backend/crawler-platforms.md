@@ -43,11 +43,17 @@ Adapters implement capability metadata, fixed Runner arguments,
   source files are never edited.
 - Douyin's visible login entry keeps the exact text `登录`, but its HTML tag is
   not stable. The Runner first accepts the automatically visible
-  `#login-panel-new`; otherwise it examines exact-text entries every 0.5
-  seconds for at most 40 scans to span the WAF reload window, clicks only a
-  visible one with a short timeout, and confirms the dialog became visible.
-  Missing entries and failed dialog confirmation fail explicitly without fuzzy
-  matching or an unbounded retry.
+  legacy `#login-panel-new` or current `[id^="login-full-panel-"]`; otherwise
+  it examines exact-text entries every 0.5 seconds for at most 40 scans to span
+  the WAF reload window, clicks only a visible one with a short timeout, and
+  confirms either supported dialog became visible. Missing entries and failed
+  dialog confirmation fail explicitly without fuzzy matching or an unbounded
+  retry.
+- Douyin's WAF proof-of-work can monopolize a small single-core host. After
+  Xvfb re-exec, the Runner applies a non-privileged `nice +10` only to the
+  `dy` process so Chromium descendants cannot starve API, Worker, and SSH
+  control traffic. Other platforms keep their existing priority; failure to
+  lower Douyin priority stops before browser startup.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
@@ -76,6 +82,8 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin login entry is briefly absent during the WAF reload | Poll every 0.5 seconds for at most 40 scans |
 | Douyin login entry tag changes but exact visible text remains | Click the visible exact-text entry and confirm the dialog |
 | Douyin has no visible exact-text entry or no dialog after click | Fail explicitly after bounded attempts |
+| Douyin WAF proof-of-work runs on a small host | Apply `nice +10` only to the `dy` process after Xvfb wrapping |
+| Douyin process priority cannot be lowered | Exit before browser startup with an explicit error |
 | Malformed or oversized metric text | Normalized metric is `null` |
 
 ## 5. Good / Base / Bad Cases
@@ -101,8 +109,9 @@ legacy missing-argument compatibility, Xvfb re-exec/failure paths, abbreviated
 metric parsing, malformed/oversized metric rejection, Douyin navigation-race
 recovery, unrelated-error propagation, bounded retry exhaustion, automatic
 Douyin login-dialog detection, visible exact-text fallback, and missing-entry
-failure. Real platform tests require explicit authorization and are not part
-of unit tests.
+failure. Assert that only Douyin receives the fixed niceness increment and
+that priority failures are explicit. Real platform tests require explicit
+authorization and are not part of unit tests.
 
 ## 7. Wrong vs Correct
 
