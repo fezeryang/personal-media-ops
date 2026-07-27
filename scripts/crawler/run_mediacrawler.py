@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import os
 import runpy
 import shutil
 import sys
+from collections.abc import Awaitable, Callable
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
@@ -14,6 +16,8 @@ MEDIACRAWLER_ROOT = Path("/opt/mediacrawler")
 DEFAULT_OUTPUT_ROOT = Path("/var/lib/mediaops/crawler-output")
 DEFAULT_QRCODE_ROOT = Path("/var/lib/mediaops/qrcodes")
 XVFB_WRAPPED_ENVIRONMENT_MARKER = "MEDIAOPS_XVFB_WRAPPED"
+DOUYIN_NAVIGATION_ERROR = "Execution context was destroyed"
+DOUYIN_CLIENT_RETRY_ATTEMPTS = 3
 
 
 def parse_bool(value: str) -> bool:
@@ -142,6 +146,65 @@ def configure_node_runtime() -> None:
     )
 
 
+async def create_douyin_client_with_navigation_retry(
+    crawler: object,
+    httpx_proxy: object,
+    original_create_client: Callable[[object, object], Awaitable[object]],
+    retryable_error: type[BaseException],
+    *,
+    retry_attempts: int = DOUYIN_CLIENT_RETRY_ATTEMPTS,
+    retry_delay_seconds: float = 0.5,
+) -> object:
+    """Retry the narrow post-navigation user-agent race in Douyin startup."""
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            return await original_create_client(crawler, httpx_proxy)
+        except retryable_error as error:
+            if (
+                DOUYIN_NAVIGATION_ERROR not in str(error)
+                or attempt >= retry_attempts
+            ):
+                raise
+            context_page = getattr(crawler, "context_page", None)
+            if context_page is None:
+                raise RuntimeError(
+                    "Douyin crawler has no context page for navigation retry"
+                ) from error
+            print(
+                "[MediaOps] Douyin page navigation interrupted client "
+                f"initialization; retrying ({attempt}/{retry_attempts - 1})",
+                flush=True,
+            )
+            await context_page.wait_for_load_state(
+                "domcontentloaded",
+                timeout=15_000,
+            )
+            if retry_delay_seconds > 0:
+                await asyncio.sleep(retry_delay_seconds)
+    raise AssertionError("unreachable Douyin client retry state")
+
+
+def install_douyin_navigation_retry() -> None:
+    """Patch only the reviewed integration seam, never MediaCrawler source."""
+    from media_platform.douyin.core import DouYinCrawler
+    from playwright.async_api import Error as PlaywrightError
+
+    original_create_client = DouYinCrawler.create_douyin_client
+
+    async def create_client_with_retry(
+        crawler: object,
+        httpx_proxy: object,
+    ) -> object:
+        return await create_douyin_client_with_navigation_retry(
+            crawler,
+            httpx_proxy,
+            original_create_client,
+            PlaywrightError,
+        )
+
+    DouYinCrawler.create_douyin_client = create_client_with_retry
+
+
 def main() -> None:
     args = parse_arguments()
     ensure_virtual_display(args.headless)
@@ -231,6 +294,8 @@ def main() -> None:
         "--save_data_path",
         str(args.output_dir),
     ]
+    if args.platform == "dy":
+        install_douyin_navigation_retry()
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

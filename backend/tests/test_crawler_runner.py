@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import os
 import shutil
@@ -263,6 +264,113 @@ def test_runner_fails_headful_run_without_xvfb(
     assert calls == []
 
 
+class FakeDouyinNavigationError(Exception):
+    pass
+
+
+class FakeDouyinPage:
+    def __init__(self) -> None:
+        self.load_state_calls: list[tuple[str, int]] = []
+
+    async def wait_for_load_state(self, state: str, *, timeout: int) -> None:
+        self.load_state_calls.append((state, timeout))
+
+
+class FakeDouyinCrawler:
+    def __init__(self) -> None:
+        self.context_page = FakeDouyinPage()
+
+
+def test_runner_retries_douyin_client_creation_after_navigation_race() -> None:
+    runner = load_runner()
+    crawler = FakeDouyinCrawler()
+    calls = 0
+
+    async def create_client(crawler_value: object, proxy: object) -> object:
+        nonlocal calls
+        calls += 1
+        assert crawler_value is crawler
+        assert proxy == "fixed-proxy"
+        if calls < 3:
+            raise FakeDouyinNavigationError(
+                "Page.evaluate: Execution context was destroyed, "
+                "most likely because of a navigation"
+            )
+        return "client"
+
+    result = asyncio.run(
+        runner.create_douyin_client_with_navigation_retry(
+            crawler,
+            "fixed-proxy",
+            create_client,
+            FakeDouyinNavigationError,
+            retry_delay_seconds=0,
+        )
+    )
+
+    assert result == "client"
+    assert calls == 3
+    assert crawler.context_page.load_state_calls == [
+        ("domcontentloaded", 15_000),
+        ("domcontentloaded", 15_000),
+    ]
+
+
+def test_runner_does_not_retry_unrelated_douyin_playwright_error() -> None:
+    runner = load_runner()
+    crawler = FakeDouyinCrawler()
+    calls = 0
+
+    async def create_client(crawler_value: object, proxy: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise FakeDouyinNavigationError("Page.evaluate: Target closed")
+
+    with pytest.raises(FakeDouyinNavigationError, match="Target closed"):
+        asyncio.run(
+            runner.create_douyin_client_with_navigation_retry(
+                crawler,
+                None,
+                create_client,
+                FakeDouyinNavigationError,
+                retry_delay_seconds=0,
+            )
+        )
+
+    assert calls == 1
+    assert crawler.context_page.load_state_calls == []
+
+
+def test_runner_stops_after_bounded_douyin_navigation_retries() -> None:
+    runner = load_runner()
+    crawler = FakeDouyinCrawler()
+    calls = 0
+
+    async def create_client(crawler_value: object, proxy: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise FakeDouyinNavigationError(
+            "Page.evaluate: Execution context was destroyed"
+        )
+
+    with pytest.raises(FakeDouyinNavigationError, match="Execution context"):
+        asyncio.run(
+            runner.create_douyin_client_with_navigation_retry(
+                crawler,
+                None,
+                create_client,
+                FakeDouyinNavigationError,
+                retry_delay_seconds=0,
+            )
+        )
+
+    assert calls == 3
+    assert crawler.context_page.load_state_calls == [
+        ("domcontentloaded", 15_000),
+        ("domcontentloaded", 15_000),
+    ]
+
+
 def test_runner_forces_mediacrawler_safety_flags() -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
 
@@ -274,3 +382,7 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     assert "config.HEADLESS = args.headless" in source
     assert "config.CDP_HEADLESS = args.headless" in source
     assert '"--headless",\n        "true" if args.headless else "false"' in source
+    assert (
+        'if args.platform == "dy":\n        install_douyin_navigation_retry()'
+        in source
+    )
