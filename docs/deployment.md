@@ -277,7 +277,8 @@ sudo -n /usr/local/sbin/mediaops-release finalize
 迁移只会在数据库备份、后端测试和前端构建全部成功后执行；未提供
 `--allow-migrations` 时不得执行。任何前置 gate 失败都不得调用 helper。helper 或
 发布后健康检查失败时可能存在部分
-激活状态，必须报告失败并先诊断，不能宣称发布成功。
+激活状态，必须先检查真实状态，不能把部分激活宣称为成功；授权范围内的可修复异常由
+Agent 修复、测试、提交、push 后从安全检查点继续。
 
 ### Resume 与 SSH 传输异常
 
@@ -292,7 +293,19 @@ sudo -n /usr/local/sbin/mediaops-release finalize
 - 某阶段 SSH 以 255（传输错误）退出时，脚本不会立即判定失败，而是重连一次并
   检查该阶段的远端标记；标记为 `done` 时输出
   `SSH transport anomaly, stage completed remotely` 警告并继续，否则按原样以
-  阶段名报告失败。其他非零退出码仍直接判定阶段失败。
+  阶段名报告本次尝试失败。Agent 随后重新连接，综合 commit、marker、数据库
+  revision、进程与健康状态，从最近安全检查点修复并恢复；不因单一退出码要求用户选择
+  技术方案，也不重复已经验证成功的迁移。其他非零退出码同样先保持该阶段 fail-closed，
+  再进入证据驱动的修复/重试循环。
+
+### 外部观察者健康检查例外
+
+Codex 执行环境经过 Beaver/WAF 的公网路径可能出现已复现的 `403`、`525` 或 TLS/
+连接重置。`deploy.sh` 只对这些外部观察者结果启用窄例外：它会从生产服务器通过
+`--resolve ops.fezern8n.com:443:127.0.0.1` 验证真实公网主机名、证书、首页、
+`/api/health` 与 SPA 路由，并再次运行受限 helper 的 status（服务、Nginx 和
+localhost API）。全部通过后记录 `external_observer=failed-nonblocking` 并完成
+部署；SNI 回环、Helper、Nginx、服务、localhost 或任意其他公网 HTTP 失败仍会阻断。
 
 ### finalize 的 .user.ini 回退
 

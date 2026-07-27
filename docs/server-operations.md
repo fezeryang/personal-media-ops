@@ -153,8 +153,14 @@ rsync `--delete` 时以 exit 23 中止。deploy.sh 会在 finalize 失败后核�
 的 `restart-services`、`nginx-reload`、`verify` 完成激活；不一致则中止并报告
 可能的部分激活。
 
-任何 gate 失败都不会调用 `finalize`。helper 或健康检查失败时，脚本报告具体阶段并
-明确发布不成功，不会把部分准备或部分激活描述为成功。
+任何前置 gate 失败都不会调用 `finalize`。helper 或健康检查失败时，脚本报告具体
+阶段并检查真实状态，不会把部分准备或部分激活描述为成功；属于授权范围内且可修复的
+异常由 Agent 修复、测试、提交、push 后从安全检查点继续。
+
+外部 Codex 观察者若出现已复现的 `403`、`525` 或 TLS/连接失败，部署脚本会从生产
+服务器执行证书有效的 SNI 回环，并通过受限 helper status 复核服务、Nginx 与
+localhost API。全部通过才记录 `failed-nonblocking`；其他 HTTP、origin 或 SNI
+失败不会被例外吞掉。
 
 ## Restricted Release Helper
 
@@ -214,3 +220,15 @@ API/进程/端口/磁盘/内存检查。
 - 不自动回滚；
 - 不在未验证本地修改后直接尝试生产；
 - 不把无法连接或权限不足报告成操作成功。
+
+## Agent Recovery Boundary
+
+用户已授权完整发布结果后，正常工程步骤不再逐项请求确认。SSH 255/EOF、临时网络
+失败、测试或构建失败、服务/Helper/Adapter/Runner 错误都先保持当前阶段 fail-closed，
+然后由 Agent 收集服务器证据、修复代码、补测试、commit、push、恢复部署并继续验证。
+只有扫码/验证码/账号确认、新秘密或第三方授权、不可逆数据操作、以及超出既有
+SSH/Helper 权限体系的 root/网络/系统基础设施变更才暂停。
+
+定向修改 `MEDIAOPS_ENABLED_PLATFORMS` 属于平台 rollout 的非敏感配置操作：修改前
+创建权限安全的备份，只替换该变量，不打印 `.env` 其他内容，修改后仅报告变量名与
+`bili`、`bili,xhs` 或 `bili,xhs,dy`。

@@ -61,7 +61,10 @@ command -v xvfb-run
   re-runnable.
 - An SSH exit of 255 triggers exactly one reconnect to recheck the remote
   stage marker; a `done` marker means the stage completed remotely, otherwise
-  the stage fails as usual.
+  that attempt fails. A failed attempt does not itself require a user pause:
+  the Agent inspects commits, markers, migrations, processes, and health,
+  repairs within the authorized scope, and resumes from the nearest verified
+  checkpoint.
 - The deploy script normally calls only
   `sudo -n /usr/local/sbin/mediaops-release finalize` for privileged work.
   When the deployed helper v1 finalize fails but both `.mediaops-release`
@@ -81,7 +84,15 @@ command -v xvfb-run
   change and is outside `deploy.sh` and the restricted helper. The reviewed
   Runner exits explicitly when a headful run has neither `DISPLAY` nor
   `xvfb-run`.
-- Success is recorded only after internal and public checks pass.
+- `MEDIAOPS_ENABLED_PLATFORMS` is non-secret targeted configuration. An
+  authorized rollout may back up `.env` with restrictive permissions and
+  replace only that variable without printing any other value.
+- Success is recorded only after internal checks and either the direct public
+  checks pass or the exact approved external-observer exception passes.
+  The exception accepts only Codex-side `403`, `525`, or connection/TLS
+  failure, then requires helper status, Nginx, both services, localhost API,
+  and certificate-valid public-hostname SNI loopback checks from production.
+  Deployment records store `external_observer=passed|failed-nonblocking`.
 
 ## 4. Validation & Error Matrix
 
@@ -99,12 +110,14 @@ command -v xvfb-run
 | `sudo -n ... version` fails | Report the controlled helper entry as unavailable and stop before backup/pull |
 | Backup failure | Stop before pull |
 | Target changes after backup | Stop before pull |
-| Test/build failure | Do not invoke `finalize` |
+| Test/build failure | Do not invoke `finalize`; fix/test/commit/push and resume without a technical user pause |
 | Stage SSH exit 255 with remote `done` marker | Warn and continue |
-| Stage SSH exit 255 without remote marker | Fail with the stage name |
+| Stage SSH exit 255 without remote marker | Fail that attempt with the stage name, inspect real state, then repair/resume |
 | Helper finalize failure with both release markers at target | Complete via allowlisted `restart-services`/`nginx-reload`/`verify` |
 | Helper failure without marker parity | Report restricted-release stage; never claim success |
-| Health failure | Report failed stage; never record success |
+| Direct public check returns `403`, `525`, or connection/TLS failure; production helper/SNI loopback passes | Record `external_observer=failed-nonblocking` and complete |
+| Approved observer failure but helper/SNI loopback fails | Fail verify; never record success |
+| Direct public check returns any other HTTP or invalid payload | Fail verify; never use the observer exception |
 | `dy` enablement requested without `xvfb-run` | Do not enable `dy`; report the administrator prerequisite |
 | Xvfb wrapper returns without `DISPLAY` | Runner fails explicitly; never claim a runnable Douyin task |
 | Extra/unknown helper argument | Exit 2 |
@@ -121,10 +134,15 @@ command -v xvfb-run
   for `mediaops`.
 - Good: check `command -v xvfb-run` read-only before an approved `dy`
   enablement, then validate one real task with global concurrency still at one.
+- Good: after a Codex-side TLS reset, recheck helper status and
+  `--resolve <host>:443:127.0.0.1` routes on production, record the observer
+  result, and continue only when every origin-side gate passes.
 - Bad: direct sudo rsync/systemctl/Nginx, arbitrary helper arguments, helper
   installation, password prompts, or reporting partial activation as success.
 - Bad: silently install system packages from deployment automation or enable
   `dy` while its required virtual-display executable is absent.
+- Bad: treat one SSH/public-check exit code as the whole deployment state, or
+  let an arbitrary public HTTP 500 use the observer exception.
 
 ## 6. Tests Required
 
@@ -139,6 +157,9 @@ command -v xvfb-run
   stale-marker reset, the
   finalize `.user.ini` fallback, the helper rsync protect/exclude filter, and
   that dry-run never invokes SSH.
+- Stubbed observer tests assert that a connection/TLS failure plus successful
+  production SNI loopback completes with `failed-nonblocking`, a failed SNI
+  loopback aborts, and HTTP 500 never enters the exception.
 - Official Skill validation passes.
 - Backend pytest and frontend lint/test/build remain green.
 - Runner unit tests assert Xvfb re-exec, missing-Xvfb failure, wrapped-without-
@@ -156,6 +177,7 @@ command -v xvfb-run
 [[ -x /usr/local/sbin/mediaops-release ]]
 sudo systemctl restart mediaops-api
 sudo /www/server/nginx/sbin/nginx -s reload
+scripts/server/deploy.sh --execute || wait-for-user
 ```
 
 ### Correct
@@ -168,6 +190,8 @@ scripts/server/deploy.sh \
   --target-ref <origin-main-sha> \
   --allow-migrations \
   --execute
+# On a recoverable failure: inspect remote markers/state, fix, commit, push,
+# then rerun with --resume from the verified checkpoint.
 ```
 
 The `--execute` deployment command is a real release and requires explicit

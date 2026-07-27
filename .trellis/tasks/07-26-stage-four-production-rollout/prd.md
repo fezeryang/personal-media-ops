@@ -7,6 +7,11 @@ target commit `ee22c771e5e52c8d6d78dbf8e74586ed65a40e0d`, while recording a
 narrow operator-approved exception for the already diagnosed external
 Beaver/WAF health-check failure.
 
+The rollout is outcome-authorized: recoverable engineering, transport,
+test/build, service, Helper, Adapter, Runner, and API/UI failures are diagnosed
+and repaired autonomously through commit, push, resumable deployment, and real
+verification. A failed command is not by itself a user pause condition.
+
 ## Requirements
 
 - Add a repository rule explaining that the known external observer failure
@@ -28,6 +33,16 @@ Beaver/WAF health-check failure.
   permissions, failed gates or real collection, or unauthorized sensitive
   configuration changes.
 - Never print `.env`, cookies, browser storage, or login-state contents.
+- Resume from verified commits, markers, migrations, backups, and process
+  state after an interrupted deployment; never repeat a verified migration or
+  restore the database solely because a later transport stage failed.
+- Pause only for user QR/captcha/account actions, a new secret or external
+  grant, an irreversible data operation, or authority outside the existing
+  SSH/restricted-helper boundary.
+- Permit targeted, backed-up, non-secret updates to
+  `MEDIAOPS_ENABLED_PLATFORMS` without printing any other `.env` content.
+- Make the deploy script recognize the approved external-observer exception
+  only after helper/Nginx/services/localhost and production SNI loopback pass.
 
 ## Acceptance Criteria
 
@@ -44,6 +59,10 @@ Beaver/WAF health-check failure.
 - [ ] Any QR-code wait reports the task ID and task-detail URL.
 - [ ] Code and task bookkeeping are committed and pushed, and the final
       worktree state is reported.
+- [ ] Agent autonomy and pause-boundary rules are synchronized across
+      `AGENTS.md`, the production Skill, deployment references, and docs.
+- [ ] The external-observer fallback is regression-tested and records its
+      non-blocking result without masking arbitrary public/origin failures.
 
 ## Definition of Done
 

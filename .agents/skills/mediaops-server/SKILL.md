@@ -81,7 +81,9 @@ Start with a no-connection dry-run:
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 ```
 
-A separately authorized real release uses:
+An explicit user request to complete the production rollout authorizes the
+normal release/retry loop; do not ask again for each non-destructive stage. A
+real release uses:
 
 ```bash
 scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
@@ -104,12 +106,28 @@ commits only after all checks pass.
 
 ## Failure Handling
 
-- Stop on a dirty worktree, target mismatch, non-fast-forward update,
-  unauthorized migration/schema path, backup failure, failed
-  test/build/migration, helper failure, or health failure.
-- Report the exact failed stage.
-- Never describe code preparation or partial helper execution as success.
-- Inspect evidence before retrying; do not restart every service blindly.
+- Keep each stage fail-closed, report its exact failure, and immediately
+  inspect real remote state before deciding what remains.
+- Treat SSH 255, missing EOF, or a lost session as transport evidence, not
+  proof the remote stage failed. Reconnect, compare the stage marker, commit,
+  build/published markers, processes, and database revision, then resume from
+  the nearest safe checkpoint.
+- For fixable test/build/service/helper/Adapter/Runner failures within the
+  authorized outcome, diagnose, edit the repository, add tests, commit, push,
+  redeploy, and verify without asking the user to select the repair.
+- Never rerun a verified migration or restore a database solely because a
+  later stage or connection failed.
+- The recorded Codex-observer `403`, `525`, or TLS/connection failure is
+  non-blocking only after helper/Nginx/services/localhost checks and a
+  production-server SNI loopback all pass. Record the exception.
+- Never describe preparation or partial activation as success; report success
+  only from the composite state.
+
+Pause only for user QR/captcha/account actions, new secrets or third-party
+grants, irreversible data operations, or authority outside the existing
+helper/SSH boundary. Targeted non-secret configuration changes explicitly
+required by the task may proceed without another approval; back up the file,
+change only the named variable, and never print the full file.
 
 ## Rollback Preparation
 

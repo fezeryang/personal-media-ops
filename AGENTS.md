@@ -67,7 +67,43 @@ uncommitted or edit generated JS/CSS on the server.
 - Do not run destructive database work without a verified backup.
 - Never use `git reset --hard`, delete the production database, clear
   `/var/lib/mediaops`, or clear `/var/log/mediaops`.
-- Do not test unverified changes directly in production.
+- Run the local quality gates before using production for the explicitly
+  authorized small real-platform validation.
+
+## Agent Autonomy and Pause Boundary
+
+Once the user authorizes an end-to-end product or rollout outcome, own the
+normal engineering loop without asking the user to choose technical steps:
+
+```text
+collect evidence → inspect real state → resume from the last safe checkpoint
+→ fix → test → commit → push → deploy → verify → continue
+```
+
+An SSH exit code, missing EOF, transient network/package-source failure,
+test/build/service/helper failure, Adapter/Runner mismatch, or the need for a
+new fix commit is not by itself a reason to pause. Each individual stage
+remains fail-closed, but the Agent must diagnose it, preserve completed work,
+apply an in-scope repair, and resume instead of treating one command result as
+the whole system state. Do not repeat a verified migration or restore a
+database merely because deployment transport failed later.
+
+Pause only when progress requires:
+
+- the user to scan a QR code, solve a captcha, approve an account prompt, or
+  act in an external console;
+- a new secret, account, token, license, paid service, or third-party grant;
+- an irreversible data operation such as database replacement, destructive
+  downgrade, result deletion, or browser-login-state deletion; or
+- authority outside the installed boundary, such as sudoers/root-shell,
+  firewall/user, Cloudflare, security-group, domain, or shared system
+  infrastructure changes.
+
+Targeted non-secret production configuration changes explicitly required by
+the active task, such as `MEDIAOPS_ENABLED_PLATFORMS`, may be performed
+autonomously. Back up the file with restrictive permissions, change only the
+named variable, never print the complete file, and report only the variable
+name plus its non-secret value.
 
 ## Local Quality Gates
 
@@ -106,7 +142,9 @@ test, and a reviewed downgrade or explicit irreversible-migration rationale.
 
 ## Production Operations
 
-Use `$mediaops-server` and `scripts/server/`. Default to read-only diagnosis.
+Use `$mediaops-server` and `scripts/server/`. Start with read-only diagnosis,
+then continue with the smallest authorized mutation needed to reach the
+already-approved outcome.
 Before any mutation, state the target host, target commit, worktree state, and
 planned actions. Back up SQLite before database-affecting deployment.
 Deployments containing migration/schema paths require the explicit
@@ -116,7 +154,9 @@ rollback behavior.
 Do not edit production repository files, `/opt/mediacrawler`, browser login
 state, systemd, Nginx, or BaoTa configuration unless the task explicitly
 requires it. Do not restart every service without evidence. Prefer diagnosis
-and the smallest verified repair. Routine privileged release work must use only
+and the smallest verified repair. Reconnect after transport anomalies and
+compare commits, markers, database revision, processes, and health before
+deciding which stage remains. Routine privileged release work must use only
 the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
 Never request an interactive sudo password, seek a root shell, or automatically
 install/overwrite the helper or sudoers.

@@ -76,8 +76,10 @@ the target commit's marker file first.
 
 If a stage's SSH invocation exits 255 (transport error), the orchestrator
 reconnects once and rechecks the remote stage marker; a `done` marker means
-the stage completed remotely and the deployment continues, otherwise the stage
-fails with its name.
+the stage completed remotely and the deployment continues. A missing marker
+fails that attempt, after which the Agent diagnoses real remote state, repairs
+the script or application when needed, and resumes from the nearest verified
+checkpoint instead of pausing for technical direction.
 
 If the deployed helper v1 `finalize` fails but both the published and built
 `.mediaops-release` markers already equal the target commit (the known
@@ -113,11 +115,19 @@ requires a reviewed migration plan, backup, and explicit
 `--allow-migrations`. The deploy script runs migrations only after backend
 tests and frontend build succeed, and before `finalize`.
 
-## Failure and Rollback
+## Failure, Recovery, and Rollback
 
 Every stage is fail-closed. A failed test/build prevents `finalize`. A helper or
-health failure may mean production is partially activated; report failure and
-inspect before retrying.
+health failure may mean production is partially activated; inspect commits,
+markers, services, database revision, and health before retrying. Under an
+authorized rollout, fixable failures are handled through repository changes,
+tests, commits, push, and resumable redeployment without asking the user to
+choose the technical recovery.
+
+The known external Codex-observer `403`, `525`, or TLS/connection failure may be
+recorded as non-blocking only when helper/Nginx checks, both services, localhost
+health, and a certificate-valid public-hostname SNI loopback from production
+all pass. Other public or origin failures remain failures.
 
 Retain the old commit and backup. Prefer a reviewed Git revert or known-good
 forward commit. A database downgrade is allowed only when its revision
