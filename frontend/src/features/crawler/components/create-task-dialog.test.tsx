@@ -11,7 +11,7 @@ const capabilities = {
     {
       platform: "bili",
       display_name: "哔哩哔哩",
-      enabled: true,
+      enabled: false,
       verification_status: "verified",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
@@ -23,7 +23,7 @@ const capabilities = {
       platform: "xhs",
       display_name: "小红书",
       enabled: true,
-      verification_status: "code_ready",
+      verification_status: "verified",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -102,6 +102,12 @@ describe("CreateTaskDialog", () => {
     const platformSelect = await screen.findByRole("combobox", {
       name: "平台",
     });
+    expect(
+      screen.getByRole("option", { name: "哔哩哔哩（已验证，未启用）" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("option", { name: "小红书（已验证）" }),
+    ).toBeEnabled();
     expect(
       screen.getByRole("option", { name: "抖音（代码就绪，未启用）" }),
     ).toBeDisabled();

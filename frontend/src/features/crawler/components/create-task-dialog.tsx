@@ -2,6 +2,7 @@ import { LoaderCircle, LockKeyhole, Plus, QrCode, Search } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router";
 
+import type { CrawlerPlatformCapability } from "../../../api/crawler";
 import { Button } from "../../../components/ui/button";
 import {
   Dialog,
@@ -34,6 +35,16 @@ function FixedField({ label, value, icon: Icon }: FixedFieldProps) {
       </div>
     </div>
   );
+}
+
+function capabilityStatusLabel(
+  enabled: boolean,
+  verificationStatus: CrawlerPlatformCapability["verification_status"],
+) {
+  if (verificationStatus === "verified") {
+    return enabled ? "（已验证）" : "（已验证，未启用）";
+  }
+  return enabled ? "（代码就绪）" : "（代码就绪，未启用）";
 }
 
 export function CreateTaskDialog() {
@@ -159,11 +170,10 @@ export function CreateTaskDialog() {
                     disabled={!capability.enabled}
                   >
                     {capability.display_name}
-                    {capability.enabled
-                      ? capability.verification_status === "verified"
-                        ? "（已验证）"
-                        : "（代码就绪）"
-                      : "（代码就绪，未启用）"}
+                    {capabilityStatusLabel(
+                      capability.enabled,
+                      capability.verification_status,
+                    )}
                   </option>
                 ))}
               </select>
