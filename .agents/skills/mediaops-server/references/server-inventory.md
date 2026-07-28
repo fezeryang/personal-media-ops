@@ -50,11 +50,14 @@ passwords, private keys, tokens, cookies, or `.env` values.
 | Reviewed Runner source | `/opt/personal-media-ops/scripts/crawler/run_mediacrawler.py` |
 | Active Runner | `/var/lib/mediaops/bin/run_mediacrawler.py` |
 
-The application database head for stage six is
-`0005_library_entities` (`0004_content_modes` followed by normalized library
-tables). Any release introducing these revisions requires a fresh SQLite
-backup and the explicit `--allow-migrations` deployment gate. The pinned
-MediaCrawler commit remains unchanged.
+The stage-six production baseline is `0005_library_entities`. Stage seven
+advances the application head through access control, subscriptions, library
+organization, metrics, and intelligence to
+`0009_metrics_and_intelligence`. That rollout requires a fresh SQLite backup,
+the explicit `--allow-migrations` deployment gate, preservation checks for
+existing tasks/library/provenance, and interactive non-root owner
+initialization after activation. The pinned MediaCrawler commit remains
+unchanged.
 
 The `mediaops` account can inspect the repository, install project
 dependencies, run tests/builds, read permitted logs, call APIs, and check

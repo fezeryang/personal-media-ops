@@ -115,12 +115,17 @@ requires a reviewed migration plan, backup, and explicit
 `--allow-migrations`. The deploy script runs migrations only after backend
 tests and frontend build succeed, and before `finalize`.
 
-Stage-six migrations rebuild `crawler_tasks` once to preserve old search rows
-while adding explicit mode inputs, then create normalized library/provenance
-tables. Verification must compare old task counts/statuses before and after,
-confirm head `0005_library_entities`, inspect library table/index presence,
-and leave existing JSONL untouched. A later transport or helper failure is
-not a reason to repeat a verified migration or restore the backup.
+Stage-seven migration starts from the production `0005_library_entities`
+baseline and reaches `0009_metrics_and_intelligence`. It adds access-control,
+subscription, organization, watch/snapshot, trend, and brief tables without
+rewriting `crawler_tasks`, existing library entities/provenance, or JSONL.
+Verification must compare task/library/provenance counts before and after,
+confirm head `0009_metrics_and_intelligence`, inspect every new table/index,
+and run `integrity_check`. After activation and public health verification,
+pause once for the user to initialize the owner interactively as `mediaops`;
+never pass the password through a command or environment. A later transport
+or helper failure is not a reason to repeat a verified migration or restore
+the backup.
 
 ## Failure, Recovery, and Rollback
 
