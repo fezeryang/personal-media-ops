@@ -12,6 +12,7 @@ GET  /api/crawler/capabilities
 POST /api/crawler/tasks
 GET  /api/crawler/tasks/{task_id}/results?offset=N&limit=N
 MEDIAOPS_ENABLED_PLATFORMS=bili[,xhs,dy]
+DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=<finite positive seconds; default 180>
 ```
 
 Adapters implement capability metadata, fixed Runner arguments,
@@ -54,6 +55,14 @@ Adapters implement capability metadata, fixed Runner arguments,
   `dy` process so Chromium descendants cannot starve API, Worker, and SSH
   control traffic. Other platforms keep their existing priority; failure to
   lower Douyin priority stops before browser startup.
+- The Worker terminates the full Douyin process group if its QR code is not
+  ready within `DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS` (180 seconds by
+  default). This startup deadline applies only before the QR code appears; an
+  operator's scan window remains unbounded by this guard.
+- Resource-constrained production keeps `dy` registered as `code_ready` but
+  excludes it from `MEDIAOPS_ENABLED_PLATFORMS`. Cookie login is not a resource
+  fallback because MediaCrawler still launches Chromium and it would introduce
+  sensitive browser state.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
@@ -84,6 +93,8 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin has no visible exact-text entry or no dialog after click | Fail explicitly after bounded attempts |
 | Douyin WAF proof-of-work runs on a small host | Apply `nice +10` only to the `dy` process after Xvfb wrapping |
 | Douyin process priority cannot be lowered | Exit before browser startup with an explicit error |
+| Douyin QR code is not ready before its startup deadline | Terminate the task process group and persist an explicit failure |
+| Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
 | Malformed or oversized metric text | Normalized metric is `null` |
 
 ## 5. Good / Base / Bad Cases
@@ -110,8 +121,11 @@ metric parsing, malformed/oversized metric rejection, Douyin navigation-race
 recovery, unrelated-error propagation, bounded retry exhaustion, automatic
 Douyin login-dialog detection, visible exact-text fallback, and missing-entry
 failure. Assert that only Douyin receives the fixed niceness increment and
-that priority failures are explicit. Real platform tests require explicit
-authorization and are not part of unit tests.
+that priority failures are explicit. Worker tests must assert that a pre-QR
+Douyin timeout terminates the subprocess and persists failure, a ready QR code
+disables that deadline, and Bilibili/Xiaohongshu are unaffected. Configuration
+tests must reject zero, negative, NaN, and infinite deadlines. Real platform
+tests require explicit authorization and are not part of unit tests.
 
 ## 7. Wrong vs Correct
 
@@ -154,4 +168,19 @@ Correct:
 ```python
 if args.platform == "dy":
     install_douyin_navigation_retry()
+```
+
+Wrong:
+
+```python
+# Cookie login still launches Chromium and adds sensitive browser state.
+enabled_platforms = ("bili", "xhs", "dy")
+login_type = "cookie"
+```
+
+Correct:
+
+```text
+MEDIAOPS_ENABLED_PLATFORMS=bili,xhs
+DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180
 ```

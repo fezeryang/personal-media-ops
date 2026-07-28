@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,9 @@ def worker_settings(base: Settings, runner: Path) -> Settings:
         node_binary=None,
         node_bin_dir=base.node_bin_dir,
         crawler_poll_interval_seconds=0.02,
+        douyin_qrcode_startup_timeout_seconds=(
+            base.douyin_qrcode_startup_timeout_seconds
+        ),
         enabled_platforms=base.enabled_platforms,
     )
 
@@ -261,6 +265,108 @@ print("Login successful then wait for redirect", flush=True)
         await worker_task
 
     asyncio.run(run_and_observe())
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "succeeded"
+
+
+def test_worker_times_out_douyin_before_qrcode_is_ready(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "silent_runner.py"
+    runner.write_text(
+        """
+import time
+while True:
+    time.sleep(0.1)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        douyin_qrcode_startup_timeout_seconds=0.05,
+    )
+    task = seed_task(repository, settings, platform="dy")
+    worker = CrawlerWorker(repository, settings, terminate_timeout_seconds=0.2)
+
+    asyncio.run(asyncio.wait_for(worker.run_once(), timeout=3))
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert "QR-code startup timed out after 0.05 seconds" in str(
+        stored["error_message"]
+    )
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(stored["pid"]), 0)
+
+
+def test_worker_stops_douyin_startup_timeout_after_qrcode_is_ready(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "delayed_login_runner.py"
+    runner.write_text(
+        """
+import argparse
+import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--qrcode-path", required=True)
+parser.add_argument("--output-dir", required=True)
+args, _ = parser.parse_known_args()
+qrcode = Path(args.qrcode_path)
+qrcode.parent.mkdir(parents=True, exist_ok=True)
+qrcode.write_bytes(b"fake png")
+time.sleep(0.15)
+print("Login successful then wait for redirect", flush=True)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        douyin_qrcode_startup_timeout_seconds=0.05,
+    )
+    task = seed_task(repository, settings, platform="dy")
+
+    asyncio.run(
+        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+    )
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("platform", ["bili", "xhs"])
+def test_worker_does_not_apply_douyin_startup_timeout_to_other_platforms(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+    platform: str,
+) -> None:
+    runner = tmp_path / f"{platform}_slow_start_runner.py"
+    runner.write_text(
+        """
+import time
+time.sleep(0.1)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        douyin_qrcode_startup_timeout_seconds=0.05,
+    )
+    task = seed_task(repository, settings, platform=platform)
+
+    asyncio.run(
+        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+    )
 
     stored = repository.get(str(task["id"]))
     assert stored is not None

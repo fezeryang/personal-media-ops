@@ -52,6 +52,7 @@ MEDIAOPS_LOG_ROOT=/var/log/mediaops
 MEDIAOPS_QRCODE_ROOT=/var/lib/mediaops/qrcodes
 MEDIAOPS_NODE_BINARY=/www/server/nodejs/v22.22.3/bin/node
 CRAWLER_POLL_INTERVAL_SECONDS=1
+DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180
 ```
 
 也可用 `MEDIAOPS_NODE_BIN_DIR=/www/server/nodejs/v22.22.3/bin` 代替
@@ -146,7 +147,10 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 抖音 WAF 的浏览器 proof-of-work 在低配单核主机上可能持续占满 CPU。完成 Xvfb 包装后，
 Runner 只对 `dy` 进程增加 `nice +10`，浏览器子进程继承该优先级，避免 SSH、API 和
 Worker 健康检查被采集任务饿死；B 站与小红书优先级不变。无法设置该非特权优先级时，
-抖音任务会在浏览器启动前明确失败。
+抖音任务会在浏览器启动前明确失败。Worker 另以
+`DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS` 限制二维码就绪前的启动阶段，默认 180 秒；
+到期会终止整个抖音进程组并明确标记失败。二维码生成后该启动超时立即解除，不会缩短
+操作员的扫码时间。
 
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
@@ -168,6 +172,11 @@ install -m 0750 scripts/crawler/run_mediacrawler.py \
 小红书已通过 2026-07-26 的真实运营任务验证，可在操作员批准后显式启用 `xhs`。
 抖音仍是代码就绪状态；只有 Runner、扫码登录、输出和结果转换完成真实验证后，才可把
 `dy` 保留在 `.env` 的启用列表中。代码完成本身不等同于生产验证。
+
+当前低资源生产机应使用 `MEDIAOPS_ENABLED_PLATFORMS=bili,xhs`，让能力接口和前端
+明确显示抖音暂不可用。不要改用 Cookie 登录规避此限制：Cookie 属于敏感浏览器登录态，
+而 MediaCrawler 的 Cookie 模式仍会启动 Chromium，不能解决主机资源瓶颈。恢复抖音前
+需要先提供足够的浏览器资源，或引入经过单独授权和评审的官方接口登录方案。
 
 ## systemd
 

@@ -4,7 +4,7 @@ import os
 import signal
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from app.core.config import Settings, settings
 from app.crawler.adapters import CrawlerPlatformAdapter
@@ -13,6 +13,7 @@ from app.crawler.results import count_normalized_results
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 
 STREAM_READER_LIMIT_BYTES = 1024 * 1024
+StreamProcessOutcome = Literal["completed", "cancelled", "startup_timeout"]
 
 
 class WorkerAlreadyRunning(RuntimeError):
@@ -109,19 +110,29 @@ class CrawlerWorker:
             )
             try:
                 self.repository.set_pid(task_id, process.pid)
-                cancelled = await self._stream_process(
+                stream_outcome = await self._stream_process(
                     task_id,
                     process,
                     log_path,
                     qrcode_path,
                     adapter,
                 )
-                return_code = None if cancelled else await process.wait()
+                return_code = (
+                    await process.wait() if stream_outcome == "completed" else None
+                )
             except Exception:
                 await self._terminate_process(process)
                 raise
-            if cancelled:
+            if stream_outcome == "cancelled":
                 self.repository.complete_cancelled(task_id)
+                return
+            if stream_outcome == "startup_timeout":
+                timeout = self.settings.douyin_qrcode_startup_timeout_seconds
+                self.repository.complete_failure(
+                    task_id,
+                    "Douyin QR-code startup timed out after "
+                    f"{timeout:g} seconds before login became ready",
+                )
                 return
 
             if return_code == 0:
@@ -213,21 +224,31 @@ class CrawlerWorker:
         log_path: Path,
         qrcode_path: Path,
         adapter: CrawlerPlatformAdapter,
-    ) -> bool:
+    ) -> StreamProcessOutcome:
         if process.stdout is None:
             raise RuntimeError("crawler process stdout pipe is unavailable")
         waiting_for_login = False
         qrcode_seen = False
+        startup_started_at = asyncio.get_running_loop().time()
         with log_path.open("ab", buffering=0) as log_handle:
             while True:
                 if self.repository.is_cancel_requested(task_id):
                     await self._terminate_process(process)
-                    return True
+                    return "cancelled"
 
                 if not qrcode_seen and qrcode_path.is_file():
                     qrcode_seen = True
                     waiting_for_login = True
                     self.repository.set_waiting_login(task_id)
+
+                if (
+                    adapter.platform == "dy"
+                    and not qrcode_seen
+                    and asyncio.get_running_loop().time() - startup_started_at
+                    >= self.settings.douyin_qrcode_startup_timeout_seconds
+                ):
+                    await self._terminate_process(process)
+                    return "startup_timeout"
 
                 try:
                     line = await asyncio.wait_for(
@@ -248,7 +269,7 @@ class CrawlerWorker:
                         waiting_for_login = False
                     continue
                 break
-        return False
+        return "completed"
 
     @staticmethod
     async def _read_stream_chunk(stream: asyncio.StreamReader) -> bytes:

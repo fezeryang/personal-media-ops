@@ -23,6 +23,7 @@ def test_settings(tmp_path: Path) -> Settings:
         node_binary=None,
         node_bin_dir=tmp_path / "node-bin",
         crawler_poll_interval_seconds=0.02,
+        douyin_qrcode_startup_timeout_seconds=180,
         enabled_platforms=("bili", "xhs", "dy"),
     )
 

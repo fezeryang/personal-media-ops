@@ -103,6 +103,12 @@ failure remains blocking.
 
 ## Technical Notes
 
+- On 2026-07-28 the operator chose a temporary low-resource production mode:
+  keep `MEDIAOPS_ENABLED_PLATFORMS=bili,xhs`, leave Douyin registered as
+  `code_ready`, and add a bounded pre-QR startup timeout. This does not satisfy
+  the outstanding Douyin production-verification acceptance criterion; it
+  prevents another browser/WAF task from starving the host while a
+  lower-resource or officially authorized login integration is evaluated.
 - Initial server commit observed:
   `0a23f47f3b6931fa0cdfe1bb17cf448324176b58`.
 - Initial target commit:

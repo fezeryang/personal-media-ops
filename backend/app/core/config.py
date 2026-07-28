@@ -1,3 +1,4 @@
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ class Settings:
     node_binary: Path | None
     node_bin_dir: Path | None
     crawler_poll_interval_seconds: float
+    douyin_qrcode_startup_timeout_seconds: float
     enabled_platforms: tuple[str, ...]
 
     @classmethod
@@ -31,6 +33,17 @@ class Settings:
         poll_interval = float(os.getenv("CRAWLER_POLL_INTERVAL_SECONDS", "1"))
         if poll_interval <= 0:
             raise ValueError("CRAWLER_POLL_INTERVAL_SECONDS must be greater than zero")
+        douyin_qrcode_startup_timeout = float(
+            os.getenv("DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS", "180")
+        )
+        if (
+            not math.isfinite(douyin_qrcode_startup_timeout)
+            or douyin_qrcode_startup_timeout <= 0
+        ):
+            raise ValueError(
+                "DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS must be a finite number "
+                "greater than zero"
+            )
         enabled_platforms = tuple(
             dict.fromkeys(
                 platform.strip()
@@ -76,6 +89,7 @@ class Settings:
             node_binary=Path(node_binary) if node_binary else None,
             node_bin_dir=Path(node_bin_dir) if node_bin_dir else None,
             crawler_poll_interval_seconds=poll_interval,
+            douyin_qrcode_startup_timeout_seconds=(douyin_qrcode_startup_timeout),
             enabled_platforms=enabled_platforms,
         )
 

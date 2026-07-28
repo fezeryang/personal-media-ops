@@ -219,6 +219,12 @@ Xvfb 重执行完成后仅对 `dy` 设置 `nice +10`，浏览器子进程继承�
 这不是提高采集并发，也不影响 B 站或小红书。进程优先级设置失败时不要静默继续，
 Runner 会在启动浏览器前退出并记录明确错误。
 
+Worker 同时限制抖音二维码就绪前的启动时间，默认
+`DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180`。超时后终止该任务的完整进程组并将
+任务标记为失败；一旦二维码出现，这个启动超时即停止计时。资源不足的生产机应将
+`MEDIAOPS_ENABLED_PLATFORMS` 保持为 `bili,xhs`，而不是切换到仍需 Chromium 且会
+引入敏感登录态的 Cookie 登录。
+
 ## Permission Boundary
 
 `mediaops` 可执行 Git 检查/拉取、依赖安装、测试、前端构建、允许范围内的日志读取、
