@@ -60,8 +60,10 @@ subscriptions:write
 admin
 ```
 
-`admin` satisfies all scopes. Browser sessions and external keys are separate
-paths: owner-only operations such as key creation require a browser session.
+`admin` satisfies all data and intelligence read/write scopes. Browser
+sessions and external keys remain separate paths: key/session creation,
+listing, and revocation require a browser session and cannot be performed by
+an `admin` key.
 Logs and normal API responses must never contain full keys, passwords, session
 tokens, or CSRF tokens.
 

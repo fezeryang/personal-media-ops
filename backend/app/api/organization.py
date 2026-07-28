@@ -15,7 +15,6 @@ from app.models.organization import (
 )
 from app.security.dependencies import (
     AuthContext,
-    require_owner_session,
     require_scopes,
 )
 
@@ -26,7 +25,7 @@ LibraryRead = Annotated[
 ]
 OwnerWrite = Annotated[
     AuthContext,
-    Depends(require_owner_session),
+    Depends(require_scopes("admin")),
 ]
 
 

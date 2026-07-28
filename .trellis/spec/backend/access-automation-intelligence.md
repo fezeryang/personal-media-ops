@@ -52,7 +52,9 @@ GET  /api/v1/subscriptions
 - Unsafe session requests require an allowed origin and the matching
   synchronizer token. External API keys use `X-API-Key`, never the session
   cookie path. `admin` satisfies all scopes; other keys receive only explicit
-  read/write scopes.
+  read/write scopes. Key/session administration remains browser-session-only,
+  while organization and intelligence writes accept either a session or an
+  explicitly issued `admin` key.
 - Automatic subscriptions accept only enabled, production-verified `search`
   cells. Schedules are typed (`manual`, `every_6_hours`, `daily`, `weekdays`,
   `weekly`), retain an IANA timezone, and materialize UTC `next_run_at`.

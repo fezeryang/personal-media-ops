@@ -66,6 +66,31 @@ def test_agent_api_scope_and_revocation(client: TestClient) -> None:
     assert revoked.json()["error"]["code"] == "authentication_required"
 
 
+def test_admin_key_can_use_owner_write_apis_but_not_manage_keys(
+    client: TestClient,
+) -> None:
+    key, _ = _api_key(client, ["admin"])
+    headers = {"X-API-Key": key}
+
+    tag = client.post(
+        "/api/library/tags",
+        json={"name": "Admin key test"},
+        headers=headers,
+    )
+    trends = client.post(
+        "/api/intelligence/trends/generate",
+        json={
+            "window_end": "2026-07-29T00:00:00Z",
+            "window_hours": 24,
+        },
+        headers=headers,
+    )
+
+    assert tag.status_code == 201
+    assert trends.status_code == 200
+    assert client.get("/api/auth/api-keys", headers=headers).status_code == 403
+
+
 def test_agent_subscription_status_uses_stable_schema(client: TestClient) -> None:
     subscription = client.post(
         "/api/subscriptions",

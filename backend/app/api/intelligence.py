@@ -13,7 +13,6 @@ from app.models.intelligence import (
 from app.repositories.intelligence import BriefConflictError
 from app.security.dependencies import (
     AuthContext,
-    require_owner_session,
     require_scopes,
 )
 
@@ -24,7 +23,7 @@ IntelligenceRead = Annotated[
 ]
 OwnerWrite = Annotated[
     AuthContext,
-    Depends(require_owner_session),
+    Depends(require_scopes("admin")),
 ]
 
 
