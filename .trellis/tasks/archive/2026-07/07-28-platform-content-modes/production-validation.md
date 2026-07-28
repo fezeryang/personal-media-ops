@@ -23,8 +23,8 @@ real tasks, deferred cells, and failed diagnostic tasks.
   `/var/backups/mediaops/20260728T065514Z`, database SHA-256
   `f13244cdef22993a25f3560a605819bfc1ffc4fa81c8bd1d179d9dbbf639db05`.
 - Latest retained deployment backup:
-  `/var/backups/mediaops/20260728T075214Z`, database SHA-256
-  `b203405b6510f432a1207c9a0084b913b9325eb723e1f4a1fdd7a9bf77519ca6`.
+  `/var/backups/mediaops/20260728T080500Z`, database SHA-256
+  `e46d742e2eaed1a99edd36a8be38db8eeff99597f986f54aafb25aa9ed21d1e2`.
 
 The only production configuration key changed was
 `MEDIAOPS_ENABLED_PLATFORMS`, from the five verified-search platforms to
@@ -81,10 +81,23 @@ no new QR scan or captcha.
 Failed diagnostics remain in the database. They were not relabeled as
 successful.
 
+One additional Xiaohongshu search task,
+`3ba3a781-0f53-4504-969e-49c168859932`, was created through the normal task
+API during the final release window with the keyword `ai工作台`. It was not
+part of the stage-six validation task list and failed closed after a platform
+navigation timeout, with zero results. The repository test suites cannot have
+created it: that keyword is absent from the repository and all frontend task
+creation tests mock `fetch`. The bounded production account cannot read the
+privileged API/Nginx access logs, so this record does not make an unsupported
+claim about which operator or external client submitted it. The task was
+preserved, and no active task or browser process remained.
+
 ## Library and compatibility evidence
 
 - SQLite integrity: `ok`.
-- Tasks: 55 total, including all 28 pre-stage-six tasks; active tasks: 0.
+- Stage-six validation snapshot: 55 tasks, including all 28 pre-stage-six
+  tasks. Final post-release snapshot: 56 tasks after the unrelated concurrent
+  task above; active tasks: 0.
 - Library totals: 8 contents, 10 privacy-safe creators, 60 comments.
 - Per platform `(contents, creators, comments)`:
   Bilibili `(2,2,15)`, Xiaohongshu `(2,2,0)`, Zhihu `(1,1,15)`,
