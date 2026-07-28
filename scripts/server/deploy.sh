@@ -346,6 +346,19 @@ REMOTE
 # immutable BaoTa .user.ini file, even though the publish itself completed.
 # If both release markers already equal the target commit, finish the
 # activation with the individually allowlisted helper subcommands instead.
+wait_for_fallback_api() {
+    local attempt
+    for attempt in $(seq 1 20); do
+        if mediaops_ssh "$host" \
+            'curl -fsS --max-time 10 http://127.0.0.1:8000/api/health'; then
+            mediaops_info "fallback API readiness confirmed on attempt ${attempt}"
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 finalize_fallback() {
     local finalize_status="$1"
     local parity
@@ -360,6 +373,8 @@ finalize_fallback() {
     mediaops_warn "finalize fallback: publish already matches the target commit; completing activation with individual helper subcommands"
     mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release restart-services' ||
         deployment_abort "fallback restart-services did not succeed"
+    wait_for_fallback_api ||
+        deployment_abort "fallback API did not become ready after restart-services"
     mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release nginx-reload' ||
         deployment_abort "fallback nginx-reload did not succeed"
     mediaops_ssh "$host" 'sudo -n /usr/local/sbin/mediaops-release verify' ||

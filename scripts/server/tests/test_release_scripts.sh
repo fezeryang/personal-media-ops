@@ -529,6 +529,7 @@ fallback_output="$(
         run_stubbed_deploy "$state_fallback" --execute
 )"
 assert_contains "$fallback_output" "finalize fallback succeeded"
+assert_contains "$fallback_output" "fallback API readiness confirmed"
 assert_contains "$fallback_output" "Deployment succeeded"
 for subcommand in restart-services nginx-reload verify; do
     grep -qF "sudo -n /usr/local/sbin/mediaops-release ${subcommand}" \
