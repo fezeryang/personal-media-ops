@@ -170,6 +170,12 @@ def test_sensitive_log_redaction_preserves_non_sensitive_text() -> None:
     assert redact_sensitive_log_text(
         "cookie='first=one; second=two'"
     ) == "cookie=[REDACTED]"
+    assert "private-value" not in redact_sensitive_log_text(
+        "Search response: {'xsec_token': 'private-value'}"
+    )
+    assert "private-value" not in redact_sensitive_log_text(
+        'Search response: {"access_token": "private-value"}'
+    )
 
 
 def test_worker_survives_stdout_line_beyond_stream_limit(

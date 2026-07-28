@@ -26,7 +26,7 @@ STREAM_READER_LIMIT_BYTES = 1024 * 1024
 SENSITIVE_LOG_ASSIGNMENT = re.compile(
     r"(?i)\b("
     r"xsec_token|access_token|refresh_token|token|signature"
-    r")\b(\s*[:=]\s*)([\"']?)([^&\s,\"'}]+)([\"']?)"
+    r")\b([\"']?\s*[:=]\s*)([\"']?)([^&\s,\"'}]+)([\"']?)"
 )
 SENSITIVE_LOG_HEADER = re.compile(
     r"(?i)\b(cookie|authorization)\b(\s*[:=]\s*)[^\r\n]*"
