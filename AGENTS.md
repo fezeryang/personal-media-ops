@@ -8,12 +8,14 @@ add local rules, but may not weaken the safety requirements below.
 **Personal Media Ops**（个人互联网情报与内容运营平台）是用户自己的互联网信息获取、
 整理、分析与内容运营基础设施，不是普通爬虫面板。
 
-Current capabilities are a seven-platform, mode-level Adapter registry; five
-explicit task modes (`search`, `detail`, `creator`, `comments`,
-`sub_comments`); versioned SQLite task and library entities; a
-single-concurrency Worker; external pinned MediaCrawler integration; FastAPI
-task/library APIs; React task, capability, content, creator, comment, QR, log,
-and provenance views; and same-origin Nginx deployment. Platform × mode
+Current capabilities are a single-owner authenticated intelligence workbench;
+scoped API keys and a stable Agent API v1; keyword subscriptions and
+low-resource scheduling; tags, favorites, ordered collections, creator
+watchlists, metric snapshots, deterministic trend signals and daily briefs;
+a seven-platform, mode-level Adapter registry; five explicit task modes
+(`search`, `detail`, `creator`, `comments`, `sub_comments`); a
+single-concurrency Worker; external pinned MediaCrawler integration; and
+same-origin Nginx deployment. Platform × mode
 statuses are independent facts. Search verification must never imply detail,
 creator, or comment verification. Douyin remains resource-deferred and
 Kuaishou search remains upstream-deferred until a recorded real task proves

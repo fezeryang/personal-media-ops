@@ -109,6 +109,23 @@ library tables exist before creating any real mode task. A successful process
 exit without normalized library entities and task provenance is not a
 successful collection.
 
+For access-control releases, `/api/health` remains the anonymous service
+probe, while capabilities, library, task, subscription, watchlist, and
+intelligence routes require an owner session or matching API-key scope. Do not
+weaken authentication merely to reuse an old anonymous check. After migrating
+`users`, pause once for the user to run the non-root interactive command:
+
+```bash
+cd /opt/personal-media-ops/backend
+uv run python -m app.cli create-owner --username owner
+```
+
+Never invent, pass, echo, or log the password. Verify browser login, CSRF,
+session persistence, logout, and revocation after the owner exists. Any
+temporary production API key is displayed only at creation, kept out of
+commands and logs, and revoked after scoped Agent API verification. Report
+only its name, prefix, scopes, and revoked state.
+
 ## Failure Handling
 
 - Keep each stage fail-closed, report its exact failure, and immediately

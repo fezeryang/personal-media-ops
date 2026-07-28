@@ -21,6 +21,7 @@ workbench.
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation and API contract | Active |
+| [Intelligence Workbench](./intelligence-workbench.md) | Authenticated shell, real intelligence views, and responsive design tokens | Active |
 
 ---
 

@@ -1,18 +1,21 @@
 # Agent API foundation
 
-Stage six does not ship an MCP server. It establishes stable, read-only
-library resources that a later Agent or MCP adapter can call without parsing
-crawler JSONL or depending on frontend fields.
+Stage seven now ships a stable Agent Tool Service and scoped REST API v1. It
+still does not deploy an MCP server. Agents can consume normalized library,
+trend, brief, provenance, and subscription resources without parsing crawler
+JSONL or depending on frontend fields.
 
 Proposed future tool mapping:
 
-| Agent operation | Current HTTP foundation |
+| Agent operation | Stable HTTP v1 |
 | --- | --- |
-| `search_contents` | `GET /api/library/contents` |
-| `get_content` | `GET /api/library/contents/{id}` |
-| `get_creator` | `GET /api/library/creators/{id}` |
-| `list_comments` | `GET /api/library/comments` |
-| `get_source_provenance` | content/creator detail `tasks` plus source fields |
+| `search_contents` | `GET /api/v1/library/search` |
+| `get_content` | `GET /api/v1/library/contents/{id}` |
+| `get_creator` | `GET /api/v1/library/creators/{id}` |
+| `list_comments` | `GET /api/v1/library/comments` |
+| `list_trends` | `GET /api/v1/intelligence/trends` |
+| `get_latest_brief` | `GET /api/v1/intelligence/briefs/latest` |
+| `get_source_provenance` | `GET /api/v1/library/contents/{id}/provenance` |
 
 The future adapter should:
 
@@ -27,7 +30,7 @@ The future adapter should:
 - avoid exposing database paths, task output paths, cookies, browser state, or
   URL token parameters.
 
-Subscriptions, scheduled collection, tags, favorites, metric snapshots,
-creator monitoring, daily briefs, and trend analysis belong to
-`intelligence-library-and-subscriptions`. They are not implemented by this
-foundation.
+The implementation lives in `backend/app/services/agent_tools/`; REST, future
+MCP, and future Notion integration should reuse it. See
+`external-agent-api.md`, `mcp-roadmap.md`, and
+`notion-integration-roadmap.md`.

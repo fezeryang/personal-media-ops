@@ -53,6 +53,13 @@ MEDIAOPS_QRCODE_ROOT=/var/lib/mediaops/qrcodes
 MEDIAOPS_NODE_BINARY=/www/server/nodejs/v22.22.3/bin/node
 CRAWLER_POLL_INTERVAL_SECONDS=1
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180
+MEDIAOPS_SECURE_SESSION_COOKIE=true
+MEDIAOPS_SESSION_LIFETIME_SECONDS=604800
+MEDIAOPS_LOGIN_FAILURE_LIMIT=5
+MEDIAOPS_LOGIN_LOCKOUT_SECONDS=900
+MEDIAOPS_MAX_OWNER_ACCOUNTS=3
+MEDIAOPS_AUTOMATION_POLL_INTERVAL_SECONDS=30
+MEDIAOPS_AI_PROVIDER=disabled
 ```
 
 也可用 `MEDIAOPS_NODE_BIN_DIR=/www/server/nodejs/v22.22.3/bin` 代替
@@ -82,13 +89,29 @@ MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db \
 B 站任务 ID、状态、时间、计数和路径保持不变。`0003_remaining_platforms` 再将
 约束扩展为 `bili/xhs/dy/zhihu/wb/tieba/ks`，同样逐列复制全部记录，不读取或改写
 JSONL。`0004_content_modes` 保留原任务列和记录，增加五模式目标与限量字段；
-`0005_library_entities` 新增内容、创作者、评论、内容创作者关系和任务实体溯源表。
+`0005_library_entities` 新增内容、创作者、评论、内容创作者关系和任务实体溯源表；
+`0006_access_control` 新增所有者、会话与 Scoped API Key；`0007_subscriptions`
+新增订阅、平台、运行和任务关系；`0008_library_organization` 新增收藏字段、标签和
+有序专题；`0009_metrics_and_intelligence` 新增创作者监控、指标快照、趋势、简报
+和每日简报调度。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
 资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
 revision，不会静默执行迁移。
 
+迁移、受限 helper 激活和健康检查完成后，通过交互式终端初始化所有者：
+
+```bash
+cd /opt/personal-media-ops/backend
+uv run python -m app.cli create-owner --username owner
+```
+
+密码由用户亲自输入两次，不要作为命令参数、环境变量、聊天内容或部署日志传递。若
+已有所有者，命令不会覆盖。部署前端后，除公开健康检查和认证入口外，旧 API 也会要求
+会话或对应 API Key Scope。
+
 生产迁移顺序固定为：确认无未审查变更 → SQLite 一致性备份 → 拉取目标代码 → 测试与
-前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查。数据库恢复属于
+前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查 → 必要时交互式
+创建所有者并验证登录。数据库恢复属于
 破坏性 root 操作，本仓库不会自动执行。
 
 ## Frontend Build

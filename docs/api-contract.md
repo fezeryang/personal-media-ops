@@ -5,6 +5,12 @@ for the Personal Media Ops workbench and future read-only Agent tools.
 Platform and mode availability comes only from the backend Adapter registry;
 clients must not maintain an independent allowlist.
 
+Except for `/api/health`, `/api/auth/login`, and `/api/auth/session`, endpoints
+require an owner session or a matching scoped API key. Browser writes also
+require same-origin validation and `X-CSRF-Token`. See
+[access-control.md](access-control.md). Stable external consumers should use
+the `/api/v1` contract in [external-agent-api.md](external-agent-api.md).
+
 ## Mode-level capabilities
 
 `GET /api/crawler/capabilities`
@@ -160,7 +166,7 @@ Supported filters:
 
 ```text
 platform content_type keyword creator date_from date_to
-has_comments sort offset limit
+has_comments tag_id is_favorite sort offset limit
 ```
 
 `sort` is one of `last_collected_desc`, `published_desc`, `published_asc`, or
@@ -173,6 +179,25 @@ platform/ID/URL, safe normalized fields, nullable metrics, first/last
 collection timestamps, one linked creator, up to 100 stored comments, and
 task provenance. `include_raw=true` explicitly adds the JSON object for
 developer diagnosis; default is `null`.
+
+Organization and metric endpoints:
+
+```text
+GET|POST /api/library/tags
+PATCH|DELETE /api/library/tags/{id}
+POST|DELETE /api/library/contents/{content_id}/tags/{tag_id}
+PATCH /api/library/contents/{content_id}/favorite
+GET|POST /api/library/collections
+GET|PUT /api/library/collections/{id}
+POST /api/library/collections/{id}/items
+DELETE /api/library/collections/{id}/items/{content_id}
+GET /api/library/contents/{id}/metrics
+GET /api/library/creators/{id}/metrics
+```
+
+Favorite is the single `is_favorite` state; there is no competing built-in
+favorite collection. Metric history is bounded and returns nullable values
+plus absolute `delta_from_previous`.
 
 ### Creators
 
@@ -194,6 +219,31 @@ gender, IP location, browser state, and URL tokens are not persisted.
 Comments filter by platform, source content ID, or parent comment ID. Raw
 comment payloads are not returned by the list contract. Missing metrics remain
 `null`; a real zero remains `0`.
+
+## Subscription and intelligence endpoints
+
+```text
+GET|POST /api/subscriptions
+GET|PUT /api/subscriptions/{id}
+POST /api/subscriptions/{id}/pause
+POST /api/subscriptions/{id}/resume
+POST /api/subscriptions/{id}/run
+
+GET|POST /api/watchlist
+PATCH /api/watchlist/{id}
+POST /api/watchlist/{id}/run
+
+GET /api/intelligence/trends
+POST /api/intelligence/trends/generate
+GET /api/intelligence/briefs/latest
+POST /api/intelligence/briefs
+GET|PUT /api/intelligence/briefs/schedule
+```
+
+Subscriptions accept only typed schedules and exact production-verified search
+modes. Runs link ordinary crawler tasks and report new, existing, and
+metric-changed contents independently. Trend and brief semantics are defined
+in [intelligence-engine.md](intelligence-engine.md).
 
 ## Safety and rendering
 

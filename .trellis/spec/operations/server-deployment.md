@@ -196,3 +196,81 @@ scripts/server/deploy.sh \
 
 The `--execute` deployment command is a real release and requires explicit
 user authorization.
+
+## Scenario: Authenticated intelligence rollout
+
+### 1. Scope / Trigger
+
+Apply this scenario when a release introduces owner tables or changes
+anonymous endpoints into session/API-key-protected resources.
+
+### 2. Signatures
+
+```text
+scripts/server/deploy.sh --target-ref <sha> --allow-migrations --execute
+cd /opt/personal-media-ops/backend
+uv run python -m app.cli create-owner --username owner
+GET /api/health
+POST /api/auth/login
+GET /api/auth/session
+POST /api/auth/logout
+```
+
+### 3. Contracts
+
+- Complete backup, test/build, migration, helper activation, and public/SNI
+  verification before owner initialization.
+- `/api/health` remains the anonymous service probe. Do not disable auth to
+  reuse older anonymous capability/library checks.
+- The SSH user runs `create-owner` interactively without sudo. The operator
+  enters the password twice; Codex never generates, receives, prints, or logs
+  it.
+- The one allowed pause is owner password initialization and the associated
+  browser login check. Resume remaining scoped API and intelligence acceptance
+  after that explicit action.
+- A temporary Agent API key is returned once, used only for its intended
+  scopes, and revoked after validation. Reports include prefix and state, not
+  the complete key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Migration has not reached auth head | Do not run `create-owner` |
+| Owner password is not yet initialized | Pause once with the exact non-root command |
+| Anonymous `/api/health` fails | Release is not healthy |
+| Anonymous protected route returns 401 | Expected access-control behavior |
+| Owner already exists | Do not overwrite or reset its password |
+| Temporary API key is still active after acceptance | Revoke before completion |
+
+### 5. Good / Base / Bad Cases
+
+- Good: migrate from the backed-up `0005` database, activate the app, ask the
+  user to enter the owner password interactively once, then verify session and
+  scoped key behavior.
+- Base: health is 200 while library requests are 401 before login.
+- Bad: pass the password through an environment variable, use interactive
+  sudo, create a backdoor session, or report a full API key.
+
+### 6. Tests Required
+
+- Before release, migration tests cover populated `0005` to head and SQLite
+  integrity; backend auth/API tests and frontend login/key tests pass.
+- After release, verify health, anonymous denial, login/session/logout/CSRF,
+  API-key scope/revocation, database head, service state, zero active tasks,
+  and zero browser residue.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```bash
+OWNER_PASSWORD=secret uv run python -m app.cli create-owner
+```
+
+Correct:
+
+```bash
+uv run python -m app.cli create-owner --username owner
+# getpass reads both entries from the TTY.
+```

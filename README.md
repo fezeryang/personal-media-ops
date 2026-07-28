@@ -2,15 +2,18 @@
 
 **Personal Media Ops（个人互联网情报与内容运营平台）** 是用户自己的互联网
 信息获取、整理、分析与内容运营基础设施，不是普通爬虫面板。当前已提供五种独立采集
-模式（搜索、详情、创作者、一级评论、二级评论）、七平台模式级能力矩阵、FastAPI
-任务与资料库 API、单并发 Worker，以及内容、创作者、评论和任务溯源的持久化资料库。
+模式（搜索、详情、创作者、一级评论、二级评论）、七平台模式级能力矩阵、单一所有者
+认证与 Scoped API Key、关键词订阅、轻量调度、标签/收藏/专题、创作者监控、指标快照、
+确定性趋势和每日简报。FastAPI 同时提供前端兼容接口与稳定的 Agent API v1；单并发
+Worker 串行执行所有浏览器任务。
 
 任务元数据保存在 SQLite，并由 Alembic 管理版本；独立 Worker 串行执行仓库外部的
 MediaCrawler。B 站、小红书、知乎、微博和贴吧的关键词搜索已真实验证；快手搜索因
 固定上游协议变化延期，抖音因当前生产资源限制延期。每个非搜索模式单独记录
 `code_ready`、`enabled`、`production_verified` 或明确的 deferred 原因，搜索成功
-不会被当作其他模式成功。不包含 Redis、Celery、Docker、Elasticsearch、AI 分析或
-自动发布，未完成模块不会用 Mock 数据冒充真实能力。
+不会被当作其他模式成功。不包含 Redis、Celery、Docker、Elasticsearch、外部 LLM
+调用或自动发布，未完成模块不会用 Mock 数据冒充真实能力。生产默认
+`MEDIAOPS_AI_PROVIDER=disabled`。
 
 2026-07-28 的阶段六生产验证已确认：B站与知乎的详情、创作者、一级评论和二级评论；
 微博与贴吧的详情、创作者和一级评论；快手的详情和一级评论。小红书非搜索模式因
@@ -45,6 +48,13 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 健康检查：`GET http://127.0.0.1:8000/api/health`
+
+首次使用先通过终端交互式创建所有者（密码不会进入 shell history）：
+
+```bash
+cd backend
+uv run python -m app.cli create-owner --username owner
+```
 
 另开一个终端启动前端：
 
@@ -85,6 +95,8 @@ uv run python -m app.workers.crawler_worker
 运行数据、Node.js、外部 Python 和固定 Runner。`MEDIAOPS_ENABLED_PLATFORMS`
 默认仅为 `bili`。平台是否配置启用和各模式的验证成熟度是两套独立状态；抖音仍保持
 资源延期，不能通过该变量绕过能力矩阵。默认不允许任何跨域来源。
+生产必须保持 `MEDIAOPS_SECURE_SESSION_COOKIE=true`；自动化调度轮询默认每 30 秒，
+但订阅和创作者监控的最低自动间隔均为 6 小时。
 
 `frontend/.env.example` 只包含构建期 API Base URL。生产推荐 Nginx 同源代理
 `/api`，因此无需配置该值。不要提交任何 `.env` 文件。
@@ -123,4 +135,10 @@ Reviewed, non-installed sources live under `infra/release/` and
 - [Crawler API contract](docs/api-contract.md)
 - [Platform capability matrix](docs/platform-capability-matrix.md)
 - [Agent API foundation](docs/agent-api-foundation.md)
+- [Access control](docs/access-control.md)
+- [Subscriptions](docs/subscriptions.md)
+- [Intelligence engine](docs/intelligence-engine.md)
+- [External Agent API](docs/external-agent-api.md)
+- [MCP roadmap](docs/mcp-roadmap.md)
+- [Notion roadmap](docs/notion-integration-roadmap.md)
 - [Deployment guide](docs/deployment.md)
