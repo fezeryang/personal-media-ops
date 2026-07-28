@@ -143,7 +143,10 @@ and comment normalization.
   path-checked, paginated, and capped at `requested_count`.
 - `raw_payload` is the privacy-normalized JSONL object. Textual publication
   times accept ISO-8601 and `YYYY-MM-DD[ HH:MM:SS]` as UTC; malformed values
-  become `null`. React may show raw JSON only as escaped text.
+  become `null`. Numeric publication times may be Unix seconds, milliseconds,
+  microseconds, or nanoseconds and must be reduced to bounded Unix seconds
+  before crossing into persistence; values beyond year 9999 at nanosecond
+  precision become `null`. React may show raw JSON only as escaped text.
 - A zero subprocess exit is only a transport signal. Before success, the
   Worker requires expected JSONL discovery, parseable objects, successful
   normalization, a valid non-empty result (or a verified empty comment set),
@@ -197,6 +200,8 @@ and comment normalization.
 | Kuaishou GraphQL search is missing, non-successful, malformed, or empty | Raise an explicit upstream-contract failure; never report zero-result success |
 | Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
+| Numeric publication time uses milliseconds, microseconds, or nanoseconds | Adapter normalizes it to bounded Unix seconds before persistence |
+| Numeric publication time exceeds the supported nanosecond epoch range | Normalized publication time is `null`; the entity transaction does not crash |
 | Malformed textual publication time | Normalized publication time is `null` |
 
 ## 5. Good / Base / Bad Cases
@@ -265,6 +270,10 @@ comments, standalone sub-comments, unexplained-zero rejection, legal empty
 comments, creator-profile sanitization, and transaction rollback. A real
 platform result changes a mode cell to `production_verified` only after the
 task result and resource recovery are recorded.
+Adapter timestamp tests must cover seconds plus millisecond, microsecond, and
+nanosecond payloads, including the supported upper bound. At least one
+platform fixture that emits milliseconds must assert the normalized
+seconds value so a unit drift cannot reach `datetime.fromtimestamp`.
 
 ## 7. Wrong vs Correct
 

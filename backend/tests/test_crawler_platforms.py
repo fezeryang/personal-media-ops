@@ -406,6 +406,11 @@ def test_integer_rejects_oversized_plain_numeric_text() -> None:
     [
         (1700000000, 1700000000),
         ("1700000000", 1700000000),
+        (1753500000000, 1753500000),
+        (1753500000000000, 1753500000),
+        (1753500000000000000, 1753500000),
+        (253402300799999999999, 253402300799),
+        (253402300800000000000, None),
         ("2026-07-28T12:34:56Z", 1785242096),
         ("2026-07-28 12:34:56", 1785242096),
         ("2026-07-28", 1785196800),
@@ -442,7 +447,7 @@ def test_xhs_adapter_normalizes_abbreviated_metric_counts() -> None:
 
     assert result.platform == "xhs"
     assert result.content_id == "note-prod-1"
-    assert result.published_at == 1753500000000
+    assert result.published_at == 1753500000
     assert result.metrics.like_count == 57000
     assert result.metrics.favorite_count == 21000
     assert result.metrics.comment_count == 399

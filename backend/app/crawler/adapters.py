@@ -91,6 +91,8 @@ _MAX_COUNT_TEXT_LENGTH = 64
 # Crawled text is untrusted: reject implausible magnitudes before Decimal
 # arithmetic can materialize a huge integer or overflow the decimal context.
 _MAX_ABBREVIATED_AMOUNT = Decimal(10) ** 12
+_MAX_UNIX_SECONDS = 253_402_300_799
+_MAX_UNIX_NANOSECONDS = 253_402_300_799_999_999_999
 
 
 def _integer_from_string(value: str) -> int | None:
@@ -132,6 +134,13 @@ def _integer(value: object) -> int | None:
 def _timestamp(value: object) -> int | None:
     numeric = _integer(value)
     if numeric is not None:
+        if numeric > _MAX_UNIX_NANOSECONDS:
+            return None
+        # MediaCrawler platform payloads are inconsistent about epoch units.
+        # Reduce milliseconds, microseconds, or nanoseconds to seconds before
+        # values reach datetime.fromtimestamp in the persistence layer.
+        while numeric > _MAX_UNIX_SECONDS:
+            numeric //= 1000
         return numeric
     text = _text(value)
     if text is None or len(text) > 64:
