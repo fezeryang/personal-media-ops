@@ -66,7 +66,13 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
     assert all(item.supports_comments is True for item in capabilities)
     assert all(len(item.modes) == 5 for item in capabilities)
     assert capabilities[0].modes[0].status == "production_verified"
-    assert capabilities[0].modes[1].status == "enabled"
+    assert capabilities[0].modes[1].status == "production_verified"
+    assert capabilities[0].modes[1].enabled is True
+    assert {
+        mode.status for mode in capabilities[1].modes[1:]
+    } == {"deferred_login_required"}
+    assert capabilities[6].modes[1].status == "production_verified"
+    assert capabilities[6].modes[3].status == "production_verified"
 
 
 def test_registry_rejects_unknown_or_disabled_platform() -> None:

@@ -99,6 +99,11 @@ and comment normalization.
   persisted state is valid. It never logs Cookie values. The Worker uses that
   marker plus Adapter classifiers to distinguish persisted login, QR waiting,
   captcha, expiration, and timeout without platform branches.
+- The pinned Bilibili detail parser accepts BV targets only even though search
+  persists public AV IDs and AV URLs. The reviewed Runner resolves AV/BV
+  targets centrally, sends AV values through the upstream client's `aid`
+  parameter, and resolves BV to AV before standalone sub-comment persistence.
+  API/Worker code does not branch on this platform difference.
 - MediaCrawler opens Weibo with a mobile user agent, for which the passport
   page defaults to SMS login and does not render the QR image until the exact
   visible `扫码登录` entry is clicked. The reviewed Runner patches only the
@@ -190,6 +195,8 @@ and comment normalization.
 | Douyin QR code is not ready before its startup deadline | Terminate the task process group and persist an explicit failure |
 | Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
 | Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
+| Bilibili detail/comment target is a public AV ID or AV URL | Runner maps it to the upstream `aid` request and retains the source AV identity |
+| Bilibili target is a BV ID or BV URL | Runner uses the upstream BV path and resolves the canonical AV identity for standalone sub-comments |
 | Weibo mobile-UA login page defaults to SMS | Click the exact visible `扫码登录` entry and require the QR image within a bounded timeout |
 | Weibo QR entry is absent or does not reveal a QR | Fail explicitly without changing login method or waiting indefinitely |
 | Tieba upstream finishes on HTTP or `百度安全验证` | Navigate once to the HTTPS homepage with the Baidu referrer |
@@ -264,6 +271,8 @@ Kuaishou Runner tests must assert exact-entry DOM dispatch, QR confirmation,
 bounded missing-entry failure, suppression of only the redundant upstream
 click, acceptance of a valid non-empty search response, rejection of
 missing/non-successful/empty responses, and installation only for `ks`.
+They must also import the exact pinned class name (`KuaishouCrawler`) for
+creator and sub-comment patches so case drift fails in tests before production.
 Content-mode tests must cover the five request shapes, per-mode registry
 gating, output discovery, null semantics, raw payload retention, bounded
 comments, standalone sub-comments, unexplained-zero rejection, legal empty

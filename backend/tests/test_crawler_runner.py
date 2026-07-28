@@ -1270,6 +1270,126 @@ def test_runner_extracts_weibo_note_id_from_approved_target_url() -> None:
     assert runner.upstream_content_targets(args) == ["1234567890"]
 
 
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("116680671890321", "https://www.bilibili.com/video/av116680671890321"),
+        ("BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD"),
+        (
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+    ],
+)
+def test_runner_converts_bilibili_content_ids_to_upstream_urls(
+    target: str,
+    expected: str,
+) -> None:
+    runner = load_runner()
+    is_url = target.startswith("https://")
+    args = SimpleNamespace(
+        platform="bili",
+        target_id=[] if is_url else [target],
+        target_url=[target] if is_url else [],
+        parent_content_id=None,
+    )
+
+    assert runner.upstream_content_targets(args) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("116680671890321", (116680671890321, "")),
+        ("av116680671890321", (116680671890321, "")),
+        (
+            "https://www.bilibili.com/video/av116680671890321",
+            (116680671890321, ""),
+        ),
+        ("BV1xwVr6FEh4", (0, "BV1xwVr6FEh4")),
+        (
+            "https://www.bilibili.com/video/BV1xwVr6FEh4",
+            (0, "BV1xwVr6FEh4"),
+        ),
+    ],
+)
+def test_runner_resolves_bilibili_av_and_bv_targets(
+    target: str,
+    expected: tuple[int, str],
+) -> None:
+    runner = load_runner()
+
+    assert runner.bilibili_video_identity(target) == expected
+
+
+def test_runner_rejects_invalid_bilibili_content_target() -> None:
+    runner = load_runner()
+
+    with pytest.raises(ValueError, match="Bilibili content target"):
+        runner.bilibili_video_identity("not-a-video")
+
+
+def test_runner_patches_bilibili_av_detail_into_aid_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+    calls: list[tuple[int, str]] = []
+
+    class FakeCrawler:
+        async def get_video_info_task(
+            self,
+            aid: int,
+            bvid: str,
+            semaphore: asyncio.Semaphore,
+        ) -> str:
+            calls.append((aid, bvid))
+            return "detail"
+
+    class FakeVideoUrlInfo:
+        def __init__(self, video_id: str) -> None:
+            self.video_id = video_id
+
+    media_platform = ModuleType("media_platform")
+    media_platform.__path__ = []  # type: ignore[attr-defined]
+    bilibili = ModuleType("media_platform.bilibili")
+    bilibili.__path__ = []  # type: ignore[attr-defined]
+    core = ModuleType("media_platform.bilibili.core")
+    core.BilibiliCrawler = FakeCrawler
+    core.parse_video_info_from_url = lambda target: FakeVideoUrlInfo(target)
+    media_platform.bilibili = bilibili
+    bilibili.core = core
+    model = ModuleType("model")
+    model.__path__ = []  # type: ignore[attr-defined]
+    model_bilibili = ModuleType("model.m_bilibili")
+    model_bilibili.VideoUrlInfo = FakeVideoUrlInfo
+    model.m_bilibili = model_bilibili
+    for name, module in (
+        ("media_platform", media_platform),
+        ("media_platform.bilibili", bilibili),
+        ("media_platform.bilibili.core", core),
+        ("model", model),
+        ("model.m_bilibili", model_bilibili),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    runner.install_bilibili_av_target_patch(
+        SimpleNamespace(platform="bili", crawler_type="detail")
+    )
+    parsed = core.parse_video_info_from_url(
+        "https://www.bilibili.com/video/av116680671890321"
+    )
+    result = asyncio.run(
+        core.BilibiliCrawler().get_video_info_task(
+            0,
+            parsed.video_id,
+            asyncio.Semaphore(1),
+        )
+    )
+
+    assert result == "detail"
+    assert calls == [(116680671890321, "")]
+
+
 def test_runner_forces_mediacrawler_safety_flags() -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
 
@@ -1304,3 +1424,6 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
         in source
     )
     assert "install_login_state_observer(args.platform)" in source
+    assert "install_bilibili_av_target_patch(args)" in source
+    assert "from media_platform.kuaishou.core import KuaishouCrawler" in source
+    assert "KuaiShouCrawler" not in source

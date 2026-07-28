@@ -182,7 +182,7 @@ def test_mode_and_legacy_crawler_type_must_match(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_platform_adapter_rejects_required_xiaohongshu_url(
+def test_platform_adapter_rejects_deferred_xiaohongshu_detail(
     client: TestClient,
 ) -> None:
     response = client.post(
@@ -194,8 +194,8 @@ def test_platform_adapter_rejects_required_xiaohongshu_url(
         },
     )
 
-    assert response.status_code == 422
-    assert "requires a full target URL" in response.json()["detail"]
+    assert response.status_code == 409
+    assert "deferred_login_required" in response.json()["detail"]
 
 
 def test_platform_adapter_requires_full_zhihu_content_url(
@@ -291,12 +291,12 @@ def test_task_response_redacts_sensitive_url_query_values(
     response = client.post(
         "/api/crawler/tasks",
         json={
-            "platform": "xhs",
+            "platform": "bili",
             "mode": "detail",
             "target_urls": [
                 (
-                    "https://www.xiaohongshu.com/explore/note-1"
-                    "?xsec_token=secret&xsec_source=pc_feed"
+                    "https://www.bilibili.com/video/BV1xx"
+                    "?access_token=secret&spm_id_from=pc_feed"
                 )
             ],
             "requested_count": 1,
@@ -306,5 +306,5 @@ def test_task_response_redacts_sensitive_url_query_values(
     assert response.status_code == 201
     target_url = response.json()["target_urls"][0]
     assert "secret" not in target_url
-    assert "xsec_token" not in target_url
-    assert "xsec_source=pc_feed" in target_url
+    assert "access_token" not in target_url
+    assert "spm_id_from=pc_feed" in target_url

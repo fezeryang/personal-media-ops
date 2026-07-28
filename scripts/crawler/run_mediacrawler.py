@@ -6,6 +6,7 @@ import base64
 import importlib
 import json
 import os
+import re
 import runpy
 import shutil
 import sys
@@ -1065,7 +1066,7 @@ def install_creator_mode_patch(args: argparse.Namespace) -> None:
         return
 
     if args.platform == "ks":
-        from media_platform.kuaishou.core import KuaiShouCrawler
+        from media_platform.kuaishou.core import KuaishouCrawler
 
         async def get_kuaishou_creator_profiles(crawler: object) -> None:
             for target in targets:
@@ -1077,7 +1078,7 @@ def install_creator_mode_patch(args: argparse.Namespace) -> None:
                     raise RuntimeError("Kuaishou creator profile was not found")
                 capture_creator_profile(args, target=target, profile=profile)
 
-        KuaiShouCrawler.get_creators_and_videos = get_kuaishou_creator_profiles
+        KuaishouCrawler.get_creators_and_videos = get_kuaishou_creator_profiles
 
 
 def _content_target(args: argparse.Namespace) -> str:
@@ -1091,12 +1092,67 @@ def _content_target(args: argparse.Namespace) -> str:
     return targets[0]
 
 
+def bilibili_video_identity(target: str) -> tuple[int, str]:
+    parsed = urlparse(target)
+    candidate = parsed.path.rstrip("/").split("/")[-1] if parsed.netloc else target
+    if candidate.startswith("BV") and re.fullmatch(r"BV[a-zA-Z0-9]+", candidate):
+        return 0, candidate
+    aid_text = candidate[2:] if candidate.startswith("av") else candidate
+    if aid_text.isdigit() and int(aid_text) > 0:
+        return int(aid_text), ""
+    raise ValueError("Bilibili content target must contain an AV or BV ID")
+
+
+def install_bilibili_av_target_patch(args: argparse.Namespace) -> None:
+    """Teach the pinned BV-only detail parser to use public AV IDs safely."""
+    if args.platform != "bili" or args.crawler_type not in {"detail", "comments"}:
+        return
+
+    import media_platform.bilibili.core as bilibili_core
+    from model.m_bilibili import VideoUrlInfo
+
+    original_get_video_info_task = (
+        bilibili_core.BilibiliCrawler.get_video_info_task
+    )
+
+    def parse_video_target(target: str) -> object:
+        aid, bvid = bilibili_video_identity(target)
+        return VideoUrlInfo(video_id=bvid or str(aid))
+
+    async def get_video_info_task(
+        crawler: object,
+        aid: int,
+        bvid: str,
+        semaphore: asyncio.Semaphore,
+    ) -> object:
+        if not aid and bvid.isdigit():
+            aid, bvid = int(bvid), ""
+        return await original_get_video_info_task(
+            crawler,
+            aid,
+            bvid,
+            semaphore,
+        )
+
+    bilibili_core.parse_video_info_from_url = parse_video_target
+    bilibili_core.BilibiliCrawler.get_video_info_task = get_video_info_task
+
+
 def upstream_content_targets(args: argparse.Namespace) -> list[str]:
     targets = [
         *args.target_id,
         *args.target_url,
         *([args.parent_content_id] if args.parent_content_id else []),
     ]
+    if args.platform == "bili":
+        normalized: list[str] = []
+        for target in targets:
+            if target in args.target_url:
+                normalized.append(target)
+                continue
+            video_id = target if target.startswith(("av", "BV")) else f"av{target}"
+            normalized.append(f"https://www.bilibili.com/video/{video_id}")
+        return normalized
     if args.platform != "wb":
         return targets
     normalized: list[str] = []
@@ -1131,7 +1187,17 @@ def install_sub_comment_mode_patch(args: argparse.Namespace) -> None:
             crawler: object,
             _: object,
         ) -> None:
-            video_id = parse_video_info_from_url(target).video_id
+            aid, bvid = bilibili_video_identity(target)
+            if not aid:
+                detail = await crawler.bili_client.get_video_info(
+                    aid=None,
+                    bvid=parse_video_info_from_url(bvid).video_id,
+                )
+                view = detail.get("View") if isinstance(detail, dict) else None
+                aid = int(view.get("aid", 0)) if isinstance(view, dict) else 0
+                if not aid:
+                    raise RuntimeError("Bilibili content AV ID was not found")
+            video_id = str(aid)
             result = await crawler.bili_client.get_video_level_two_comments(
                 video_id,
                 int(parent_comment_id),
@@ -1197,7 +1263,7 @@ def install_sub_comment_mode_patch(args: argparse.Namespace) -> None:
         return
 
     if args.platform == "ks":
-        from media_platform.kuaishou.core import KuaiShouCrawler
+        from media_platform.kuaishou.core import KuaishouCrawler
         from media_platform.kuaishou.help import parse_video_info_from_url
         from store import kuaishou as kuaishou_store
 
@@ -1215,7 +1281,7 @@ def install_sub_comment_mode_patch(args: argparse.Namespace) -> None:
                 comments[:maximum],
             )
 
-        KuaiShouCrawler.get_specified_videos = get_kuaishou_sub_comments
+        KuaishouCrawler.get_specified_videos = get_kuaishou_sub_comments
         return
 
     raise RuntimeError(
@@ -1342,6 +1408,7 @@ def main() -> None:
         install_kuaishou_qrcode_entry_patch()
         if args.crawler_type == "search":
             install_kuaishou_search_guard()
+    install_bilibili_av_target_patch(args)
     install_creator_mode_patch(args)
     install_sub_comment_mode_patch(args)
     runpy.run_path(

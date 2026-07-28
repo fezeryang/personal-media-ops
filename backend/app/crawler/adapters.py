@@ -730,7 +730,13 @@ class BilibiliAdapter(CrawlerPlatformAdapter):
             headless_browser=True,
             qrcode_startup_timeout_seconds=180,
             default_requested_count=20,
-            mode_statuses=_mode_map(search="production_verified"),
+            mode_statuses=_mode_map(
+                search="production_verified",
+                detail="production_verified",
+                creator="production_verified",
+                comments="production_verified",
+                sub_comments="production_verified",
+            ),
             mode_reasons={},
             allowed_target_hosts=frozenset({"bilibili.com", "b23.tv"}),
         )
@@ -773,7 +779,13 @@ class XiaohongshuAdapter(CrawlerPlatformAdapter):
             headless_browser=True,
             qrcode_startup_timeout_seconds=180,
             default_requested_count=20,
-            mode_statuses=_mode_map(search="production_verified"),
+            mode_statuses=_mode_map(
+                search="production_verified",
+                detail="deferred_login_required",
+                creator="deferred_login_required",
+                comments="deferred_login_required",
+                sub_comments="deferred_login_required",
+            ),
             mode_reasons={
                 "detail": "内容 URL 需要包含有效的 xsec 参数",
                 "creator": "创作者 URL 需要包含有效的 xsec 参数",
@@ -870,7 +882,13 @@ class ZhihuAdapter(CrawlerPlatformAdapter):
             headless_browser=True,
             qrcode_startup_timeout_seconds=180,
             default_requested_count=5,
-            mode_statuses=_mode_map(search="production_verified"),
+            mode_statuses=_mode_map(
+                search="production_verified",
+                detail="production_verified",
+                creator="production_verified",
+                comments="production_verified",
+                sub_comments="production_verified",
+            ),
             mode_reasons={},
             allowed_target_hosts=frozenset({"zhihu.com"}),
             requires_content_url_modes=frozenset(
@@ -911,6 +929,9 @@ class WeiboAdapter(CrawlerPlatformAdapter):
             default_requested_count=5,
             mode_statuses=_mode_map(
                 search="production_verified",
+                detail="production_verified",
+                creator="production_verified",
+                comments="production_verified",
                 sub_comments="deferred_platform_change",
             ),
             mode_reasons={
@@ -953,6 +974,9 @@ class TiebaAdapter(CrawlerPlatformAdapter):
             default_requested_count=5,
             mode_statuses=_mode_map(
                 search="production_verified",
+                detail="production_verified",
+                creator="production_verified",
+                comments="production_verified",
                 sub_comments="deferred_platform_change",
             ),
             mode_reasons={
@@ -991,7 +1015,11 @@ class KuaishouAdapter(CrawlerPlatformAdapter):
             headless_browser=True,
             qrcode_startup_timeout_seconds=180,
             default_requested_count=3,
-            mode_statuses=_mode_map(search="deferred_upstream_breakage"),
+            mode_statuses=_mode_map(
+                search="deferred_upstream_breakage",
+                detail="production_verified",
+                comments="production_verified",
+            ),
             mode_reasons={
                 "search": "固定上游 GraphQL 搜索已被平台 REST 接口替代",
             },
