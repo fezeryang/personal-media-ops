@@ -1182,11 +1182,14 @@ class AutomationRepository:
                 connection.execute(
                     """
                     UPDATE creator_watch_runs
-                    SET status = ?, finished_at = ?, error_summary = ?
+                    SET status = ?,
+                        started_at = COALESCE(started_at, ?),
+                        finished_at = ?, error_summary = ?
                     WHERE id = ?
                     """,
                     (
                         status,
+                        run["task_started_at"],
                         run["task_finished_at"] or utc_now(),
                         error,
                         run["id"],

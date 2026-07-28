@@ -298,34 +298,34 @@ password interactively after deployment; this is intentionally not automated.
 
 ## Acceptance Criteria
 
-- [ ] Owner authentication, session revocation/logout, CSRF, login throttling,
+- [x] Owner authentication, session revocation/logout, CSRF, login throttling,
       and scoped/revocable one-time API keys pass backend and frontend tests.
-- [ ] Only `/api/health` and authentication bootstrap routes are anonymous;
+- [x] Only `/api/health` and authentication bootstrap routes are anonymous;
       protected compatibility and v1 routes enforce the documented boundary.
-- [ ] Subscription CRUD/pause/resume/manual/scheduled runs work for only
+- [x] Subscription CRUD/pause/resume/manual/scheduled runs work for only
       verified search modes and are DST-safe, idempotent, restart-safe,
       sequential, and failure-bounded.
-- [ ] Run history accurately separates new, existing, and metric-changed
+- [x] Run history accurately separates new, existing, and metric-changed
       content and links every platform task.
-- [ ] Tags, one canonical favorite state, and ordered collections work against
+- [x] Tags, one canonical favorite state, and ordered collections work against
       real library content without deleting collected data.
-- [ ] Creator watch is available only for verified creator modes and creates
+- [x] Creator watch is available only for verified creator modes and creates
       new content plus deduplicated content/creator metric snapshots.
-- [ ] Trends use the documented formula and evidence; insufficient data is
+- [x] Trends use the documented formula and evidence; insufficient data is
       represented honestly.
-- [ ] Manual/automatic/versioned briefs contain typed conclusions, links, and
+- [x] Manual/automatic/versioned briefs contain typed conclusions, links, and
       evidence with AI disabled.
-- [ ] Agent Tool Service and `/api/v1` expose stable scoped schemas without raw
+- [x] Agent Tool Service and `/api/v1` expose stable scoped schemas without raw
       payloads or server internals; compatibility APIs still function.
-- [ ] The bright intelligence-lab UI implements all stage-seven workflows and
+- [x] The bright intelligence-lab UI implements all stage-seven workflows and
       remains usable at 390 px without unsafe content rendering.
-- [ ] Fresh and `0005` upgrade tests pass; production data and raw JSONL remain
+- [x] Fresh and `0005` upgrade tests pass; production data and raw JSONL remain
       intact; integrity check is `ok`.
-- [ ] Backend tests/coverage, frontend lint/tests/build/coverage, shell tests,
+- [x] Backend tests/coverage, frontend lint/tests/build/coverage, shell tests,
       production build, authentication, real subscription/watch/trend/brief/
       Agent API validation, service/resource checks, push, and clean worktrees
       are recorded.
-- [ ] Production reaches the final commit with an initialized owner, zero
+- [x] Production reaches the final commit with an initialized owner, zero
       active tasks, zero browser residue, active API/Worker, and all historical
       capability statuses unchanged.
 

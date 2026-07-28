@@ -282,6 +282,21 @@ def test_creator_watch_reuses_provenance_target_for_privacy_safe_id(
         f"/api/crawler/tasks/{run.json()['task_id']}"
     ).json()
     assert task["creator_ids"] == ["3546860755093522"]
+    assert crawler.claim_next()["id"] == run.json()["task_id"]
+    crawler.complete_success(run.json()["task_id"], 1)
+    client.app.state.automation_coordinator.reconcile_runs()
+    with sqlite3.connect(settings.database_path) as connection:
+        reconciled = connection.execute(
+            """
+            SELECT status, started_at, finished_at
+            FROM creator_watch_runs
+            WHERE id = ?
+            """,
+            (run.json()["id"],),
+        ).fetchone()
+    assert reconciled[0] == "succeeded"
+    assert reconciled[1] is not None
+    assert reconciled[2] is not None
     unresolved = client.post(
         "/api/watchlist",
         json={
