@@ -26,7 +26,7 @@
 | P0 | Test coverage | Cover seconds, milliseconds, microseconds, nanoseconds, and the supported upper bound | DONE |
 | P0 | Platform regression | Assert the Xiaohongshu fixture persists a seconds value | DONE |
 | P1 | Documentation | Record the timestamp unit contract in the crawler platform spec | DONE |
-| P1 | Production validation | Re-run the failed Xiaohongshu search and confirm library provenance | TODO |
+| P1 | Production validation | Re-run the failed Xiaohongshu search and confirm library provenance | DONE |
 
 ## 4. Systematic Expansion
 
@@ -42,7 +42,7 @@
 - [x] Updated `.trellis/spec/backend/crawler-platforms.md`.
 - [x] Added cross-platform numeric timestamp regression cases.
 - [x] Retained the failed production task as evidence.
-- [ ] Record the successful Xiaohongshu retry task in the stage-six report.
+- [x] Record the successful Xiaohongshu retry task in the stage-six report.
 
 This repository does not contain the Trellis generator source directory
 `src/templates/markdown/spec/`, so there is no local template copy to sync.

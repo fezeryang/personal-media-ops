@@ -23,7 +23,7 @@
 | P0 | Architecture | Resolve Bilibili AV/BV identity in one Runner helper and keep API/Worker platform-neutral | DONE |
 | P0 | Test coverage | Exercise numeric AV, AV URL, BV, BV URL, and the patched `aid` call | DONE |
 | P0 | Test coverage | Assert the exact pinned Kuaishou crawler class used by both runtime patches | DONE |
-| P1 | Production validation | Re-run Bilibili numeric detail and Kuaishou creator after deployment | TODO |
+| P1 | Production validation | Re-run Bilibili numeric detail and Kuaishou creator after deployment | DONE |
 | P1 | Documentation | Record both fixed upstream seams in the crawler contract | DONE |
 
 ## 4. Systematic Expansion
@@ -40,7 +40,8 @@
 - [x] Updated `.trellis/spec/backend/crawler-platforms.md`.
 - [x] Added Runner unit tests for AV/BV identity and exact class naming.
 - [x] Retained failed production tasks as evidence.
-- [ ] Record successful post-deployment retry task IDs.
+- [x] Record the successful Bilibili retry and accurate Kuaishou creator
+  deferral in the stage-six report.
 
 This repository does not contain `src/templates/markdown/spec/`, so there is no
 local Trellis generator template to synchronize.

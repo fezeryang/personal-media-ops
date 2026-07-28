@@ -198,9 +198,10 @@ Runner 只在 `ks` 进程内查找该精确入口并派发 DOM `click()`，随�
 `visionSearchPhoto`，返回 `result=50` 和 0 条 feeds；当前网页已改用
 `POST /rest/v/search/feed`，且生产环境的 headless 与 headful/Xvfb 对照请求均返回
 `result=2`、无结果数据。Runner 的 `ks` 专用搜索保护会把缺失、非成功、结构错误或空
-feeds 明确转为非零失败，禁止 0 条结果被记为 `succeeded`。在完成新 REST 契约兼容和
-真实任务验证前，生产配置必须排除 `ks`，能力状态为
-`code_ready + deferred_upstream_breakage`。
+feeds 明确转为非零失败，禁止 0 条结果被记为 `succeeded`。模式级能力门禁允许生产
+配置包含 `ks`，但 search 仍返回 `deferred_upstream_breakage`，不能提交。阶段六的
+独立真实任务已经验证 detail 与 comments；creator 因固定上游资料接口持续返回空资料
+而延期，sub_comments 仍为未生产验证的 `code_ready`。
 
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或

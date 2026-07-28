@@ -12,7 +12,7 @@ detail, creator, or comments support.
 | Zhihu | production_verified | production_verified | production_verified | production_verified | production_verified |
 | Weibo | production_verified | production_verified | production_verified | production_verified | deferred_platform_change |
 | Tieba | production_verified | production_verified | production_verified | production_verified | deferred_platform_change |
-| Kuaishou | deferred_upstream_breakage | production_verified | code_ready | production_verified | code_ready |
+| Kuaishou | deferred_upstream_breakage | production_verified | deferred_upstream_breakage | production_verified | code_ready |
 | Douyin | deferred_resource_constrained | deferred_resource_constrained | deferred_resource_constrained | deferred_resource_constrained | deferred_resource_constrained |
 
 At runtime, a `code_ready` cell becomes `enabled` only when its platform is in
@@ -30,6 +30,9 @@ Known constraints:
 - Tieba fixed upstream recursively navigates reply pages, so standalone bounded
   sub-comment collection stays deferred.
 - Kuaishou search uses a stale GraphQL contract. Detail, creator, and comments
-  are audited separately and do not inherit the search deferral.
+  are audited separately: detail and comments succeeded, while the fixed
+  upstream creator-profile call returned no profile for multiple public
+  targets. Sub-comments remains code-ready because the bounded production
+  sample had no replies to use as a truthful parent target.
 - Douyin remains the independent `douyin-runtime-capacity` task; stage six does
   not spend production browser capacity retrying it.

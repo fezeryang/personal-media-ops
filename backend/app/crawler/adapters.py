@@ -1018,10 +1018,12 @@ class KuaishouAdapter(CrawlerPlatformAdapter):
             mode_statuses=_mode_map(
                 search="deferred_upstream_breakage",
                 detail="production_verified",
+                creator="deferred_upstream_breakage",
                 comments="production_verified",
             ),
             mode_reasons={
                 "search": "固定上游 GraphQL 搜索已被平台 REST 接口替代",
+                "creator": "固定上游创作者资料接口对多个公开目标均返回空资料",
             },
             allowed_target_hosts=frozenset({"kuaishou.com"}),
         )

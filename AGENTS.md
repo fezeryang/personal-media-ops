@@ -17,8 +17,11 @@ and provenance views; and same-origin Nginx deployment. Platform × mode
 statuses are independent facts. Search verification must never imply detail,
 creator, or comment verification. Douyin remains resource-deferred and
 Kuaishou search remains upstream-deferred until a recorded real task proves
-otherwise. Never present unfinished modules or synthetic data as working
-product behavior.
+otherwise. Bilibili and Zhihu content modes are production-verified; Weibo
+and Tieba detail/creator/comments are production-verified; Kuaishou
+detail/comments are production-verified while creator is upstream-deferred;
+Xiaohongshu signed-target modes are login-context-deferred. Never present
+unfinished modules or synthetic data as working product behavior.
 
 ## End-to-End Agent Workflow
 

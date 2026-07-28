@@ -72,6 +72,7 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
         mode.status for mode in capabilities[1].modes[1:]
     } == {"deferred_login_required"}
     assert capabilities[6].modes[1].status == "production_verified"
+    assert capabilities[6].modes[2].status == "deferred_upstream_breakage"
     assert capabilities[6].modes[3].status == "production_verified"
 
 

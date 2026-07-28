@@ -12,6 +12,11 @@ MediaCrawler。B 站、小红书、知乎、微博和贴吧的关键词搜索已
 不会被当作其他模式成功。不包含 Redis、Celery、Docker、Elasticsearch、AI 分析或
 自动发布，未完成模块不会用 Mock 数据冒充真实能力。
 
+2026-07-28 的阶段六生产验证已确认：B站与知乎的详情、创作者、一级评论和二级评论；
+微博与贴吧的详情、创作者和一级评论；快手的详情和一级评论。小红书非搜索模式因
+安全设计不保存平台签名 URL 上下文而保持 `deferred_login_required`；快手创作者
+接口保持 `deferred_upstream_breakage`，其二级评论保持 `code_ready`。
+
 ## 工程协作
 
 根目录 [AGENTS.md](AGENTS.md) 是覆盖全仓库的长期工程规则。Codex 按完整产品链路负责

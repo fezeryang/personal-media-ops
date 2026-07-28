@@ -32,7 +32,10 @@ with no feeds, while the website now sends `POST /rest/v/search/feed`.
 Headless and headful/Xvfb website requests both returned `result=2` without
 result data on the production host. Kuaishou therefore remains
 `deferred_upstream_breakage`; Personal Media Ops fails this response closed
-instead of recording a zero-result success.
+instead of recording a zero-result success. Independent stage-six tasks proved
+that one current public detail target and its bounded first-level comments are
+usable. The creator-profile call returned no profile for multiple public
+targets, so creator remains independently `deferred_upstream_breakage`.
 
 Production inspection on 2026-07-28 found two remaining Tieba integration
 gaps at this pinned head: Baidu navigation prefers its HTTP Tieba link before
@@ -62,6 +65,9 @@ its five task modes through Adapter-owned request contracts:
   allow-listing only an anonymized creator hash, masked nickname, and aggregate
   counts; it never writes raw user IDs, avatar/profile URLs, biographies, IP
   location, gender, URL tokens, Cookie data, or browser state.
+- the pinned Bilibili detail parser accepts BV only while search stores AV
+  identities. The reviewed Runner maps public AV IDs/URLs to the client's
+  `aid` path and resolves BV to AV for standalone reply provenance.
 
 No upstream source is patched. The Runner seam is version-specific and covered
 by argument, safety, output-discovery, normalization, timeout, cancellation,
