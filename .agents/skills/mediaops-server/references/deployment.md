@@ -115,6 +115,13 @@ requires a reviewed migration plan, backup, and explicit
 `--allow-migrations`. The deploy script runs migrations only after backend
 tests and frontend build succeed, and before `finalize`.
 
+Stage-six migrations rebuild `crawler_tasks` once to preserve old search rows
+while adding explicit mode inputs, then create normalized library/provenance
+tables. Verification must compare old task counts/statuses before and after,
+confirm head `0005_library_entities`, inspect library table/index presence,
+and leave existing JSONL untouched. A later transport or helper failure is
+not a reason to repeat a verified migration or restore the backup.
+
 ## Failure, Recovery, and Rollback
 
 Every stage is fail-closed. A failed test/build prevents `finalize`. A helper or

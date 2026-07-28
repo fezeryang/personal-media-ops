@@ -11,12 +11,18 @@ normalizing MediaCrawler JSONL, or exposing platform choices to the frontend.
 GET  /api/crawler/capabilities
 POST /api/crawler/tasks
 GET  /api/crawler/tasks/{task_id}/results?offset=N&limit=N
+GET  /api/library/contents
+GET  /api/library/contents/{library_id}
+GET  /api/library/creators
+GET  /api/library/creators/{library_id}
+GET  /api/library/comments
 MEDIAOPS_ENABLED_PLATFORMS=bili[,xhs,zhihu,wb,tieba,ks]
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=<finite positive seconds; default 180>
 ```
 
-Adapters implement capability metadata, fixed Runner arguments,
-`is_login_success(line)`, content-file discovery, and `normalize_result(raw)`.
+Adapters implement mode-level capability metadata, fixed Runner arguments,
+login/QR/failure classification, entity-file discovery, and content, creator,
+and comment normalization.
 
 ## 3. Contracts
 
@@ -26,12 +32,25 @@ Adapters implement capability metadata, fixed Runner arguments,
   `production_verified`. Availability is independently `enabled`, `disabled`,
   `deferred_resource_constrained`, `deferred_upstream_breakage`, or
   `deferred_login_required`. `enabled` is the actual task-submission gate.
+- Each `platform × mode` cell independently uses `not_implemented`,
+  `code_ready`, `enabled`, `production_verified`,
+  `deferred_resource_constrained`, `deferred_upstream_breakage`,
+  `deferred_login_required`, `deferred_platform_change`, or `disabled`.
+  Platform-level fields remain a compatibility summary of `search`; clients
+  that submit work must use the selected mode's `enabled` field.
+- Task modes are `search`, `detail`, `creator`, `comments`, and
+  `sub_comments`. Pydantic validates the exact input family before persistence,
+  and the Adapter validates it again before a Runner command is built.
+- Detail/creator target totals cannot exceed `requested_count`. HTTP targets
+  must use URL fields, contain no user-info credentials, and match the
+  selected Adapter's platform-host allowlist.
 - `bili`, `xhs`, `zhihu`, `wb`, and `tieba` are `production_verified`; `dy`
   is `code_ready` and `deferred_resource_constrained`; `ks` is `code_ready`
   and `deferred_upstream_breakage`.
 - Only explicitly enabled platforms accept new tasks; the default is `bili`.
-- Search, QR login, count `1..20`, one global task, no comments, no
-  sub-comments, and no proxy are fixed service constraints.
+- Search/detail/creator count is `1..20`; comments is `1..10`; standalone
+  sub-comments is `1..5`. The service keeps QR login, one global task, no
+  proxy, no implicit comments, and no implicit recursive sub-comments.
 - The Worker calls fixed Python and Runner paths with an argument array.
 - The existing Bilibili Runner argument contract remains compatible. Proxy is
   disabled inside the reviewed Runner, not exposed as a new Worker argument.
@@ -125,6 +144,16 @@ Adapters implement capability metadata, fixed Runner arguments,
 - `raw_payload` is the privacy-normalized JSONL object. Textual publication
   times accept ISO-8601 and `YYYY-MM-DD[ HH:MM:SS]` as UTC; malformed values
   become `null`. React may show raw JSON only as escaped text.
+- A zero subprocess exit is only a transport signal. Before success, the
+  Worker requires expected JSONL discovery, parseable objects, successful
+  normalization, a valid non-empty result (or a verified empty comment set),
+  atomic library ingestion, task/entity provenance, and the final
+  `actual_count` update.
+- Creator-mode process-local capture must inherit MediaCrawler teaching
+  edition privacy rules. Persist only an anonymized creator hash, a masked
+  nickname, and non-identifying aggregate counts. Never persist source user
+  IDs, IP location, avatar, profile URL, biography, gender, Cookie, browser
+  state, or URL tokens in creator JSONL/raw payload.
 
 ## 4. Validation & Error Matrix
 
@@ -132,9 +161,15 @@ Adapters implement capability metadata, fixed Runner arguments,
 | --- | --- |
 | Unknown platform | Task API returns 422 |
 | Registered but disabled platform | Task API returns 409 |
+| Platform enabled but selected mode deferred/disabled | Task API returns 409 before queue insertion |
+| Mode fields are missing, mixed, duplicated, or over limit | Task API returns 422 before queue insertion |
 | Unknown enabled-platform config | API/Worker startup fails |
 | Unsafe stored result path | Results API returns 409 |
 | Invalid JSONL object | Results API returns 500 |
+| Subprocess exits zero without expected valid entities | Worker persists a task failure |
+| Comment output is empty and content explicitly reports zero comments | Worker may persist a legal zero-result success |
+| Entity normalization or library write fails | Entire entity/provenance transaction rolls back and task is failed by the Worker boundary |
+| Creator client returns a full public profile | Runner allow-lists anonymized ID, masked nickname, and aggregate counts only |
 | QR-save log line | Task remains `waiting_login` |
 | `Login successful` log line | Task returns to `running` |
 | Headful run without `DISPLAY`, `xvfb-run` available | Runner re-execs once under `xvfb-run -a` |
@@ -170,6 +205,10 @@ Adapters implement capability metadata, fixed Runner arguments,
   let the capability API drive the UI.
 - Good: render `production_verified + disabled` as verified and unavailable;
   enabled state does not erase verification history.
+- Good: keep content-mode differences inside Adapter/Runner and let the
+  mode-level capability matrix drive both API validation and the form.
+- Good: parse all discovered entity files, then commit entity upserts,
+  provenance, and task completion in one transaction.
 - Base: a missing optional raw field becomes `null` or an empty display value.
 - Bad: hard-code a platform list in the frontend or pass Cookie/path/command
   controls through the task API.
@@ -185,6 +224,10 @@ Adapters implement capability metadata, fixed Runner arguments,
   or replace the whole upstream login implementation.
 - Bad: let Kuaishou's `result=50` or empty feeds exit zero and mark a task
   successful without stored results.
+- Bad: infer detail/creator/comment verification from a platform's verified
+  search cell, or mark `exit 0 + 0 rows` successful without platform evidence.
+- Bad: dump a full creator API response to JSONL merely because it is public;
+  this bypasses upstream's teaching-edition privacy boundary.
 - Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
   or loop indefinitely around browser startup.
 
@@ -216,6 +259,12 @@ Kuaishou Runner tests must assert exact-entry DOM dispatch, QR confirmation,
 bounded missing-entry failure, suppression of only the redundant upstream
 click, acceptance of a valid non-empty search response, rejection of
 missing/non-successful/empty responses, and installation only for `ks`.
+Content-mode tests must cover the five request shapes, per-mode registry
+gating, output discovery, null semantics, raw payload retention, bounded
+comments, standalone sub-comments, unexplained-zero rejection, legal empty
+comments, creator-profile sanitization, and transaction rollback. A real
+platform result changes a mode cell to `production_verified` only after the
+task result and resource recovery are recorded.
 
 ## 7. Wrong vs Correct
 
@@ -280,4 +329,19 @@ Correct:
 ```text
 MEDIAOPS_ENABLED_PLATFORMS=bili,xhs
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180
+```
+
+Wrong:
+
+```python
+if process.returncode == 0:
+    repository.complete_success(task_id, actual_count=0)
+```
+
+Correct:
+
+```python
+if process.returncode == 0:
+    batch = parse_task_entities(...)
+    library_repository.ingest_task(task_id=task_id, batch=batch)
 ```

@@ -1,159 +1,205 @@
-# Crawler task API contract
+# Crawler and library API contract
 
-All endpoints are under `/api`. Platform availability comes from the backend
-Adapter registry; clients must not maintain an independent allowlist. The API
-never accepts commands, executable paths, cookies, output paths, proxy/comment
-controls, or concurrency controls.
+All endpoints are under `/api`. The API is an internal, same-origin contract
+for the Personal Media Ops workbench and future read-only Agent tools.
+Platform and mode availability comes only from the backend Adapter registry;
+clients must not maintain an independent allowlist.
 
-## Capabilities
+## Mode-level capabilities
 
 `GET /api/crawler/capabilities`
 
+Each of `bili`, `xhs`, `zhihu`, `wb`, `tieba`, `ks`, and `dy` returns exactly
+five mode records:
+
+```text
+search | detail | creator | comments | sub_comments
+```
+
+Each record contains its own `status`, `enabled`, input fields, bounded count
+contract, browser/login requirements, and an optional reason:
+
 ```json
 {
-  "max_concurrent_tasks": 1,
-  "platforms": [
+  "platform": "bili",
+  "display_name": "哔哩哔哩",
+  "enabled": true,
+  "verification_status": "production_verified",
+  "availability_status": "enabled",
+  "modes": [
     {
-      "platform": "bili",
-      "display_name": "哔哩哔哩",
-      "icon_label": "哔",
+      "mode": "comments",
+      "label": "一级评论",
+      "status": "enabled",
       "enabled": true,
-      "verification_status": "production_verified",
-      "availability_status": "enabled",
-      "login_prompt": "使用哔哩哔哩客户端扫码登录",
-      "crawler_types": [{"value": "search", "label": "关键词搜索"}],
-      "login_types": [{"value": "qrcode", "label": "二维码登录"}],
-      "requested_count": {"minimum": 1, "maximum": 20, "default": 20},
-      "supports_comments": false,
-      "supports_sub_comments": false
+      "reason": null,
+      "input_fields": ["parent_content_id", "target_ids", "target_urls"],
+      "requested_count": {"minimum": 1, "maximum": 20, "default": 1},
+      "requested_comment_count": {
+        "minimum": 1,
+        "maximum": 10,
+        "default": 10
+      },
+      "requested_sub_comment_count": null,
+      "requires_browser": true,
+      "login_type": "qrcode"
     }
   ]
 }
 ```
 
-The registry contains `bili`, `xhs`, `dy`, `zhihu`, `wb`, `tieba`, and `ks`.
-Verification maturity is independent of availability:
+Mode states are:
 
 ```text
-verification_status:
-  not_implemented | code_ready | production_verified
-
-availability_status:
-  enabled | disabled | deferred_resource_constrained |
-  deferred_upstream_breakage | deferred_login_required
+not_implemented | code_ready | enabled | production_verified |
+deferred_resource_constrained | deferred_upstream_breakage |
+deferred_login_required | deferred_platform_change | disabled
 ```
 
-`bili`, `xhs`, `zhihu`, `wb`, and `tieba` are production-verified. Zhihu was
-verified on 2026-07-28 by task
-`bb63be5c-0a9b-48e2-bde5-b20bdaf637e6`, which returned five normalized
-answer/article results. Weibo was verified on 2026-07-28 by task
-`92c566d2-37b0-47eb-b379-c855df34c731`, which returned five normalized
-plain-text posts. Tieba was verified on 2026-07-28 by task
-`52d19084-7f17-4ede-8293-36f716919272`, which returned five normalized posts
-with forum metadata in each raw payload. `dy` is code-ready, disabled, and
-`deferred_resource_constrained`. `ks` is code-ready, disabled, and
-`deferred_upstream_breakage`: QR login completed, but the pinned GraphQL
-search returned no usable data after the website moved search to a REST
-endpoint. It remains unverified until a compatible upstream or reviewed
-Adapter seam produces a successful real task.
-`enabled=false` always prevents task submission.
+`code_ready` means reviewed code and tests exist. `enabled` additionally means
+the platform is present in `MEDIAOPS_ENABLED_PLATFORMS`.
+`production_verified` requires a recorded small real task for that exact
+platform × mode. Platform-level legacy fields remain for old clients and
+summarize search only.
 
 ## Create a task
 
 `POST /api/crawler/tasks`
 
+The preferred discriminator is `mode`; legacy `crawler_type` remains accepted
+when it matches `mode`. Unknown fields are rejected. The API performs
+mode-specific validation before a task can enter the Worker:
+
+```json
+{"platform":"bili","mode":"search","keywords":"AI Agent","requested_count":5}
+```
+
 ```json
 {
   "platform": "bili",
-  "crawler_type": "search",
-  "keywords": "AI Agent",
-  "requested_count": 20
+  "mode": "detail",
+  "target_urls": ["https://www.bilibili.com/video/BV123"],
+  "requested_count": 1
 }
 ```
 
-`platform` must be registered and enabled; disabled platforms return HTTP 409
-and unsupported platforms return HTTP 422. `crawler_type` must be a capability
-advertised for that platform. Keywords contain 1–200 printable,
-non-whitespace characters; count is an integer from 1 through 20. Unknown
-fields are rejected.
-
-The service fixes `login_type=qrcode`, global crawler concurrency `1`, and
-disables first-/second-level comments and proxies. HTTP 201 returns the task
-with initial status `pending`.
-
-## List and inspect tasks
-
-- `GET /api/crawler/tasks` returns tasks newest first.
-- `GET /api/crawler/tasks/{task_id}` returns one task or HTTP 404.
-
-Statuses are `pending`, `running`, `waiting_login`, `succeeded`, `failed`, and
-`cancelled`. Existing Bilibili rows retain their IDs, fields, timestamps,
-paths, counts, and status through the multi-platform migration. Task responses
-still include worker-owned paths and PID for operational compatibility, but
-the workbench does not display them.
-
-## Logs and QR code
-
-`GET /api/crawler/tasks/{task_id}/logs` accepts either `offset=N` (at most
-256 KiB, next position in `X-Next-Offset`) or `tail=N` (1–1000 lines). Paths
-are reconstructed inside the configured task log root.
-
-`GET /api/crawler/tasks/{task_id}/qrcode` returns `image/png` when ready.
-Before creation it returns HTTP 404 with the current task status and a
-not-ready detail. It never accepts or returns an arbitrary file path.
-
-## Unified results
-
-`GET /api/crawler/tasks/{task_id}/results?offset=0&limit=20`
-
-The backend reads platform content JSONL incrementally, normalizes each record
-through its Adapter, and never returns more than `requested_count`. `limit` is
-1–100.
+```json
+{"platform":"bili","mode":"creator","creator_ids":["123"],"requested_count":1}
+```
 
 ```json
 {
-  "items": [{
-    "platform": "bili",
-    "content_id": "BV123",
-    "content_type": "video",
-    "title": "Example",
-    "description": null,
-    "author_name": "Uploader",
-    "content_url": "https://www.bilibili.com/video/BV123",
-    "cover_url": "https://example.test/cover.jpg",
-    "published_at": 1700000000,
-    "source_keyword": "AI Agent",
-    "raw_payload": {
-      "video_id": "BV123",
-      "title": "Example"
-    },
-    "metrics": {
-      "play_count": 100,
-      "like_count": 10,
-      "favorite_count": 5,
-      "comment_count": 2,
-      "share_count": 1
-    }
-  }],
-  "offset": 0,
-  "limit": 20,
-  "next_offset": 1,
-  "has_more": false
+  "platform": "bili",
+  "mode": "comments",
+  "parent_content_id": "BV123",
+  "requested_comment_count": 10
 }
 ```
 
-Missing source fields become empty or `null`. Unsafe non-HTTP(S) content and
-cover URLs become `null`. `raw_payload` is the stored, privacy-normalized JSONL
-object; the workbench renders its JSON as text and never executes HTML.
+```json
+{
+  "platform": "bili",
+  "mode": "sub_comments",
+  "parent_content_id": "BV123",
+  "parent_comment_id": "456",
+  "requested_sub_comment_count": 5
+}
+```
 
-## Cancel and polling
+Rules:
 
-`POST /api/crawler/tasks/{task_id}/cancel` only accepts `pending`, `running`,
-or `waiting_login`. Pending tasks cancel immediately; active tasks set
-`cancel_requested` and the Worker terminates the subprocess.
+- search accepts `keywords`;
+- detail accepts `target_ids` or `target_urls`; total targets cannot exceed
+  `requested_count`;
+- creator accepts `creator_ids` or `creator_urls`; total targets cannot exceed
+  `requested_count`;
+- comments accepts exactly one content ID/URL and 1–10 comments;
+- sub-comments accepts exactly one content target, one parent comment ID, and
+  1–5 replies;
+- comments never imply sub-comment recursion;
+- disabled/deferred modes return HTTP 409;
+- invalid fields or unsupported platforms return HTTP 422;
+- URLs must be credential-free HTTP(S), must use a hostname allow-listed by
+  the selected Adapter, and Adapter-specific URL requirements are revalidated;
+- an HTTP URL cannot be smuggled through an ID/parent-ID field;
+- caller-controlled commands, paths, cookies, proxy settings, concurrency, or
+  recursive-comment flags are never accepted.
 
-The workbench polls active details, bounded logs, and pending QR images. It
-stops high-frequency detail polling at terminal status and pages results with
-`offset`/`limit=12`. The create form is generated from the capabilities route
-and sends exactly `platform`, `crawler_type`, `keywords`, and
-`requested_count`.
+Task responses include both `mode` and the legacy `crawler_type`, all
+mode-specific inputs, requested counts, state, timestamps, and operational
+paths. Sensitive query values such as token/cookie/signature parameters are
+removed from returned target URLs. Old search rows remain readable.
+
+## Task operations
+
+- `GET /api/crawler/tasks`
+- `GET /api/crawler/tasks/{task_id}`
+- `POST /api/crawler/tasks/{task_id}/cancel`
+- `GET /api/crawler/tasks/{task_id}/logs`
+- `GET /api/crawler/tasks/{task_id}/qrcode`
+- `GET /api/crawler/tasks/{task_id}/results`
+
+Statuses remain `pending`, `running`, `waiting_login`, `succeeded`, `failed`,
+and `cancelled`. Logs are bounded to 256 KiB per offset request or 1–1000 tail
+lines. QR responses are PNG only. The legacy result endpoint continues to
+normalize content JSONL for old tasks; new durable consumers should use the
+library endpoints.
+
+A process exit code of zero is not sufficient for success. The Worker requires
+parseable expected output, normalized records or a platform-proven legal empty
+comment result, an atomic library write, and task provenance before marking
+the task succeeded. Unexplained zero results fail closed.
+
+## Persistent library
+
+### Content
+
+`GET /api/library/contents`
+
+Supported filters:
+
+```text
+platform content_type keyword creator date_from date_to
+has_comments sort offset limit
+```
+
+`sort` is one of `last_collected_desc`, `published_desc`, `published_asc`, or
+`first_collected_desc`. `limit` is 1–100. The response uses the same
+`items/offset/limit/next_offset/has_more` pagination shape as other lists.
+List responses never contain raw payloads.
+
+`GET /api/library/contents/{id}` returns the stable library ID, source
+platform/ID/URL, safe normalized fields, nullable metrics, first/last
+collection timestamps, one linked creator, up to 100 stored comments, and
+task provenance. `include_raw=true` explicitly adds the JSON object for
+developer diagnosis; default is `null`.
+
+### Creators
+
+- `GET /api/library/creators?platform=&query=&offset=&limit=`
+- `GET /api/library/creators/{id}`
+
+Creator detail includes linked normalized contents and task provenance.
+`include_raw=true` is explicit and off by default.
+Creator-mode capture follows the pinned MediaCrawler teaching edition's
+privacy boundary: source user IDs are hashed, nicknames are masked, and only
+non-identifying aggregate counts are retained. Avatar, profile URL, biography,
+gender, IP location, browser state, and URL tokens are not persisted.
+
+### Comments and counts
+
+- `GET /api/library/comments`
+- `GET /api/library/stats`
+
+Comments filter by platform, source content ID, or parent comment ID. Raw
+comment payloads are not returned by the list contract. Missing metrics remain
+`null`; a real zero remains `0`.
+
+## Safety and rendering
+
+The API uses stable application UUIDs while retaining string source IDs and
+original HTTP(S) links. All SQL values are parameterized; sort expressions and
+table/column identifiers come from internal allowlists. Raw payloads are
+stored for provenance but are never treated as trusted HTML. React renders
+titles, descriptions, creator bios, and comments as text; external links open
+with `noopener`, and invalid image URLs degrade to a placeholder.

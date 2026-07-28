@@ -40,6 +40,44 @@ describe("API client", () => {
     });
   });
 
+  it("normalizes string, location-free, and malformed JSON errors", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Mode is disabled" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ detail: [{ msg: "Invalid request" }] }),
+          {
+            status: 422,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response("{not json", {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    await expect(
+      requestJson("api/crawler/tasks", z.object({ id: z.string() })),
+    ).rejects.toMatchObject({ status: 409, message: "Mode is disabled" });
+    await expect(
+      requestJson("/api/crawler/tasks", z.object({ id: z.string() })),
+    ).rejects.toMatchObject({ status: 422, message: "Invalid request" });
+    await expect(
+      requestJson("/api/crawler/tasks", z.object({ id: z.string() })),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "请求失败（HTTP 500）",
+    });
+  });
+
   it("forwards AbortSignal and reads text responses", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -74,6 +112,15 @@ describe("API client", () => {
       status: 0,
       message: "无法连接服务，请检查网络后重试",
     });
+  });
+
+  it("preserves abort errors for callers to ignore intentionally", async () => {
+    const abortError = new DOMException("cancelled", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(abortError);
+
+    await expect(
+      requestJson("/api/health", z.object({ status: z.string() })),
+    ).rejects.toBe(abortError);
   });
 
   it("rejects successful responses with an invalid contract", async () => {

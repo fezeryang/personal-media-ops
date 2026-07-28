@@ -10,7 +10,7 @@ from app.crawler.adapters import (
     XiaohongshuAdapter,
     ZhihuAdapter,
 )
-from app.models.crawler_platform import CrawlerPlatformCapability
+from app.models.crawler_platform import CrawlerPlatformCapability, TaskMode
 
 
 class UnsupportedPlatformError(ValueError):
@@ -18,6 +18,10 @@ class UnsupportedPlatformError(ValueError):
 
 
 class PlatformDisabledError(ValueError):
+    pass
+
+
+class ModeDisabledError(ValueError):
     pass
 
 
@@ -46,6 +50,25 @@ class CrawlerPlatformRegistry:
         self._validate_enabled(enabled)
         if platform not in enabled:
             raise PlatformDisabledError(f"crawler platform is not enabled: {platform}")
+        return adapter
+
+    def require_mode_enabled(
+        self,
+        platform: str,
+        mode: TaskMode,
+        enabled_platforms: Iterable[str],
+    ) -> CrawlerPlatformAdapter:
+        adapter = self.get(platform)
+        configured = frozenset(enabled_platforms)
+        self._validate_enabled(configured)
+        status, enabled = adapter.mode_status(mode, platform in configured)
+        if not enabled:
+            reason = adapter.mode_reasons.get(mode)
+            detail = f": {reason}" if reason else ""
+            raise ModeDisabledError(
+                f"crawler mode is not enabled: {platform}/{mode} "
+                f"(status={status}){detail}"
+            )
         return adapter
 
     def list_capabilities(

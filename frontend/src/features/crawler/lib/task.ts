@@ -1,6 +1,8 @@
 import type {
+  CrawlerModeCapability,
   CrawlerPlatformCapability,
   CrawlerTask,
+  CrawlerTaskMode,
   CrawlerTaskStatus,
 } from "../../../api/crawler";
 
@@ -19,6 +21,14 @@ export const TASK_STATUS_LABELS: Record<CrawlerTaskStatus, string> = {
   cancelled: "已取消",
 };
 
+export const TASK_MODE_LABELS: Record<CrawlerTaskMode, string> = {
+  search: "关键词搜索",
+  detail: "内容详情",
+  creator: "创作者主页",
+  comments: "一级评论",
+  sub_comments: "二级评论",
+};
+
 export interface TaskMetrics {
   total: number;
   running: number;
@@ -35,7 +45,7 @@ export interface EngineState {
 
 type CapabilityStatus = Pick<
   CrawlerPlatformCapability,
-  "availability_status" | "enabled" | "verification_status"
+  "availability_status" | "enabled" | "verification_status" | "modes"
 >;
 
 export interface TaskFilters {
@@ -88,6 +98,9 @@ export function platformLoginPrompt(
 
 export function capabilityStatusLabel(capability: CapabilityStatus): string {
   if (!capability.enabled) {
+    if (capability.modes.some((mode) => mode.enabled)) {
+      return "（部分模式已启用）";
+    }
     const unavailableLabels: Record<
       Exclude<
         CrawlerPlatformCapability["availability_status"],
@@ -104,6 +117,7 @@ export function capabilityStatusLabel(capability: CapabilityStatus): string {
       deferred_resource_constrained: "（资源限制，暂不可用）",
       deferred_upstream_breakage: "（上游异常，暂不可用）",
       deferred_login_required: "（需要登录验证，暂不可用）",
+      deferred_platform_change: "（平台变化，暂不可用）",
     };
     if (capability.availability_status !== "enabled") {
       return unavailableLabels[capability.availability_status];
@@ -118,6 +132,40 @@ export function capabilityStatusLabel(capability: CapabilityStatus): string {
   return "（代码就绪，已启用）";
 }
 
+export function modeCapabilityStatusLabel(
+  capability: Pick<CrawlerModeCapability, "enabled" | "status">,
+): string {
+  if (capability.status === "production_verified") return "（已生产验证）";
+  if (capability.enabled) return "（代码就绪，已启用）";
+  const labels: Record<
+    Exclude<CrawlerModeCapability["status"], "production_verified" | "enabled">,
+    string
+  > = {
+    not_implemented: "（尚未实现）",
+    code_ready: "（代码就绪，平台未启用）",
+    disabled: "（已禁用）",
+    deferred_resource_constrained: "（资源限制）",
+    deferred_upstream_breakage: "（上游异常）",
+    deferred_login_required: "（需要登录）",
+    deferred_platform_change: "（平台变化）",
+  };
+  if (capability.status === "enabled") return "（已启用）";
+  return labels[capability.status];
+}
+
+export function taskPrimaryLabel(task: CrawlerTask): string {
+  return (
+    task.keywords ??
+    task.target_urls[0] ??
+    task.target_ids[0] ??
+    task.creator_urls[0] ??
+    task.creator_ids[0] ??
+    task.parent_content_id ??
+    task.parent_comment_id ??
+    TASK_MODE_LABELS[task.mode]
+  );
+}
+
 export function filterCrawlerTasks(
   tasks: readonly CrawlerTask[],
   filters: TaskFilters,
@@ -130,7 +178,7 @@ export function filterCrawlerTasks(
       filters.platform === "all" || task.platform === filters.platform;
     const matchesSearch =
       !needle ||
-      task.keywords.toLocaleLowerCase("zh-CN").includes(needle) ||
+      taskPrimaryLabel(task).toLocaleLowerCase("zh-CN").includes(needle) ||
       task.id.toLocaleLowerCase("zh-CN").includes(needle);
     return matchesStatus && matchesPlatform && matchesSearch;
   });

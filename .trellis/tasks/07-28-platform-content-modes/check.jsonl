@@ -1,1 +1,11 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify complete database-to-frontend data flow and compatibility."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Detect duplicated platform branching and reusable normalization patterns."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify migrations, transactions, constraints, indexes and existing-data preservation."}
+{"file": ".trellis/spec/backend/crawler-platforms.md", "reason": "Verify Adapter/Runner capability truth, result and Worker contracts."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify 4xx semantics, fail-closed empty results and persisted Worker errors."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Run and evaluate backend quality gates and coverage."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify Zod/API/model consistency with no unsafe type escapes."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify safe HTML/text rendering, accessibility, tests and production build."}
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Verify migration backup, resumable deployment, helper and health evidence."}
+{"file": ".trellis/tasks/07-28-platform-content-modes/research/production-baseline.md", "reason": "Compare final production state against the exact starting checkpoint."}
+{"file": ".trellis/tasks/07-28-platform-content-modes/research/upstream-content-mode-audit.md", "reason": "Ensure no capability status exceeds the pinned upstream evidence."}

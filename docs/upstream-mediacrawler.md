@@ -15,7 +15,7 @@ never follow `latest` automatically.
 | Production worktree | clean at the 2026-07-28 audit |
 | Python | 3.11.15 |
 | Playwright | 1.61.0 |
-| Browser | Google Chrome for Testing 149.0.7827.55 |
+| Browser | Google Chrome for Testing 150.0.7871.186 |
 
 On 2026-07-28, an isolated official-repository fetch showed that the pinned
 commit was exactly the official `main` head. No upstream update or production
@@ -41,6 +41,32 @@ the removed `li.u_login` entry. The reviewed Personal Media Ops Runner handles
 these through a `tieba`-only HTTPS recovery and current/legacy login-entry
 adapter seam. `/opt/mediacrawler` remains unchanged.
 
+## Stage-six content-mode audit
+
+The pinned CLI natively exposes only `search`, `detail`, and `creator`.
+Comments are flags on those native modes, and several platforms recursively
+page sub-comments without a common bound. Personal Media Ops therefore maps
+its five task modes through Adapter-owned request contracts:
+
+- `search`, `detail`, and `creator` use the pinned native entry points;
+- standalone `comments` runs one-target detail with first-level comments on,
+  sub-comments off, and a maximum of 10;
+- standalone `sub_comments` is enabled only where a bounded direct client API
+  exists (Bilibili, Xiaohongshu, Zhihu, and Kuaishou);
+- Weibo and Tieba standalone sub-comments are
+  `deferred_platform_change`, because their pinned flows cannot safely bound a
+  single parent reply traversal;
+- creator profile persistence is captured through narrow process-local Runner
+  seams because the teaching build intentionally leaves several creator
+  stores as no-ops. The seam preserves that build's privacy contract by
+  allow-listing only an anonymized creator hash, masked nickname, and aggregate
+  counts; it never writes raw user IDs, avatar/profile URLs, biographies, IP
+  location, gender, URL tokens, Cookie data, or browser state.
+
+No upstream source is patched. The Runner seam is version-specific and covered
+by argument, safety, output-discovery, normalization, timeout, cancellation,
+and process-group tests.
+
 ## Supported integration contract
 
 The reviewed Personal Media Ops Runner uses upstream platform codes:
@@ -49,10 +75,12 @@ The reviewed Personal Media Ops Runner uses upstream platform codes:
 bili xhs dy zhihu wb tieba ks
 ```
 
-Only `search` plus QR-code login is exposed. Comments, sub-comments, proxy
-pool, media downloads, CDP mode, and caller-controlled concurrency remain
-disabled. Each task receives an isolated output directory, log, and QR path;
-upstream browser state remains platform-separated.
+The application exposes independent `search`, `detail`, `creator`, `comments`,
+and `sub_comments` modes only where the mode-level registry permits them.
+Proxy pool, media downloads, CDP mode, implicit recursive replies, and
+caller-controlled concurrency remain disabled. Each task receives an isolated
+output directory, log, and QR path; upstream browser state remains
+platform-separated.
 
 The pinned teaching version writes privacy-normalized JSONL. Personal Media Ops
 retains each record in `raw_payload` and derives a safe common result without

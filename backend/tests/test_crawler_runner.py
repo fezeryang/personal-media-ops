@@ -4,7 +4,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -125,6 +125,137 @@ def test_runner_defaults_to_headless_for_previous_release_workers(
     monkeypatch.setattr(sys, "argv", arguments)
 
     assert load_runner().parse_arguments().headless is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "extra_arguments", "expected_count"),
+    [
+        ("detail", ["--target-id=BV1"], 0),
+        ("creator", ["--creator-id=42"], 0),
+        (
+            "comments",
+            [
+                "--parent-content-id=BV1",
+                "--requested-comment-count",
+                "10",
+            ],
+            10,
+        ),
+        (
+            "sub_comments",
+            [
+                "--target-url=https://example.test/content/1",
+                "--parent-comment-id=100",
+                "--requested-sub-comment-count",
+                "5",
+            ],
+            5,
+        ),
+    ],
+)
+def test_runner_accepts_bounded_content_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    extra_arguments: list[str],
+    expected_count: int,
+) -> None:
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    arguments = runner_arguments(output_root, qrcode_root, "bili")
+    arguments[arguments.index("--crawler-type") + 1] = mode
+    keyword_index = next(
+        index
+        for index, value in enumerate(arguments)
+        if value.startswith("--keywords=")
+    )
+    del arguments[keyword_index]
+    if mode == "comments":
+        arguments[arguments.index("--enable-comments") + 1] = "true"
+    arguments.extend(extra_arguments)
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    parsed = load_runner().parse_arguments()
+
+    assert parsed.crawler_type == mode
+    if mode == "comments":
+        assert parsed.requested_comment_count == expected_count
+    if mode == "sub_comments":
+        assert parsed.requested_sub_comment_count == expected_count
+
+
+def test_runner_rejects_implicit_recursive_sub_comments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    arguments = runner_arguments(output_root, qrcode_root, "bili")
+    arguments[arguments.index("--enable-sub-comments") + 1] = "true"
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    with pytest.raises(SystemExit):
+        load_runner().parse_arguments()
+
+
+@pytest.mark.parametrize(
+    ("mode", "targets"),
+    [
+        ("detail", ["--target-id=one", "--target-url=https://example.test/two"]),
+        ("creator", ["--creator-id=one", "--creator-id=two"]),
+    ],
+)
+def test_runner_rejects_target_count_beyond_requested_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    targets: list[str],
+) -> None:
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    arguments = runner_arguments(output_root, qrcode_root, "bili")
+    arguments[arguments.index("--crawler-type") + 1] = mode
+    arguments[arguments.index("--requested-count") + 1] = "1"
+    keyword_index = next(
+        index
+        for index, value in enumerate(arguments)
+        if value.startswith("--keywords=")
+    )
+    del arguments[keyword_index]
+    arguments.extend(targets)
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    with pytest.raises(SystemExit):
+        load_runner().parse_arguments()
+
+
+def test_runner_rejects_http_url_smuggled_as_identifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    qrcode_root = tmp_path / "qrcodes"
+    arguments = runner_arguments(output_root, qrcode_root, "bili")
+    arguments[arguments.index("--crawler-type") + 1] = "detail"
+    keyword_index = next(
+        index
+        for index, value in enumerate(arguments)
+        if value.startswith("--keywords=")
+    )
+    del arguments[keyword_index]
+    arguments.append("--target-id=https://user:password@example.test/content")
+    monkeypatch.setenv("MEDIAOPS_OUTPUT_ROOT", str(output_root))
+    monkeypatch.setenv("MEDIAOPS_QRCODE_ROOT", str(qrcode_root))
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    with pytest.raises(SystemExit):
+        load_runner().parse_arguments()
 
 
 @pytest.mark.parametrize(
@@ -994,10 +1125,158 @@ def test_runner_reports_existing_login_state_without_exposing_cookies(
     assert "cookie" not in output.casefold()
 
 
+@pytest.mark.parametrize(
+    ("platform", "profile", "expected"),
+    [
+        (
+            "bili",
+            {
+                "mid": "raw-bili-user",
+                "name": "Original Name",
+                "face": "https://image.test/avatar.png",
+                "sign": "identifying biography",
+            },
+            {"user_nickname": "O***e"},
+        ),
+        (
+            "xhs",
+            {
+                "basicInfo": {
+                    "userId": "raw-xhs-user",
+                    "nickname": "Red Book",
+                    "images": "https://image.test/avatar.png",
+                    "desc": "identifying biography",
+                },
+                "interactions": [
+                    {"type": "fans", "count": "2万"},
+                    {"type": "follows", "count": "12"},
+                ],
+            },
+            {"user_nickname": "R***k", "fans": "2万", "follows": "12"},
+        ),
+        (
+            "ks",
+            {
+                "profile": {
+                    "user_id": "raw-ks-user",
+                    "user_name": "Fast User",
+                    "headurl": "https://image.test/avatar.png",
+                    "user_text": "identifying biography",
+                },
+                "ownerCount": {"fan": 8, "follow": 2, "photo": 3},
+            },
+            {
+                "user_nickname": "F***r",
+                "fans": 8,
+                "follows": 2,
+                "content_count": 3,
+            },
+        ),
+    ],
+)
+def test_runner_sanitizes_creator_profiles_before_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    profile: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    runner = load_runner()
+    tools_module = ModuleType("tools")
+    user_hash_module = ModuleType("tools.user_hash")
+    user_hash_module.anonymize_user_id = lambda value: f"hash:{value}"
+    user_hash_module.mask_nickname = (
+        lambda value: str(value)[0] + "***" + str(value)[-1]
+    )
+    monkeypatch.setitem(sys.modules, "tools", tools_module)
+    monkeypatch.setitem(sys.modules, "tools.user_hash", user_hash_module)
+    args = SimpleNamespace(
+        platform=platform,
+        creator_id=["raw-target"],
+        creator_url=[],
+    )
+
+    sanitized = runner.sanitize_creator_profile(
+        args,
+        target="raw-target",
+        profile=profile,
+    )
+
+    assert sanitized == {
+        "_mediaops_source_creator_id": "hash:raw-target",
+        "creator_hash": "hash:raw-target",
+        **expected,
+    }
+    serialized = str(sanitized)
+    for forbidden in (
+        "raw-bili-user",
+        "raw-xhs-user",
+        "raw-ks-user",
+        "avatar",
+        "headurl",
+        "biography",
+        "profile_url",
+    ):
+        assert forbidden not in serialized
+
+
+def test_runner_preserves_already_anonymized_creator_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = load_runner()
+    tools_module = ModuleType("tools")
+    user_hash_module = ModuleType("tools.user_hash")
+    user_hash_module.anonymize_user_id = lambda value: f"hash:{value}"
+    user_hash_module.mask_nickname = lambda value: str(value)
+    monkeypatch.setitem(sys.modules, "tools", tools_module)
+    monkeypatch.setitem(sys.modules, "tools.user_hash", user_hash_module)
+    args = SimpleNamespace(
+        platform="zhihu",
+        creator_id=[],
+        creator_url=["https://www.zhihu.com/people/raw-token"],
+    )
+
+    sanitized = runner.sanitize_creator_profile(
+        args,
+        target=args.creator_url[0],
+        profile={
+            "creator_hash": "existing-safe-hash",
+            "user_nickname": "匿***名",
+            "fans": 0,
+            "follows": 0,
+            "registration_duration": "8 years",
+            "profile_url": "https://www.zhihu.com/people/raw-token",
+        },
+    )
+
+    assert sanitized == {
+        "_mediaops_source_creator_id": "existing-safe-hash",
+        "creator_hash": "existing-safe-hash",
+        "user_nickname": "匿***名",
+        "fans": 0,
+        "follows": 0,
+        "registration_duration": "8 years",
+    }
+
+
+def test_runner_extracts_weibo_note_id_from_approved_target_url() -> None:
+    runner = load_runner()
+    args = SimpleNamespace(
+        platform="wb",
+        target_id=[],
+        target_url=["https://m.weibo.cn/detail/1234567890?jumpfrom=weibocom"],
+        parent_content_id=None,
+    )
+
+    assert runner.upstream_content_targets(args) == ["1234567890"]
+
+
 def test_runner_forces_mediacrawler_safety_flags() -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
 
-    assert '"--get_comment",\n        "false"' in source
+    assert (
+        '"--get_comment",\n'
+        '        "true" if args.crawler_type == "comments" else "false"'
+    ) in source
     assert '"--get_sub_comment",\n        "false"' in source
     assert '"--enable_ip_proxy",\n        "false"' in source
     assert '"--max_concurrency_num",\n        "1"' in source
@@ -1020,7 +1299,8 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     assert (
         'if args.platform == "ks":\n'
         "        install_kuaishou_qrcode_entry_patch()\n"
-        "        install_kuaishou_search_guard()"
+        '        if args.crawler_type == "search":\n'
+        "            install_kuaishou_search_guard()"
         in source
     )
     assert "install_login_state_observer(args.platform)" in source

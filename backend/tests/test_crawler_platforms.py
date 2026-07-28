@@ -63,7 +63,10 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
         5,
         3,
     ]
-    assert all(item.supports_comments is False for item in capabilities)
+    assert all(item.supports_comments is True for item in capabilities)
+    assert all(len(item.modes) == 5 for item in capabilities)
+    assert capabilities[0].modes[0].status == "production_verified"
+    assert capabilities[0].modes[1].status == "enabled"
 
 
 def test_registry_rejects_unknown_or_disabled_platform() -> None:
@@ -78,10 +81,25 @@ def test_registry_rejects_unknown_or_disabled_platform() -> None:
 )
 def test_adapter_builds_fixed_safe_runner_arguments(platform: str) -> None:
     adapter = platform_registry.get(platform)
+    if platform in {"dy", "ks"}:
+        with pytest.raises(ValueError, match="unavailable"):
+            adapter.build_runner_arguments(
+                task={
+                    "crawler_type": "search",
+                    "keywords": "--not-an-option",
+                    "requested_count": 5,
+                },
+                output_dir=Path("/fixed/output"),
+                qrcode_path=Path("/fixed/qrcode.png"),
+            )
+        return
 
     arguments = adapter.build_runner_arguments(
-        keywords="--not-an-option",
-        requested_count=5,
+        task={
+            "crawler_type": "search",
+            "keywords": "--not-an-option",
+            "requested_count": 5,
+        },
         output_dir=Path("/fixed/output"),
         qrcode_path=Path("/fixed/qrcode.png"),
     )
@@ -112,14 +130,18 @@ def test_adapter_requests_headful_browser_only_for_douyin(
 ) -> None:
     adapter = platform_registry.get(platform)
 
+    assert adapter.headless_browser is (expected == "true")
+    if platform in {"dy", "ks"}:
+        return
     arguments = adapter.build_runner_arguments(
-        keywords="AI",
-        requested_count=5,
+        task={
+            "crawler_type": "search",
+            "keywords": "AI",
+            "requested_count": 5,
+        },
         output_dir=Path("/fixed/output"),
         qrcode_path=Path("/fixed/qrcode.png"),
     )
-
-    assert adapter.headless_browser is (expected == "true")
     assert arguments[arguments.index("--headless") + 1] == expected
 
 
@@ -438,6 +460,17 @@ def test_adapter_rejects_unsafe_result_urls() -> None:
 
     assert result.content_url is None
     assert result.cover_url is None
+
+
+def test_adapter_classifies_upstream_zero_result_and_captcha_failures() -> None:
+    adapter = platform_registry.get("ks")
+
+    assert adapter.classify_failure(
+        "Kuaishou upstream search returned no usable results"
+    ) == "Platform upstream returned no usable data"
+    assert adapter.classify_failure(
+        "captcha required"
+    ) == "Platform requires manual verification"
 
 
 def _write_result_file(task_dir: Path, storage_directory: str, name: str) -> Path:

@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 
 from app.core.config import Settings
+from app.crawler.adapters import DouyinAdapter
+from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 from app.workers.crawler_worker import (
     STREAM_READER_LIMIT_BYTES,
     CrawlerWorker,
     WorkerAlreadyRunning,
     WorkerLock,
+    redact_sensitive_log_text,
 )
 
 
@@ -56,6 +59,28 @@ def seed_task(
     )
 
 
+class RuntimeEnabledDouyinAdapter(DouyinAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        object.__setattr__(
+            self,
+            "mode_statuses",
+            {**self.mode_statuses, "search": "code_ready"},
+        )
+
+
+def registry_with_douyin_search_enabled() -> CrawlerPlatformRegistry:
+    adapters = []
+    for platform in ("bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"):
+        adapter = (
+            RuntimeEnabledDouyinAdapter()
+            if platform == "dy"
+            else platform_registry.get(platform)
+        )
+        adapters.append(adapter)
+    return CrawlerPlatformRegistry(adapters)
+
+
 def test_worker_updates_success_and_actual_count(
     tmp_path: Path,
     test_settings: Settings,
@@ -94,6 +119,57 @@ print("crawler completed", flush=True)
     assert stored["actual_count"] == 2
     assert stored["pid"] is not None
     assert stored["finished_at"] is not None
+
+
+def test_worker_redacts_sensitive_assignments_from_subprocess_logs(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "sensitive_log_runner.py"
+    runner.write_text(
+        """
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", required=True)
+args, _ = parser.parse_known_args()
+result_dir = Path(args.output_dir) / "bilibili" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    '{"video_id": "1"}\\n',
+    encoding="utf-8",
+)
+print(
+    "url=https://example.test/?xsec_token=private-value&xsec_source=feed "
+    "cookie:browser-secret",
+    flush=True,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = worker_settings(test_settings, runner)
+    task = seed_task(repository, settings, requested_count=1)
+
+    asyncio.run(CrawlerWorker(repository, settings).run_once())
+
+    log = (
+        settings.log_root / "crawler" / f"{task['id']}.log"
+    ).read_text(encoding="utf-8")
+    assert "private-value" not in log
+    assert "browser-secret" not in log
+    assert "xsec_token=[REDACTED]" in log
+    assert "cookie:[REDACTED]" in log
+
+
+def test_sensitive_log_redaction_preserves_non_sensitive_text() -> None:
+    assert redact_sensitive_log_text(
+        "Existing login ready; xsec_source=feed"
+    ) == "Existing login ready; xsec_source=feed"
+    assert redact_sensitive_log_text(
+        "cookie='first=one; second=two'"
+    ) == "cookie=[REDACTED]"
 
 
 def test_worker_survives_stdout_line_beyond_stream_limit(
@@ -212,6 +288,7 @@ def test_worker_records_nonzero_exit(
     assert stored is not None
     assert stored["status"] == "failed"
     assert "7" in str(stored["error_message"])
+    assert "runner failed" in str(stored["error_message"])
 
 
 def test_worker_reports_waiting_login_then_resumes(
@@ -223,12 +300,14 @@ def test_worker_reports_waiting_login_then_resumes(
     runner.write_text(
         """
 import argparse
+import json
 import time
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--qrcode-path", required=True)
 parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
 args, _ = parser.parse_known_args()
 qrcode = Path(args.qrcode_path)
 qrcode.parent.mkdir(parents=True, exist_ok=True)
@@ -240,6 +319,12 @@ for _ in range(100):
         break
     time.sleep(0.05)
 print("Login successful then wait for redirect", flush=True)
+result_dir = Path(args.output_dir) / "bilibili" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    json.dumps({"video_id": "1"}) + "\\n",
+    encoding="utf-8",
+)
 """.strip(),
         encoding="utf-8",
     )
@@ -291,7 +376,12 @@ while True:
         enabled_platforms=("bili", "xhs", "dy"),
     )
     task = seed_task(repository, settings, platform="dy")
-    worker = CrawlerWorker(repository, settings, terminate_timeout_seconds=0.2)
+    worker = CrawlerWorker(
+        repository,
+        settings,
+        terminate_timeout_seconds=0.2,
+        registry=registry_with_douyin_search_enabled(),
+    )
 
     asyncio.run(asyncio.wait_for(worker.run_once(), timeout=3))
 
@@ -314,18 +404,26 @@ def test_worker_stops_douyin_startup_timeout_after_qrcode_is_ready(
     runner.write_text(
         """
 import argparse
+import json
 import time
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--qrcode-path", required=True)
 parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
 args, _ = parser.parse_known_args()
 qrcode = Path(args.qrcode_path)
 qrcode.parent.mkdir(parents=True, exist_ok=True)
 qrcode.write_bytes(b"fake png")
 time.sleep(0.15)
 print("Login successful then wait for redirect", flush=True)
+result_dir = Path(args.output_dir) / "douyin" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    json.dumps({"aweme_id": "1"}) + "\\n",
+    encoding="utf-8",
+)
 """.strip(),
         encoding="utf-8",
     )
@@ -337,7 +435,14 @@ print("Login successful then wait for redirect", flush=True)
     task = seed_task(repository, settings, platform="dy")
 
     asyncio.run(
-        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+        asyncio.wait_for(
+            CrawlerWorker(
+                repository,
+                settings,
+                registry=registry_with_douyin_search_enabled(),
+            ).run_once(),
+            timeout=3,
+        )
     )
 
     stored = repository.get(str(task["id"]))
@@ -353,21 +458,42 @@ def test_worker_stops_startup_timeout_after_persisted_login_is_detected(
     runner = tmp_path / "persisted_login_runner.py"
     runner.write_text(
         """
+import argparse
+import json
 import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
+args, _ = parser.parse_known_args()
 print("[MediaOps] Existing login state ready: dy", flush=True)
-time.sleep(0.15)
+time.sleep(0.3)
+result_dir = Path(args.output_dir) / "douyin" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    json.dumps({"aweme_id": "1"}) + "\\n",
+    encoding="utf-8",
+)
 """.strip(),
         encoding="utf-8",
     )
     settings = replace(
         worker_settings(test_settings, runner),
-        douyin_qrcode_startup_timeout_seconds=0.05,
+        douyin_qrcode_startup_timeout_seconds=0.2,
         enabled_platforms=("bili", "xhs", "dy"),
     )
     task = seed_task(repository, settings, platform="dy")
 
     asyncio.run(
-        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+        asyncio.wait_for(
+            CrawlerWorker(
+                repository,
+                settings,
+                registry=registry_with_douyin_search_enabled(),
+            ).run_once(),
+            timeout=3,
+        )
     )
 
     stored = repository.get(str(task["id"]))
@@ -418,8 +544,24 @@ def test_worker_does_not_apply_douyin_startup_timeout_to_other_platforms(
     runner = tmp_path / f"{platform}_slow_start_runner.py"
     runner.write_text(
         """
+import argparse
+import json
 import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", required=True)
+parser.add_argument("--platform", required=True)
+args, _ = parser.parse_known_args()
 time.sleep(0.1)
+store_names = {"bili": "bilibili", "xhs": "xhs"}
+id_names = {"bili": "video_id", "xhs": "note_id"}
+result_dir = Path(args.output_dir) / store_names[args.platform] / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    json.dumps({id_names[args.platform]: "1"}) + "\\n",
+    encoding="utf-8",
+)
 """.strip(),
         encoding="utf-8",
     )
@@ -484,7 +626,7 @@ def test_second_worker_lock_is_rejected(test_settings: Settings) -> None:
 
 
 @pytest.mark.parametrize(
-    "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
+    "platform", ["bili", "xhs", "zhihu", "wb", "tieba"]
 )
 def test_worker_command_uses_only_fixed_executables_and_service_flags(
     test_settings: Settings,
@@ -513,3 +655,20 @@ def test_worker_command_uses_only_fixed_executables_and_service_flags(
     assert command[command.index("--enable-comments") + 1] == "false"
     assert command[command.index("--enable-sub-comments") + 1] == "false"
     assert "--enable-proxy" not in command
+
+
+@pytest.mark.parametrize("platform", ["dy", "ks"])
+def test_worker_command_rejects_deferred_search_modes(
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+    platform: str,
+) -> None:
+    task = seed_task(repository, test_settings, platform=platform)
+    worker = CrawlerWorker(repository, test_settings)
+
+    with pytest.raises(ValueError, match="unavailable"):
+        worker._build_command(
+            task,
+            test_settings.output_root / "tasks" / str(task["id"]),
+            test_settings.qrcode_root / f"{task['id']}.png",
+        )

@@ -4,13 +4,16 @@ import argparse
 import asyncio
 import base64
 import importlib
+import json
 import os
 import runpy
 import shutil
 import sys
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 MEDIACRAWLER_ROOT = Path("/opt/mediacrawler")
@@ -48,6 +51,16 @@ LOGIN_STATE_CLIENTS = {
     "tieba": ("media_platform.tieba.client", "BaiduTieBaClient"),
     "ks": ("media_platform.kuaishou.client", "KuaiShouClient"),
 }
+NATIVE_CRAWLER_TYPES = {"search", "detail", "creator"}
+PLATFORM_STORAGE_DIRECTORIES = {
+    "bili": "bili",
+    "xhs": "xhs",
+    "dy": "douyin",
+    "zhihu": "zhihu",
+    "wb": "weibo",
+    "tieba": "tieba",
+    "ks": "kuaishou",
+}
 
 
 def parse_bool(value: str) -> bool:
@@ -75,15 +88,31 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--crawler-type",
         required=True,
-        choices=["search"],
+        choices=["search", "detail", "creator", "comments", "sub_comments"],
     )
-    parser.add_argument("--keywords", required=True)
+    parser.add_argument("--keywords")
+    parser.add_argument("--target-id", action="append", default=[])
+    parser.add_argument("--target-url", action="append", default=[])
+    parser.add_argument("--creator-id", action="append", default=[])
+    parser.add_argument("--creator-url", action="append", default=[])
+    parser.add_argument("--parent-content-id")
+    parser.add_argument("--parent-comment-id")
     parser.add_argument(
         "--login-type",
         required=True,
         choices=["qrcode"],
     )
     parser.add_argument("--requested-count", required=True, type=int)
+    parser.add_argument(
+        "--requested-comment-count",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--requested-sub-comment-count",
+        type=int,
+        default=0,
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--qrcode-path", required=True, type=Path)
     parser.add_argument("--max-concurrency-num", required=True, type=int)
@@ -101,10 +130,69 @@ def parse_arguments() -> argparse.Namespace:
         parser.error("--requested-count must be between 1 and 20")
     if args.max_concurrency_num != 1:
         parser.error("--max-concurrency-num must be 1")
-    if args.enable_comments:
-        parser.error("--enable-comments must be false")
+    if not 0 <= args.requested_comment_count <= 10:
+        parser.error("--requested-comment-count must be between 0 and 10")
+    if not 0 <= args.requested_sub_comment_count <= 5:
+        parser.error("--requested-sub-comment-count must be between 0 and 5")
+    if args.enable_comments != (args.crawler_type == "comments"):
+        parser.error(
+            "--enable-comments must be true only for comments mode"
+        )
     if args.enable_sub_comments:
         parser.error("--enable-sub-comments must be false")
+    content_targets = [
+        *args.target_id,
+        *args.target_url,
+        *([args.parent_content_id] if args.parent_content_id else []),
+    ]
+    creator_targets = [*args.creator_id, *args.creator_url]
+    if args.crawler_type == "search":
+        if not args.keywords or content_targets or creator_targets:
+            parser.error("search mode requires only --keywords")
+    elif args.crawler_type == "detail":
+        if not (args.target_id or args.target_url):
+            parser.error("detail mode requires --target-id or --target-url")
+        if len(args.target_id) + len(args.target_url) > args.requested_count:
+            parser.error(
+                "detail mode target count must not exceed --requested-count"
+            )
+    elif args.crawler_type == "creator":
+        if not creator_targets:
+            parser.error("creator mode requires --creator-id or --creator-url")
+        if len(creator_targets) > args.requested_count:
+            parser.error(
+                "creator mode target count must not exceed --requested-count"
+            )
+    elif args.crawler_type == "comments":
+        if len(content_targets) != 1 or not 1 <= args.requested_comment_count <= 10:
+            parser.error(
+                "comments mode requires one content target and a comment "
+                "count from 1 to 10"
+            )
+    elif (
+        len(content_targets) != 1
+        or not args.parent_comment_id
+        or not 1 <= args.requested_sub_comment_count <= 5
+    ):
+        parser.error(
+            "sub_comments mode requires one content target, "
+            "--parent-comment-id, and a sub-comment count from 1 to 5"
+        )
+    for target in (
+        *args.target_id,
+        *args.target_url,
+        *args.creator_id,
+        *args.creator_url,
+    ):
+        if not target.strip() or not target.isprintable() or len(target) > 2000:
+            parser.error("task targets must be printable and at most 2000 characters")
+    for identifier in (
+        *args.target_id,
+        *args.creator_id,
+        *([args.parent_content_id] if args.parent_content_id else []),
+    ):
+        if identifier.casefold().startswith(("http://", "https://")):
+            parser.error("HTTP targets must use a URL argument")
     args.output_dir = args.output_dir.expanduser().resolve()
     args.qrcode_path = args.qrcode_path.expanduser().resolve()
     output_tasks_root = (
@@ -708,6 +796,433 @@ def install_login_state_observer(platform: str) -> None:
     client_class.pong = create_login_state_observer(platform, client_class.pong)
 
 
+def _json_object(value: object) -> dict[str, object]:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(exclude_unset=True)
+    if not isinstance(value, dict):
+        raise TypeError("creator profile response is not an object")
+    serialized = json.dumps(value, ensure_ascii=False, default=str)
+    parsed = json.loads(serialized)
+    if not isinstance(parsed, dict):
+        raise TypeError("creator profile response is not JSON-compatible")
+    return parsed
+
+
+def _creator_target_identity(args: argparse.Namespace, target: str) -> str:
+    if target in args.creator_id:
+        return target
+    parsed = urlparse(target)
+    query = parse_qs(parsed.query)
+    if args.platform == "tieba" and query.get("id"):
+        return query["id"][0]
+    path_identity = parsed.path.rstrip("/").split("/")[-1]
+    return path_identity or target
+
+
+def _nested_profile_value(
+    profile: dict[str, object],
+    *paths: tuple[str, ...],
+) -> object | None:
+    for path in paths:
+        current: object = profile
+        for part in path:
+            if not isinstance(current, dict) or part not in current:
+                break
+            current = current[part]
+        else:
+            if current is not None and current != "":
+                return current
+    return None
+
+
+def _interaction_metric(
+    profile: dict[str, object],
+    *names: str,
+) -> object | None:
+    interactions = _nested_profile_value(
+        profile,
+        ("interactions",),
+        ("interaction_info",),
+    )
+    if not isinstance(interactions, list):
+        return None
+    normalized_names = {name.casefold() for name in names}
+    for item in interactions:
+        if not isinstance(item, dict):
+            continue
+        metric_name = str(
+            item.get("type")
+            or item.get("name")
+            or item.get("key")
+            or ""
+        ).casefold()
+        if metric_name not in normalized_names:
+            continue
+        value = item.get("count")
+        if value is None:
+            value = item.get("value")
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def sanitize_creator_profile(
+    args: argparse.Namespace,
+    *,
+    target: str,
+    profile: object,
+) -> dict[str, object]:
+    """Keep only MediaCrawler teaching edition privacy-safe creator fields."""
+    from tools.user_hash import anonymize_user_id, mask_nickname
+
+    raw = _json_object(profile)
+    source_creator_id = _nested_profile_value(raw, ("creator_hash",))
+    if source_creator_id is None:
+        source_creator_id = anonymize_user_id(
+            _creator_target_identity(args, target)
+        )
+    else:
+        source_creator_id = str(source_creator_id)
+    if not source_creator_id:
+        raise RuntimeError("creator profile has no privacy-safe identity")
+
+    nickname = _nested_profile_value(
+        raw,
+        ("user_nickname",),
+        ("nickname",),
+        ("name",),
+        ("screen_name",),
+        ("user_name",),
+        ("basicInfo", "nickname"),
+        ("basic_info", "nickname"),
+        ("profile", "user_name"),
+    )
+    followers = _nested_profile_value(
+        raw,
+        ("fans",),
+        ("follower_count",),
+        ("followers_count",),
+        ("ownerCount", "fan"),
+        ("owner_count", "fan"),
+    )
+    if followers is None:
+        followers = _interaction_metric(raw, "fans", "followers")
+    following = _nested_profile_value(
+        raw,
+        ("follows",),
+        ("following_count",),
+        ("follow_count",),
+        ("ownerCount", "follow"),
+        ("owner_count", "follow"),
+    )
+    if following is None:
+        following = _interaction_metric(raw, "follows", "following")
+    content_count = _nested_profile_value(
+        raw,
+        ("content_count",),
+        ("notes",),
+        ("statuses_count",),
+        ("ownerCount", "photo"),
+        ("owner_count", "photo"),
+    )
+
+    sanitized: dict[str, object] = {
+        "_mediaops_source_creator_id": source_creator_id,
+        "creator_hash": source_creator_id,
+    }
+    if nickname is not None:
+        sanitized["user_nickname"] = mask_nickname(nickname)
+    if followers is not None:
+        sanitized["fans"] = followers
+    if following is not None:
+        sanitized["follows"] = following
+    if content_count is not None:
+        sanitized["content_count"] = content_count
+
+    for field in (
+        "anwser_count",
+        "video_count",
+        "question_count",
+        "article_count",
+        "column_count",
+        "get_voteup_count",
+        "registration_duration",
+    ):
+        value = raw.get(field)
+        if value is not None and value != "":
+            sanitized[field] = value
+    return sanitized
+
+
+def _creator_output_path(args: argparse.Namespace) -> Path:
+    storage_directory = PLATFORM_STORAGE_DIRECTORIES[args.platform]
+    jsonl_root = args.output_dir / storage_directory / "jsonl"
+    jsonl_root.mkdir(parents=True, exist_ok=True)
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    return jsonl_root / f"creator_creators_{date}.jsonl"
+
+
+def capture_creator_profile(
+    args: argparse.Namespace,
+    *,
+    target: str,
+    profile: object,
+) -> None:
+    payload = sanitize_creator_profile(
+        args,
+        target=target,
+        profile=profile,
+    )
+    with _creator_output_path(args).open("a", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n")
+
+
+def install_creator_mode_patch(args: argparse.Namespace) -> None:
+    """Collect one bounded public profile per requested creator target."""
+    if args.crawler_type != "creator":
+        return
+    targets = [*args.creator_id, *args.creator_url]
+
+    if args.platform == "bili":
+        from media_platform.bilibili.core import BilibiliCrawler
+
+        async def get_creator_profile_only(crawler: object, creator_id: int) -> None:
+            profile = await crawler.bili_client.get_creator_info(creator_id)
+            capture_creator_profile(args, target=str(creator_id), profile=profile)
+
+        BilibiliCrawler.get_creator_videos = get_creator_profile_only
+        return
+
+    if args.platform == "xhs":
+        from media_platform.xhs.core import XiaoHongShuCrawler
+        from media_platform.xhs.help import parse_creator_info_from_url
+
+        async def get_xhs_creator_profiles(crawler: object) -> None:
+            for target in targets:
+                creator = parse_creator_info_from_url(target)
+                profile = await crawler.xhs_client.get_creator_info(
+                    user_id=creator.user_id,
+                    xsec_token=creator.xsec_token,
+                    xsec_source=creator.xsec_source,
+                )
+                capture_creator_profile(args, target=target, profile=profile)
+
+        XiaoHongShuCrawler.get_creators_and_notes = get_xhs_creator_profiles
+        return
+
+    if args.platform == "zhihu":
+        from media_platform.zhihu.core import ZhihuCrawler
+
+        async def get_zhihu_creator_profiles(crawler: object) -> None:
+            for target in targets:
+                token = urlparse(target).path.rstrip("/").split("/")[-1]
+                profile = await crawler.zhihu_client.get_creator_info(
+                    url_token=token
+                )
+                if profile is None:
+                    raise RuntimeError("Zhihu creator profile was not found")
+                capture_creator_profile(args, target=target, profile=profile)
+
+        ZhihuCrawler.get_creators_and_notes = get_zhihu_creator_profiles
+        return
+
+    if args.platform == "wb":
+        from media_platform.weibo.core import WeiboCrawler
+
+        async def get_weibo_creator_profiles(crawler: object) -> None:
+            for target in targets:
+                creator_id = _creator_target_identity(args, target)
+                response = await crawler.wb_client.get_creator_info_by_id(
+                    creator_id=creator_id
+                )
+                profile = response.get("userInfo") if isinstance(response, dict) else None
+                if not profile:
+                    raise RuntimeError("Weibo creator profile was not found")
+                capture_creator_profile(args, target=target, profile=profile)
+
+        WeiboCrawler.get_creators_and_notes = get_weibo_creator_profiles
+        return
+
+    if args.platform == "tieba":
+        from media_platform.tieba.core import TieBaCrawler
+
+        async def get_tieba_creator_profiles(crawler: object) -> None:
+            for target in targets:
+                creator_url = (
+                    target
+                    if target in args.creator_url
+                    else f"https://tieba.baidu.com/home/main?id={target}"
+                )
+                profile = await crawler.tieba_client.get_creator_info_by_url(
+                    creator_url=creator_url
+                )
+                if profile is None:
+                    raise RuntimeError("Tieba creator profile was not found")
+                capture_creator_profile(args, target=target, profile=profile)
+
+        TieBaCrawler.get_creators_and_notes = get_tieba_creator_profiles
+        return
+
+    if args.platform == "ks":
+        from media_platform.kuaishou.core import KuaiShouCrawler
+
+        async def get_kuaishou_creator_profiles(crawler: object) -> None:
+            for target in targets:
+                creator_id = _creator_target_identity(args, target)
+                profile = await crawler.ks_client.get_creator_info(
+                    user_id=creator_id
+                )
+                if not profile:
+                    raise RuntimeError("Kuaishou creator profile was not found")
+                capture_creator_profile(args, target=target, profile=profile)
+
+        KuaiShouCrawler.get_creators_and_videos = get_kuaishou_creator_profiles
+
+
+def _content_target(args: argparse.Namespace) -> str:
+    targets = [
+        *args.target_id,
+        *args.target_url,
+        *([args.parent_content_id] if args.parent_content_id else []),
+    ]
+    if len(targets) != 1:
+        raise RuntimeError("standalone comment mode requires one content target")
+    return targets[0]
+
+
+def upstream_content_targets(args: argparse.Namespace) -> list[str]:
+    targets = [
+        *args.target_id,
+        *args.target_url,
+        *([args.parent_content_id] if args.parent_content_id else []),
+    ]
+    if args.platform != "wb":
+        return targets
+    normalized: list[str] = []
+    for target in targets:
+        if target in args.target_url:
+            note_id = urlparse(target).path.rstrip("/").split("/")[-1]
+            if not note_id:
+                raise RuntimeError("Weibo target URL does not contain a note ID")
+            normalized.append(note_id)
+        else:
+            normalized.append(target)
+    return normalized
+
+
+def install_sub_comment_mode_patch(args: argparse.Namespace) -> None:
+    """Use only bounded direct client APIs for standalone sub-comments."""
+    if args.crawler_type != "sub_comments":
+        return
+    target = _content_target(args)
+    parent_comment_id = args.parent_comment_id
+    maximum = args.requested_sub_comment_count
+    if parent_comment_id is None:
+        raise RuntimeError("sub-comment mode is missing its parent comment ID")
+
+    if args.platform == "bili":
+        from media_platform.bilibili.core import BilibiliCrawler
+        from media_platform.bilibili.field import CommentOrderType
+        from media_platform.bilibili.help import parse_video_info_from_url
+        from store import bilibili as bilibili_store
+
+        async def get_bilibili_sub_comments(
+            crawler: object,
+            _: object,
+        ) -> None:
+            video_id = parse_video_info_from_url(target).video_id
+            result = await crawler.bili_client.get_video_level_two_comments(
+                video_id,
+                int(parent_comment_id),
+                1,
+                maximum,
+                CommentOrderType.DEFAULT,
+            )
+            comments = result.get("replies", []) if isinstance(result, dict) else []
+            await bilibili_store.batch_update_bilibili_video_comments(
+                video_id,
+                comments[:maximum],
+            )
+
+        BilibiliCrawler.get_specified_videos = get_bilibili_sub_comments
+        return
+
+    if args.platform == "xhs":
+        from media_platform.xhs.core import XiaoHongShuCrawler
+        from media_platform.xhs.help import parse_note_info_from_note_url
+        from store import xhs as xhs_store
+
+        async def get_xhs_sub_comments(crawler: object) -> None:
+            note = parse_note_info_from_note_url(target)
+            result = await crawler.xhs_client.get_note_sub_comments(
+                note.note_id,
+                parent_comment_id,
+                note.xsec_token,
+                num=maximum,
+            )
+            comments = result.get("comments", []) if isinstance(result, dict) else []
+            await xhs_store.batch_update_xhs_note_comments(
+                note.note_id,
+                comments[:maximum],
+            )
+
+        XiaoHongShuCrawler.get_specified_notes = get_xhs_sub_comments
+        return
+
+    if args.platform == "zhihu":
+        from media_platform.zhihu.core import ZhihuCrawler
+        from store import zhihu as zhihu_store
+
+        async def get_zhihu_sub_comments(crawler: object) -> None:
+            content = await crawler.get_note_detail(
+                full_note_url=target,
+                semaphore=asyncio.Semaphore(1),
+            )
+            if content is None:
+                raise RuntimeError("Zhihu content context was not found")
+            result = await crawler.zhihu_client.get_child_comments(
+                parent_comment_id,
+                limit=maximum,
+            )
+            comments = crawler.zhihu_client._extractor.extract_comments(
+                content,
+                result.get("data", []) if isinstance(result, dict) else [],
+            )
+            await zhihu_store.batch_update_zhihu_note_comments(
+                comments[:maximum]
+            )
+
+        ZhihuCrawler.get_specified_notes = get_zhihu_sub_comments
+        return
+
+    if args.platform == "ks":
+        from media_platform.kuaishou.core import KuaiShouCrawler
+        from media_platform.kuaishou.help import parse_video_info_from_url
+        from store import kuaishou as kuaishou_store
+
+        async def get_kuaishou_sub_comments(crawler: object) -> None:
+            video_id = parse_video_info_from_url(target).video_id
+            result = await crawler.ks_client.get_video_sub_comments(
+                video_id,
+                int(parent_comment_id),
+            )
+            comments = (
+                result.get("subCommentsV2", []) if isinstance(result, dict) else []
+            )
+            await kuaishou_store.batch_update_ks_video_comments(
+                video_id,
+                comments[:maximum],
+            )
+
+        KuaiShouCrawler.get_specified_videos = get_kuaishou_sub_comments
+        return
+
+    raise RuntimeError(
+        f"standalone sub-comments are unavailable for platform {args.platform}"
+    )
+
+
 def main() -> None:
     args = parse_arguments()
     ensure_virtual_display(args.headless)
@@ -731,7 +1246,10 @@ def main() -> None:
     config.CDP_HEADLESS = args.headless
     config.MAX_CONCURRENCY_NUM = 1
     config.CRAWLER_MAX_NOTES_COUNT = args.requested_count
-    config.ENABLE_GET_COMMENTS = False
+    config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = (
+        args.requested_comment_count
+    )
+    config.ENABLE_GET_COMMENTS = args.crawler_type == "comments"
     config.ENABLE_GET_SUB_COMMENTS = False
     config.ENABLE_IP_PROXY = False
     if hasattr(config, "ENABLE_GET_MEDIAS"):
@@ -772,14 +1290,17 @@ def main() -> None:
 
     crawler_utils.show_qrcode = save_qrcode
     install_login_state_observer(args.platform)
+    upstream_type = (
+        args.crawler_type
+        if args.crawler_type in NATIVE_CRAWLER_TYPES
+        else "detail"
+    )
     sys.argv = [
         str(MEDIACRAWLER_ROOT / "main.py"),
         "--platform",
         args.platform,
         "--type",
-        args.crawler_type,
-        "--keywords",
-        args.keywords,
+        upstream_type,
         "--lt",
         args.login_type,
         "--crawler_max_notes_count",
@@ -787,9 +1308,11 @@ def main() -> None:
         "--max_concurrency_num",
         "1",
         "--get_comment",
-        "false",
+        "true" if args.crawler_type == "comments" else "false",
         "--get_sub_comment",
         "false",
+        "--max_comments_count_singlenotes",
+        str(args.requested_comment_count),
         "--enable_ip_proxy",
         "false",
         "--headless",
@@ -799,6 +1322,16 @@ def main() -> None:
         "--save_data_path",
         str(args.output_dir),
     ]
+    if args.keywords:
+        sys.argv.extend(["--keywords", args.keywords])
+    content_targets = upstream_content_targets(args)
+    if content_targets:
+        sys.argv.extend(["--specified_id", ",".join(content_targets)])
+    creator_targets = [*args.creator_id, *args.creator_url]
+    if creator_targets:
+        sys.argv.extend(["--creator_id", ",".join(creator_targets)])
+        if args.platform == "zhihu":
+            config.ZHIHU_CREATOR_URL_LIST = creator_targets
     if args.platform == "dy":
         install_douyin_navigation_retry()
     if args.platform == "wb":
@@ -807,7 +1340,10 @@ def main() -> None:
         install_tieba_runtime_patch()
     if args.platform == "ks":
         install_kuaishou_qrcode_entry_patch()
-        install_kuaishou_search_guard()
+        if args.crawler_type == "search":
+            install_kuaishou_search_guard()
+    install_creator_mode_patch(args)
+    install_sub_comment_mode_patch(args)
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

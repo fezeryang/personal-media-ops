@@ -18,11 +18,17 @@ import { Badge } from "./ui/badge";
 const enabledNavigation = [
   { label: "总览", to: "/", icon: LayoutDashboard, end: true },
   { label: "采集中心", to: "/crawler/tasks", icon: Radar, end: false },
+  { label: "内容资料库", to: "/library", icon: Database, end: false },
+  {
+    label: "能力矩阵",
+    to: "/crawler/capabilities",
+    icon: Activity,
+    end: false,
+  },
 ];
 
 const upcomingNavigation = [
   { label: "今日情报", icon: Compass },
-  { label: "内容资料库", icon: Database },
   { label: "选题与创作", icon: BookOpen },
   { label: "账号观察", icon: Eye },
   { label: "Agent 状态", icon: Bot },

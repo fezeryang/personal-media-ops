@@ -35,7 +35,9 @@ export function TasksPage() {
     });
   }, [platform, search, status, tasksQuery.data]);
   const enabledPlatformNames = (
-    capabilitiesQuery.data?.platforms.filter((platform) => platform.enabled) ??
+    capabilitiesQuery.data?.platforms.filter((platform) =>
+      platform.modes.some((mode) => mode.enabled),
+    ) ??
     []
   ).map((platform) => platform.display_name);
 
@@ -44,7 +46,7 @@ export function TasksPage() {
       <PageHeader
         eyebrow="Crawler operations"
         title="采集中心"
-        description={`创建并管理${enabledPlatformNames.length ? enabledPlatformNames.join("、") : "已启用平台"}关键词采集任务。服务器采用单任务串行执行。`}
+        description={`创建并管理${enabledPlatformNames.length ? enabledPlatformNames.join("、") : "已启用平台"}的搜索、详情、创作者与评论任务。服务器采用单任务串行执行。`}
         action={<CreateTaskDialog />}
       />
 

@@ -5,22 +5,36 @@ import {
   filterCrawlerTasks,
   getEngineState,
   isActiveTask,
+  modeCapabilityStatusLabel,
   platformIconLabel,
   platformLoginPrompt,
   platformDisplayName,
+  taskPrimaryLabel,
   taskStatusLabel,
 } from "./task";
-import type { CrawlerTask } from "../../../api/crawler";
+import type {
+  CrawlerPlatformCapability,
+  CrawlerTask,
+} from "../../../api/crawler";
 
 const baseTask: CrawlerTask = {
   id: "task-1",
   platform: "bili",
+  mode: "search",
   crawler_type: "search",
   keywords: "AI Agent",
+  target_ids: [],
+  target_urls: [],
+  creator_ids: [],
+  creator_urls: [],
+  parent_content_id: null,
+  parent_comment_id: null,
   login_type: "qrcode",
   status: "pending",
   requested_count: 20,
   actual_count: 0,
+  requested_comment_count: 0,
+  requested_sub_comment_count: 0,
   output_dir: "/private/output",
   log_path: "/private/log",
   qrcode_path: "/private/qr",
@@ -92,9 +106,28 @@ describe("crawler task helpers", () => {
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
-      supports_comments: false,
-      supports_sub_comments: false,
-    };
+      supports_comments: true,
+      supports_sub_comments: true,
+      modes: ([
+        "search",
+        "detail",
+        "creator",
+        "comments",
+        "sub_comments",
+      ] as const).map((mode) => ({
+        mode,
+        label: mode,
+        status: "enabled" as const,
+        enabled: true,
+        reason: null,
+        input_fields: [],
+        requested_count: { minimum: 1, maximum: 20, default: 1 },
+        requested_comment_count: null,
+        requested_sub_comment_count: null,
+        requires_browser: true,
+        login_type: "qrcode" as const,
+      })),
+    } satisfies CrawlerPlatformCapability;
 
     expect(platformDisplayName("xhs", [capability])).toBe("小红书");
     expect(platformIconLabel("xhs", [capability])).toBe("红");
@@ -117,6 +150,7 @@ describe("crawler task helpers", () => {
         verification_status: "production_verified",
         availability_status: "disabled",
         enabled: false,
+        modes: [],
       }),
     ).toBe("（已生产验证，未启用）");
     expect(
@@ -124,8 +158,98 @@ describe("crawler task helpers", () => {
         verification_status: "code_ready",
         availability_status: "deferred_resource_constrained",
         enabled: false,
+        modes: [],
       }),
     ).toBe("（资源限制，暂不可用）");
+    expect(
+      capabilityStatusLabel({
+        verification_status: "not_implemented",
+        availability_status: "disabled",
+        enabled: false,
+        modes: [],
+      }),
+    ).toBe("（尚未实现）");
+    expect(
+      capabilityStatusLabel({
+        verification_status: "code_ready",
+        availability_status: "disabled",
+        enabled: false,
+        modes: [],
+      }),
+    ).toBe("（代码就绪，未启用）");
+    expect(
+      capabilityStatusLabel({
+        verification_status: "production_verified",
+        availability_status: "enabled",
+        enabled: true,
+        modes: [],
+      }),
+    ).toBe("（已生产验证）");
+    expect(
+      capabilityStatusLabel({
+        verification_status: "code_ready",
+        availability_status: "deferred_upstream_breakage",
+        enabled: false,
+        modes: [
+          {
+            mode: "detail",
+            label: "内容详情",
+            status: "enabled",
+            enabled: true,
+            reason: null,
+            input_fields: ["target_ids"],
+            requested_count: { minimum: 1, maximum: 20, default: 1 },
+            requested_comment_count: null,
+            requested_sub_comment_count: null,
+            requires_browser: true,
+            login_type: "qrcode",
+          },
+        ],
+      }),
+    ).toBe("（部分模式已启用）");
+  });
+
+  it("labels every mode-level capability state accurately", () => {
+    expect(
+      modeCapabilityStatusLabel({
+        status: "production_verified",
+        enabled: true,
+      }),
+    ).toBe("（已生产验证）");
+    expect(
+      modeCapabilityStatusLabel({ status: "enabled", enabled: true }),
+    ).toBe("（代码就绪，已启用）");
+    expect(
+      modeCapabilityStatusLabel({ status: "enabled", enabled: false }),
+    ).toBe("（已启用）");
+    expect(
+      modeCapabilityStatusLabel({
+        status: "deferred_platform_change",
+        enabled: false,
+      }),
+    ).toBe("（平台变化）");
+  });
+
+  it("chooses a useful primary label for every task mode", () => {
+    expect(taskPrimaryLabel(baseTask)).toBe("AI Agent");
+    expect(
+      taskPrimaryLabel({
+        ...baseTask,
+        mode: "detail",
+        crawler_type: "detail",
+        keywords: null,
+        target_urls: ["https://example.test/content"],
+      }),
+    ).toBe("https://example.test/content");
+    expect(
+      taskPrimaryLabel({
+        ...baseTask,
+        mode: "sub_comments",
+        crawler_type: "sub_comments",
+        keywords: null,
+        parent_comment_id: "comment-42",
+      }),
+    ).toBe("comment-42");
   });
 
   it("filters tasks by platform, status, and search text", () => {

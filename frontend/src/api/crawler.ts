@@ -11,15 +11,32 @@ export const crawlerTaskStatusSchema = z.enum([
   "cancelled",
 ]);
 
+export const crawlerTaskModeSchema = z.enum([
+  "search",
+  "detail",
+  "creator",
+  "comments",
+  "sub_comments",
+]);
+
 export const crawlerTaskSchema = z.object({
   id: z.string(),
   platform: z.string(),
-  crawler_type: z.string(),
-  keywords: z.string(),
+  mode: crawlerTaskModeSchema,
+  crawler_type: crawlerTaskModeSchema,
+  keywords: z.string().nullable(),
+  target_ids: z.array(z.string()),
+  target_urls: z.array(z.string()),
+  creator_ids: z.array(z.string()),
+  creator_urls: z.array(z.string()),
+  parent_content_id: z.string().nullable(),
+  parent_comment_id: z.string().nullable(),
   login_type: z.string(),
   status: crawlerTaskStatusSchema,
   requested_count: z.number().int(),
   actual_count: z.number().int(),
+  requested_comment_count: z.number().int().nonnegative(),
+  requested_sub_comment_count: z.number().int().nonnegative(),
   output_dir: z.string(),
   log_path: z.string(),
   qrcode_path: z.string(),
@@ -38,6 +55,38 @@ const capabilityOptionSchema = z.object({
   label: z.string(),
 });
 
+export const crawlerModeStatusSchema = z.enum([
+  "not_implemented",
+  "code_ready",
+  "enabled",
+  "production_verified",
+  "deferred_resource_constrained",
+  "deferred_upstream_breakage",
+  "deferred_login_required",
+  "deferred_platform_change",
+  "disabled",
+]);
+
+const requestedCountCapabilitySchema = z.object({
+  minimum: z.number().int().positive(),
+  maximum: z.number().int().positive(),
+  default: z.number().int().nonnegative(),
+});
+
+export const crawlerModeCapabilitySchema = z.object({
+  mode: crawlerTaskModeSchema,
+  label: z.string(),
+  status: crawlerModeStatusSchema,
+  enabled: z.boolean(),
+  reason: z.string().nullable(),
+  input_fields: z.array(z.string()),
+  requested_count: requestedCountCapabilitySchema,
+  requested_comment_count: requestedCountCapabilitySchema.nullable(),
+  requested_sub_comment_count: requestedCountCapabilitySchema.nullable(),
+  requires_browser: z.boolean(),
+  login_type: z.literal("qrcode"),
+});
+
 export const crawlerPlatformCapabilitySchema = z.object({
   platform: z.string(),
   display_name: z.string(),
@@ -54,17 +103,15 @@ export const crawlerPlatformCapabilitySchema = z.object({
     "deferred_resource_constrained",
     "deferred_upstream_breakage",
     "deferred_login_required",
+    "deferred_platform_change",
   ]),
   login_prompt: z.string().min(1),
   crawler_types: z.array(capabilityOptionSchema).min(1),
   login_types: z.array(capabilityOptionSchema).min(1),
-  requested_count: z.object({
-    minimum: z.number().int().positive(),
-    maximum: z.number().int().positive(),
-    default: z.number().int().positive(),
-  }),
+  requested_count: requestedCountCapabilitySchema,
   supports_comments: z.boolean(),
   supports_sub_comments: z.boolean(),
+  modes: z.array(crawlerModeCapabilitySchema).length(5),
 });
 
 const crawlerCapabilitiesSchema = z.object({
@@ -116,7 +163,12 @@ const crawlerResultsSchema = z.object({
 });
 
 export type CrawlerTaskStatus = z.infer<typeof crawlerTaskStatusSchema>;
+export type CrawlerTaskMode = z.infer<typeof crawlerTaskModeSchema>;
+export type CrawlerModeStatus = z.infer<typeof crawlerModeStatusSchema>;
 export type CrawlerTask = z.infer<typeof crawlerTaskSchema>;
+export type CrawlerModeCapability = z.infer<
+  typeof crawlerModeCapabilitySchema
+>;
 export type CrawlerPlatformCapability = z.infer<
   typeof crawlerPlatformCapabilitySchema
 >;
@@ -126,9 +178,17 @@ export type CrawlerResults = z.infer<typeof crawlerResultsSchema>;
 
 export interface CreateCrawlerTaskInput {
   platform: string;
-  crawler_type: string;
-  keywords: string;
+  mode: CrawlerTaskMode;
+  keywords?: string;
+  target_ids?: string[];
+  target_urls?: string[];
+  creator_ids?: string[];
+  creator_urls?: string[];
+  parent_content_id?: string;
+  parent_comment_id?: string;
   requested_count: number;
+  requested_comment_count?: number;
+  requested_sub_comment_count?: number;
 }
 
 export function getCrawlerCapabilities(

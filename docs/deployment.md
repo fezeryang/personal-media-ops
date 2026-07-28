@@ -81,8 +81,11 @@ MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db \
 `0002_multiplatform_tasks` 将平台约束扩展为 `bili/xhs/dy`，逐列复制原记录，因此
 B 站任务 ID、状态、时间、计数和路径保持不变。`0003_remaining_platforms` 再将
 约束扩展为 `bili/xhs/dy/zhihu/wb/tieba/ks`，同样逐列复制全部记录，不读取或改写
-JSONL。存在四个新平台记录时，`0003` downgrade 会拒绝执行，避免隐式丢失。应用启动
-只校验当前 revision，不会静默执行迁移。
+JSONL。`0004_content_modes` 保留原任务列和记录，增加五模式目标与限量字段；
+`0005_library_entities` 新增内容、创作者、评论、内容创作者关系和任务实体溯源表。
+唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
+资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
+revision，不会静默执行迁移。
 
 生产迁移顺序固定为：确认无未审查变更 → SQLite 一致性备份 → 拉取目标代码 → 测试与
 前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查。数据库恢复属于
@@ -114,17 +117,28 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 
 ```text
 --platform bili|xhs|dy|zhihu|wb|tieba|ks
---crawler-type search
---keywords <text>
+--crawler-type search|detail|creator|comments|sub_comments
+--keywords <text>                          # search
+--target-id/--target-url <value>           # detail/comments/sub_comments
+--creator-id/--creator-url <value>         # creator
+--parent-content-id <value>                # comments/sub_comments alternative
+--parent-comment-id <value>                # sub_comments
 --login-type qrcode
 --requested-count <1..20>
+--requested-comment-count <0..10>
+--requested-sub-comment-count <0..5>
 --output-dir <generated task directory>
 --qrcode-path <generated PNG path>
 --max-concurrency-num 1
---enable-comments false
+--enable-comments true|false
 --enable-sub-comments false
 --headless true|false
 ```
+
+`--enable-comments` 只允许在显式 `comments` 模式为 `true`；Runner 永远拒绝
+`--enable-sub-comments true`，避免上游递归抓取全部回复。独立二级评论只通过已审计的
+平台定向、可限量 client seam 执行。成功状态还要求输出发现、JSONL 解析、标准化、
+幂等资料库写入和任务溯源同一事务完成；非零或异常空结果都不得伪装为成功。
 
 `--headless` 由 Adapter 的平台能力决定，不由 API 调用方传入：除抖音外当前平台为
 `true`，抖音为 `false`。抖音站点会对无头浏览器返回“验证码中间页”，登录按钮不会出现，

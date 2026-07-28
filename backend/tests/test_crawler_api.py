@@ -89,15 +89,25 @@ def test_create_supports_each_configured_remaining_platform(
     with TestClient(create_app(enabled)) as client:
         created = [
             create_task(client, platform=platform)
-            for platform in ("zhihu", "wb", "tieba", "ks")
+            for platform in ("zhihu", "wb", "tieba")
         ]
+        kuaishou = client.post(
+            "/api/crawler/tasks",
+            json={
+                "platform": "ks",
+                "crawler_type": "search",
+                "keywords": "AI Agent",
+                "requested_count": 3,
+            },
+        )
 
     assert [task["platform"] for task in created] == [
         "zhihu",
         "wb",
         "tieba",
-        "ks",
     ]
+    assert kuaishou.status_code == 409
+    assert "deferred_upstream_breakage" in kuaishou.json()["detail"]
 
 
 def test_create_rejects_disabled_platform(

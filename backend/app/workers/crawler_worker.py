@@ -1,6 +1,7 @@
 import asyncio
 import fcntl
 import os
+import re
 import signal
 from pathlib import Path
 from types import TracebackType
@@ -9,10 +10,20 @@ from typing import Any, Literal, Self
 from app.core.config import Settings, settings
 from app.crawler.adapters import CrawlerPlatformAdapter
 from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
-from app.crawler.results import count_normalized_results
+from app.crawler.results import parse_task_entities
+from app.models.crawler_platform import TaskMode
 from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.library import LibraryRepository
 
 STREAM_READER_LIMIT_BYTES = 1024 * 1024
+SENSITIVE_LOG_ASSIGNMENT = re.compile(
+    r"(?i)\b("
+    r"xsec_token|access_token|refresh_token|token|signature"
+    r")\b(\s*[:=]\s*)([\"']?)([^&\s,\"'}]+)([\"']?)"
+)
+SENSITIVE_LOG_HEADER = re.compile(
+    r"(?i)\b(cookie|authorization)\b(\s*[:=]\s*)[^\r\n]*"
+)
 StreamProcessOutcome = Literal[
     "completed",
     "cancelled",
@@ -24,6 +35,17 @@ StreamProcessResult = tuple[StreamProcessOutcome, str | None]
 
 class WorkerAlreadyRunning(RuntimeError):
     pass
+
+
+def redact_sensitive_log_text(value: str) -> str:
+    redacted = SENSITIVE_LOG_HEADER.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        value,
+    )
+    return SENSITIVE_LOG_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        redacted,
+    )
 
 
 class WorkerLock:
@@ -70,11 +92,15 @@ class CrawlerWorker:
         *,
         terminate_timeout_seconds: float = 5,
         registry: CrawlerPlatformRegistry = platform_registry,
+        library_repository: LibraryRepository | None = None,
     ) -> None:
         self.repository = repository
         self.settings = config
         self.terminate_timeout_seconds = terminate_timeout_seconds
         self.registry = registry
+        self.library_repository = library_repository or LibraryRepository(
+            config.database_path
+        )
 
     async def run_forever(self) -> None:
         self.registry.list_capabilities(self.settings.enabled_platforms)
@@ -95,14 +121,16 @@ class CrawlerWorker:
 
     async def _execute(self, task: dict[str, Any]) -> None:
         task_id = str(task["id"])
+        adapter: CrawlerPlatformAdapter | None = None
         try:
             output_dir, log_path, qrcode_path = self._validated_paths(task)
             output_dir.mkdir(parents=True, exist_ok=True)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             qrcode_path.parent.mkdir(parents=True, exist_ok=True)
 
-            adapter = self.registry.require_enabled(
+            adapter = self.registry.require_mode_enabled(
                 str(task["platform"]),
+                str(task["crawler_type"]),
                 self.settings.enabled_platforms,
             )
             command = self._build_command(task, output_dir, qrcode_path)
@@ -148,23 +176,37 @@ class CrawlerWorker:
                 return
 
             if return_code == 0:
-                self.repository.complete_success(
-                    task_id,
-                    count_normalized_results(
-                        adapter,
-                        output_dir,
-                        int(task["requested_count"]),
+                mode: TaskMode = str(task["crawler_type"])
+                batch = parse_task_entities(
+                    adapter=adapter,
+                    task_dir=output_dir,
+                    mode=mode,
+                    requested_count=int(task["requested_count"]),
+                    requested_comment_count=int(task["requested_comment_count"]),
+                    requested_sub_comment_count=int(
+                        task["requested_sub_comment_count"]
                     ),
                 )
+                self.library_repository.ingest_task(task_id=task_id, batch=batch)
             else:
+                failure = f"MediaCrawler exited with code {return_code}"
+                if stream_detail:
+                    failure = f"{failure}: {stream_detail}"
                 self.repository.complete_failure(
                     task_id,
-                    f"MediaCrawler exited with code {return_code}",
+                    adapter.classify_failure(
+                        redact_sensitive_log_text(failure)
+                    ),
                 )
         except Exception as error:  # noqa: BLE001 - persist worker boundary failures
+            failure = redact_sensitive_log_text(
+                f"Crawler execution failed: {error}"
+            )
+            if adapter is not None:
+                failure = adapter.classify_failure(failure)
             self.repository.complete_failure(
                 task_id,
-                f"Crawler execution failed: {error}",
+                failure,
             )
 
     def _validated_paths(
@@ -198,8 +240,7 @@ class CrawlerWorker:
             str(self.settings.mediacrawler_python),
             str(self.settings.mediacrawler_runner),
             *adapter.build_runner_arguments(
-                keywords=str(task["keywords"]),
-                requested_count=int(task["requested_count"]),
+                task=task,
                 output_dir=output_dir,
                 qrcode_path=qrcode_path,
             ),
@@ -252,6 +293,7 @@ class CrawlerWorker:
         waiting_for_login = False
         qrcode_seen = False
         login_ready = False
+        last_output_line: str | None = None
         startup_started_at = asyncio.get_running_loop().time()
         with log_path.open("ab", buffering=0) as log_handle:
             while True:
@@ -285,9 +327,14 @@ class CrawlerWorker:
                     continue
 
                 if line:
-                    log_handle.write(line)
+                    decoded_line = line.decode("utf-8", errors="replace")
+                    safe_line = redact_sensitive_log_text(decoded_line)
+                    log_handle.write(safe_line.encode("utf-8"))
+                    stripped_line = safe_line.strip()
+                    if stripped_line:
+                        last_output_line = stripped_line[-1000:]
                     login_signal = adapter.classify_login_line(
-                        line.decode("utf-8", errors="replace")
+                        decoded_line
                     )
                     if login_signal == "success":
                         login_ready = True
@@ -311,7 +358,7 @@ class CrawlerWorker:
                         return "login_failed", messages[login_signal]
                     continue
                 break
-        return "completed", None
+        return "completed", last_output_line
 
     @staticmethod
     async def _read_stream_chunk(stream: asyncio.StreamReader) -> bytes:

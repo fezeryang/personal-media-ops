@@ -2,6 +2,24 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+TaskMode = Literal[
+    "search",
+    "detail",
+    "creator",
+    "comments",
+    "sub_comments",
+]
+ModeStatus = Literal[
+    "not_implemented",
+    "code_ready",
+    "enabled",
+    "production_verified",
+    "deferred_resource_constrained",
+    "deferred_upstream_breakage",
+    "deferred_login_required",
+    "deferred_platform_change",
+    "disabled",
+]
 VerificationStatus = Literal[
     "not_implemented",
     "code_ready",
@@ -13,6 +31,7 @@ AvailabilityStatus = Literal[
     "deferred_resource_constrained",
     "deferred_upstream_breakage",
     "deferred_login_required",
+    "deferred_platform_change",
 ]
 
 
@@ -25,6 +44,20 @@ class RequestedCountCapability(BaseModel):
     minimum: int
     maximum: int
     default: int
+
+
+class CrawlerModeCapability(BaseModel):
+    mode: TaskMode
+    label: str
+    status: ModeStatus
+    enabled: bool
+    reason: str | None
+    input_fields: list[str]
+    requested_count: RequestedCountCapability
+    requested_comment_count: RequestedCountCapability | None
+    requested_sub_comment_count: RequestedCountCapability | None
+    requires_browser: bool
+    login_type: Literal["qrcode"]
 
 
 class CrawlerPlatformCapability(BaseModel):
@@ -40,6 +73,7 @@ class CrawlerPlatformCapability(BaseModel):
     requested_count: RequestedCountCapability
     supports_comments: bool
     supports_sub_comments: bool
+    modes: list[CrawlerModeCapability]
 
 
 class CrawlerCapabilitiesResponse(BaseModel):

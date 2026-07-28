@@ -1,14 +1,16 @@
 # personal-media-ops
 
 **Personal Media Ops（个人互联网情报与内容运营平台）** 是用户自己的互联网
-信息获取、整理、分析与内容运营基础设施，不是普通爬虫面板。当前已提供采集工作台、
-FastAPI 任务 API 和独立 Worker：用户可以按后端真实能力注册表创建关键词任务、完成
-二维码登录、查看受限长度的实时日志，并分页浏览统一结构的采集结果。
+信息获取、整理、分析与内容运营基础设施，不是普通爬虫面板。当前已提供五种独立采集
+模式（搜索、详情、创作者、一级评论、二级评论）、七平台模式级能力矩阵、FastAPI
+任务与资料库 API、单并发 Worker，以及内容、创作者、评论和任务溯源的持久化资料库。
 
 任务元数据保存在 SQLite，并由 Alembic 管理版本；独立 Worker 串行执行仓库外部的
-MediaCrawler。B 站关键词搜索已经真实验证；小红书和抖音关键词搜索已有 Adapter 与
-Runner 代码，但默认未启用、尚未进行真实平台验证。不包含 Redis、Celery、Docker、
-AI 分析或自动发布，未完成模块不会用 Mock 数据冒充真实能力。
+MediaCrawler。B 站、小红书、知乎、微博和贴吧的关键词搜索已真实验证；快手搜索因
+固定上游协议变化延期，抖音因当前生产资源限制延期。每个非搜索模式单独记录
+`code_ready`、`enabled`、`production_verified` 或明确的 deferred 原因，搜索成功
+不会被当作其他模式成功。不包含 Redis、Celery、Docker、Elasticsearch、AI 分析或
+自动发布，未完成模块不会用 Mock 数据冒充真实能力。
 
 ## 工程协作
 
@@ -76,8 +78,8 @@ uv run python -m app.workers.crawler_worker
 复制 `backend/.env.example` 为 `backend/.env`。通过 `FRONTEND_ORIGINS`
 配置允许的前端来源；通过 `MEDIAOPS_*` 和 `MEDIACRAWLER_*` 变量配置数据库、
 运行数据、Node.js、外部 Python 和固定 Runner。`MEDIAOPS_ENABLED_PLATFORMS`
-默认仅为 `bili`；只有完成真实验证后才应显式加入 `xhs` 或 `dy`。默认不允许任何
-跨域来源。
+默认仅为 `bili`。平台是否配置启用和各模式的验证成熟度是两套独立状态；抖音仍保持
+资源延期，不能通过该变量绕过能力矩阵。默认不允许任何跨域来源。
 
 `frontend/.env.example` 只包含构建期 API Base URL。生产推荐 Nginx 同源代理
 `/api`，因此无需配置该值。不要提交任何 `.env` 文件。
@@ -114,4 +116,6 @@ Reviewed, non-installed sources live under `infra/release/` and
 详细接口与部署说明：
 
 - [Crawler API contract](docs/api-contract.md)
+- [Platform capability matrix](docs/platform-capability-matrix.md)
+- [Agent API foundation](docs/agent-api-foundation.md)
 - [Deployment guide](docs/deployment.md)

@@ -1,4 +1,6 @@
+import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,18 @@ def _row_to_task(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return None
     task = dict(row)
     task["cancel_requested"] = bool(task["cancel_requested"])
+    task["mode"] = task["crawler_type"]
+    for key in ("target_ids", "target_urls", "creator_ids", "creator_urls"):
+        raw_value = task.get(key, "[]")
+        try:
+            parsed = json.loads(str(raw_value))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"crawler task contains invalid {key} JSON") from error
+        if not isinstance(parsed, list) or not all(
+            isinstance(value, str) for value in parsed
+        ):
+            raise RuntimeError(f"crawler task contains invalid {key} values")
+        task[key] = parsed
     return task
 
 
@@ -41,9 +55,17 @@ class CrawlerTaskRepository:
         *,
         platform: str,
         crawler_type: str,
-        keywords: str,
+        keywords: str | None,
         login_type: str,
         requested_count: int,
+        target_ids: Sequence[str] = (),
+        target_urls: Sequence[str] = (),
+        creator_ids: Sequence[str] = (),
+        creator_urls: Sequence[str] = (),
+        parent_content_id: str | None = None,
+        parent_comment_id: str | None = None,
+        requested_comment_count: int = 0,
+        requested_sub_comment_count: int = 0,
         output_dir: str,
         log_path: str,
         qrcode_path: str,
@@ -58,10 +80,13 @@ class CrawlerTaskRepository:
                     id, platform, crawler_type, keywords, login_type, status,
                     requested_count, actual_count, output_dir, log_path,
                     qrcode_path, pid, error_message, created_at, started_at,
-                    finished_at, cancel_requested
+                    finished_at, cancel_requested, target_ids, target_urls,
+                    creator_ids, creator_urls, parent_content_id,
+                    parent_comment_id, requested_comment_count,
+                    requested_sub_comment_count
                 )
                 VALUES (?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, NULL, NULL,
-                        ?, NULL, NULL, 0)
+                        ?, NULL, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -74,6 +99,14 @@ class CrawlerTaskRepository:
                     log_path,
                     qrcode_path,
                     created_at,
+                    json.dumps(target_ids, ensure_ascii=False),
+                    json.dumps(target_urls, ensure_ascii=False),
+                    json.dumps(creator_ids, ensure_ascii=False),
+                    json.dumps(creator_urls, ensure_ascii=False),
+                    parent_content_id,
+                    parent_comment_id,
+                    requested_comment_count,
+                    requested_sub_comment_count,
                 ),
             )
         task = self.get(identifier)

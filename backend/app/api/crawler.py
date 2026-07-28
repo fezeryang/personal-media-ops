@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from app.core.config import Settings
 from app.crawler.registry import (
+    ModeDisabledError,
     PlatformDisabledError,
     UnsupportedPlatformError,
     platform_registry,
@@ -89,29 +90,37 @@ def create_crawler_task(
     settings: SettingsDependency,
 ) -> dict[str, Any]:
     try:
-        adapter = platform_registry.require_enabled(
+        adapter = platform_registry.require_mode_enabled(
             payload.platform,
+            payload.mode,
             settings.enabled_platforms,
         )
     except UnsupportedPlatformError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except PlatformDisabledError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    if payload.crawler_type not in {
-        option.value for option in adapter.capability(True).crawler_types
-    }:
-        raise HTTPException(
-            status_code=422,
-            detail="unsupported crawler type for platform",
-        )
+    except ModeDisabledError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    try:
+        adapter.validate_task_request(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     task_id = repository.new_id()
     return repository.create(
         task_id=task_id,
         platform=payload.platform,
-        crawler_type=payload.crawler_type,
+        crawler_type=payload.mode,
         keywords=payload.keywords,
-        login_type="qrcode",
+        target_ids=payload.target_ids,
+        target_urls=payload.target_urls,
+        creator_ids=payload.creator_ids,
+        creator_urls=payload.creator_urls,
+        parent_content_id=payload.parent_content_id,
+        parent_comment_id=payload.parent_comment_id,
+        login_type=payload.login_type,
         requested_count=payload.requested_count,
+        requested_comment_count=payload.requested_comment_count,
+        requested_sub_comment_count=payload.requested_sub_comment_count,
         output_dir=str(settings.output_root / "tasks" / task_id),
         log_path=str(settings.log_root / "crawler" / f"{task_id}.log"),
         qrcode_path=str(settings.qrcode_root / f"{task_id}.png"),

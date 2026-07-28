@@ -102,7 +102,12 @@ scripts/server/deploy.sh \
 
 After helper success, verify the localhost API and public frontend/API routes.
 Compare repository commit, build marker, and published marker. Record old/new
-commits only after all checks pass.
+commits only after all checks pass. For content-mode releases, also verify the
+exact Alembic head, `/api/crawler/capabilities` has seven platforms × five
+modes, `/api/library/stats` responds, old task counts remain intact, and the
+library tables exist before creating any real mode task. A successful process
+exit without normalized library entities and task provenance is not a
+successful collection.
 
 ## Failure Handling
 

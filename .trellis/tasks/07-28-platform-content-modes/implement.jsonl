@@ -1,1 +1,19 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "The task changes database, domain models, API, Worker, Runner and frontend contracts."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Platform-mode behavior must remain centralized rather than duplicated across seven adapters and UI paths."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend specification index and pre-development routing."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Place new library models, repository, service and API modules consistently."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLite migrations, constraints, transactions, indexes and compatibility requirements."}
+{"file": ".trellis/spec/backend/crawler-platforms.md", "reason": "Existing Adapter, capability, Runner, result, and production-truth contracts."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Mode validation, anomalous empty results, Worker failures and API error semantics."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Crawler subprocess logs and safe login/failure signal handling."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend type, test, security and compatibility quality bar."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend specification index and quality commands."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Add library feature and pages in the established workbench structure."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dynamic mode forms, capability matrix and library component conventions."}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "TanStack Query hooks for task and library APIs."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Server-state ownership and form/filter state boundaries."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Zod validation and cross-layer API contract changes."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Safe rendering, accessibility, tests and no-mock failure behavior."}
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Migration-aware resumable deployment and production verification contract."}
+{"file": ".trellis/tasks/07-28-platform-content-modes/research/production-baseline.md", "reason": "The verified initial production state and rollout safety checkpoint."}
+{"file": ".trellis/tasks/07-28-platform-content-modes/research/upstream-content-mode-audit.md", "reason": "Pinned upstream mode, comment, creator, and output limitations that shape implementation."}

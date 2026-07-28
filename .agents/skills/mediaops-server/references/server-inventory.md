@@ -46,9 +46,15 @@ passwords, private keys, tokens, cookies, or `.env` values.
 | MediaCrawler branch/worktree | `main` / clean at 2026-07-28 audit |
 | MediaCrawler Python | `/opt/mediacrawler/.venv/bin/python` |
 | MediaCrawler Python version | `3.11.15` |
-| Playwright / browser | `1.61.0` / Chrome for Testing `149.0.7827.55` |
+| Playwright / browser | `1.61.0` / Chrome for Testing `150.0.7871.186` |
 | Reviewed Runner source | `/opt/personal-media-ops/scripts/crawler/run_mediacrawler.py` |
 | Active Runner | `/var/lib/mediaops/bin/run_mediacrawler.py` |
+
+The application database head for stage six is
+`0005_library_entities` (`0004_content_modes` followed by normalized library
+tables). Any release introducing these revisions requires a fresh SQLite
+backup and the explicit `--allow-migrations` deployment gate. The pinned
+MediaCrawler commit remains unchanged.
 
 The `mediaops` account can inspect the repository, install project
 dependencies, run tests/builds, read permitted logs, call APIs, and check

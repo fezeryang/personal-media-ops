@@ -8,14 +8,16 @@ add local rules, but may not weaken the safety requirements below.
 **Personal Media Ops**（个人互联网情报与内容运营平台）是用户自己的互联网信息获取、
 整理、分析与内容运营基础设施，不是普通爬虫面板。
 
-Current capabilities are a platform Adapter registry, Bilibili keyword
-collection, FastAPI APIs, versioned SQLite migrations, a single-concurrency
-Worker, external MediaCrawler integration, a React workbench, log/QR/result
-views, and same-origin Nginx deployment. The Xiaohongshu adapter is
-production-verified by a recorded real operator task (2026-07-26, task
-882701a1-fbb6-4d0c-aa58-662692296879). The Douyin adapter is code-ready but
-must not be described as production-verified until real operator validation
-is recorded. Never present unfinished modules or synthetic data as working
+Current capabilities are a seven-platform, mode-level Adapter registry; five
+explicit task modes (`search`, `detail`, `creator`, `comments`,
+`sub_comments`); versioned SQLite task and library entities; a
+single-concurrency Worker; external pinned MediaCrawler integration; FastAPI
+task/library APIs; React task, capability, content, creator, comment, QR, log,
+and provenance views; and same-origin Nginx deployment. Platform × mode
+statuses are independent facts. Search verification must never imply detail,
+creator, or comment verification. Douyin remains resource-deferred and
+Kuaishou search remains upstream-deferred until a recorded real task proves
+otherwise. Never present unfinished modules or synthetic data as working
 product behavior.
 
 ## End-to-End Agent Workflow

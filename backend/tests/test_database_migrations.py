@@ -13,7 +13,27 @@ from tests.alembic_utils import run_alembic_command
 
 LEGACY_REVISION = "0001_legacy_tasks"
 MULTIPLATFORM_REVISION = "0002_multiplatform_tasks"
+REMAINING_PLATFORMS_REVISION = "0003_remaining_platforms"
 REGISTERED_PLATFORMS = ("bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks")
+LEGACY_TASK_COLUMNS = (
+    "id",
+    "platform",
+    "crawler_type",
+    "keywords",
+    "login_type",
+    "status",
+    "requested_count",
+    "actual_count",
+    "output_dir",
+    "log_path",
+    "qrcode_path",
+    "pid",
+    "error_message",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "cancel_requested",
+)
 LEGACY_TASK_VALUES = (
     "28a58041-9be7-4b39-9dea-2493fe10c249",
     "bili",
@@ -84,7 +104,10 @@ def create_legacy_database(database_path: Path) -> None:
 def read_task_values(database_path: Path) -> tuple[object, ...]:
     with sqlite3.connect(database_path) as connection:
         row = connection.execute(
-            "SELECT * FROM crawler_tasks WHERE id = ?",
+            f"""
+            SELECT {", ".join(LEGACY_TASK_COLUMNS)}
+            FROM crawler_tasks WHERE id = ?
+            """,
             (LEGACY_TASK_VALUES[0],),
         ).fetchone()
     assert row is not None
@@ -112,6 +135,86 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
                 """,
                 (f"{platform}-task", platform),
             )
+        assert {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name LIKE 'library_%'
+                """
+            )
+        } == {
+            "library_contents",
+            "library_creators",
+            "library_comments",
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'index'
+                """
+            )
+        }
+        assert {
+            "idx_library_contents_published_at",
+            "idx_library_contents_last_collected_at",
+            "idx_library_contents_source_keyword",
+            "idx_library_comments_content",
+            "idx_library_comments_parent",
+        }.issubset(indexes)
+
+
+def test_upgrade_from_0003_adds_modes_without_changing_old_task(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "mediaops.db"
+    run_alembic_command(
+        database_path,
+        "upgrade",
+        REMAINING_PLATFORMS_REVISION,
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawler_tasks (
+                id, platform, crawler_type, keywords, login_type, status,
+                requested_count, actual_count, output_dir, log_path,
+                qrcode_path, created_at, cancel_requested
+            )
+            VALUES (
+                'old-task', 'xhs', 'search', 'AI', 'qrcode', 'succeeded',
+                5, 5, '/output', '/log', '/qrcode',
+                '2026-07-26T00:00:00Z', 0
+            )
+            """
+        )
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        old = connection.execute(
+            """
+            SELECT platform, crawler_type, keywords, status, actual_count
+            FROM crawler_tasks WHERE id = 'old-task'
+            """
+        ).fetchone()
+        connection.execute(
+            """
+            INSERT INTO crawler_tasks (
+                id, platform, crawler_type, keywords, login_type, status,
+                requested_count, actual_count, output_dir, log_path,
+                qrcode_path, created_at, cancel_requested, target_ids
+            )
+            VALUES (
+                'detail-task', 'bili', 'detail', NULL, 'qrcode', 'pending',
+                1, 0, '/output', '/log', '/qrcode',
+                '2026-07-28T00:00:00Z', 0, '["BV1"]'
+            )
+            """
+        )
+    assert old == ("xhs", "search", "AI", "succeeded", 5)
 
 
 def test_runtime_head_matches_alembic_script_head(tmp_path: Path) -> None:
@@ -191,14 +294,20 @@ def test_upgrade_from_0002_preserves_all_existing_platform_rows(
                 ),
             )
         before = connection.execute(
-            "SELECT * FROM crawler_tasks ORDER BY id"
+            f"""
+            SELECT {", ".join(LEGACY_TASK_COLUMNS)}
+            FROM crawler_tasks ORDER BY id
+            """
         ).fetchall()
 
     run_alembic_command(database_path, "upgrade", "head")
 
     with sqlite3.connect(database_path) as connection:
         after = connection.execute(
-            "SELECT * FROM crawler_tasks ORDER BY id"
+            f"""
+            SELECT {", ".join(LEGACY_TASK_COLUMNS)}
+            FROM crawler_tasks ORDER BY id
+            """
         ).fetchall()
     assert after == before
     assert get_current_revision(database_path) == get_head_revision()

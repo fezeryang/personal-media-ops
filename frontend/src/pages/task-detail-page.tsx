@@ -4,7 +4,7 @@ import {
   CheckCircle2,
   CircleDot,
   Hash,
-  Search,
+  Layers3,
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 
@@ -24,7 +24,9 @@ import {
   isActiveTask,
   platformDisplayName,
   platformLoginPrompt,
+  taskPrimaryLabel,
   taskStatusLabel,
+  TASK_MODE_LABELS,
 } from "../features/crawler/lib/task";
 import { formatDateTime, shortTaskId } from "../lib/utils";
 
@@ -90,6 +92,13 @@ export function TaskDetailPage() {
     task.platform,
     capabilitiesQuery.data?.platforms,
   );
+  const primaryLabel = taskPrimaryLabel(task);
+  const requestedTotal =
+    task.mode === "comments"
+      ? task.requested_comment_count
+      : task.mode === "sub_comments"
+        ? task.requested_sub_comment_count
+        : task.requested_count;
 
   return (
     <div className="space-y-7">
@@ -109,10 +118,10 @@ export function TaskDetailPage() {
               <TaskStatusBadge status={task.status} />
             </div>
             <h1 className="mt-3 break-words font-display text-3xl font-semibold tracking-[-0.035em] text-ink sm:text-4xl">
-              {task.keywords}
+              {primaryLabel}
             </h1>
             <p className="mt-2 text-sm text-muted">
-              {platformName} · 关键词搜索 · {loginPrompt}
+              {platformName} · {TASK_MODE_LABELS[task.mode]} · {loginPrompt}
             </p>
           </div>
           {active ? <CancelTaskDialog taskId={task.id} /> : null}
@@ -138,14 +147,21 @@ export function TaskDetailPage() {
               <h2 className="font-display text-lg font-semibold">任务信息</h2>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <DetailItem label="关键词" value={task.keywords} />
+              <DetailItem
+                label={task.mode === "search" ? "关键词" : "采集目标"}
+                value={primaryLabel}
+              />
+              <DetailItem
+                label="采集模式"
+                value={TASK_MODE_LABELS[task.mode]}
+              />
               <DetailItem
                 label="任务状态"
                 value={taskStatusLabel(task.status)}
               />
               <DetailItem
                 label="请求数量"
-                value={`${task.requested_count} 条`}
+                value={`${requestedTotal} 条`}
               />
               <DetailItem
                 label="实际数量"
@@ -170,8 +186,8 @@ export function TaskDetailPage() {
             </div>
             <div className="mt-5 flex flex-wrap gap-4 border-t border-line pt-4 text-xs text-muted">
               <span className="flex items-center gap-1.5">
-                <Search className="size-3.5" />
-                搜索采集
+                <Layers3 className="size-3.5" />
+                {TASK_MODE_LABELS[task.mode]}
               </span>
               <span className="flex items-center gap-1.5">
                 <Hash className="size-3.5" />
@@ -197,6 +213,13 @@ export function TaskDetailPage() {
 
       <LogViewer taskId={task.id} active={active} />
       <ResultBrowser taskId={task.id} active={active} />
+      {task.status === "succeeded" ? (
+        <div className="flex justify-end">
+          <Button asChild variant="secondary">
+            <Link to="/library">打开统一资料库</Link>
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

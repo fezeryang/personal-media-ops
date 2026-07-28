@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-HEAD_REVISION = "0003_remaining_platforms"
+HEAD_REVISION = "0005_library_entities"
 
 
 class DatabaseMigrationRequired(RuntimeError):
