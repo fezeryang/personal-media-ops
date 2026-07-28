@@ -99,6 +99,14 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
   before launch and resource recovery afterward. Defer as
   `deferred_resource_constrained` if it reproduces Douyin-like saturation.
 
+## Production Evidence
+
+- Zhihu task `bb63be5c-0a9b-48e2-bde5-b20bdaf637e6` succeeded on 2026-07-28
+  with 5/5 results. All five records had IDs, titles, authors, summaries,
+  HTTPS source URLs, publication times, vote/comment metrics, matching source
+  keywords, and non-empty raw payloads; the set covered both answers and
+  articles. The browser process count returned to zero.
+
 ## Acceptance Criteria
 
 - [x] Upstream MediaCrawler audit and fixed commit are documented.
@@ -107,7 +115,7 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
 - [x] Any necessary Alembic migration preserves existing data and passes fresh
       and `0002` upgrade tests; no meaningless migration is added.
 - [x] Capability API and frontend truthfully represent all seven platforms.
-- [ ] Zhihu has a real successful task or an evidence-backed deferred state.
+- [x] Zhihu has a real successful task or an evidence-backed deferred state.
 - [ ] Weibo has a real successful task or an evidence-backed deferred state.
 - [ ] Tieba has a real successful task or an evidence-backed deferred state.
 - [ ] Kuaishou has a real successful task or an evidence-backed deferred state.

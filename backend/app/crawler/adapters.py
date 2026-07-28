@@ -405,7 +405,7 @@ class ZhihuAdapter(CrawlerPlatformAdapter):
             display_name="知乎",
             icon_label="知",
             storage_directories=("zhihu",),
-            verification_status="code_ready",
+            verification_status="production_verified",
             unavailable_status="disabled",
             login_prompt="使用知乎客户端扫码登录；若出现验证码请按任务提示完成",
             headless_browser=True,

@@ -31,10 +31,13 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
     assert capabilities[2].enabled is False
     assert capabilities[2].verification_status == "code_ready"
     assert capabilities[2].availability_status == "deferred_resource_constrained"
+    assert capabilities[3].enabled is False
+    assert capabilities[3].verification_status == "production_verified"
+    assert capabilities[3].availability_status == "disabled"
     assert all(
-        item.verification_status == "code_ready" for item in capabilities[3:]
+        item.verification_status == "code_ready" for item in capabilities[4:]
     )
-    assert all(item.availability_status == "disabled" for item in capabilities[3:])
+    assert all(item.availability_status == "disabled" for item in capabilities[4:])
     assert [item.icon_label for item in capabilities] == [
         "哔",
         "红",

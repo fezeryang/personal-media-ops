@@ -43,10 +43,12 @@ availability_status:
   deferred_upstream_breakage | deferred_login_required
 ```
 
-`bili` and `xhs` are production-verified. `dy` is code-ready, disabled, and
-`deferred_resource_constrained`. The four stage-five platforms are code-ready
-and disabled until each production rollout explicitly enables and verifies
-it. `enabled=false` always prevents task submission.
+`bili`, `xhs`, and `zhihu` are production-verified. Zhihu was verified on
+2026-07-28 by task `bb63be5c-0a9b-48e2-bde5-b20bdaf637e6`, which returned five
+normalized answer/article results. `dy` is code-ready, disabled, and
+`deferred_resource_constrained`. `wb`, `tieba`, and `ks` remain code-ready and
+disabled until each production rollout explicitly enables and verifies it.
+`enabled=false` always prevents task submission.
 
 ## Create a task
 

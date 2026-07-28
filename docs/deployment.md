@@ -182,8 +182,9 @@ install -m 0750 scripts/crawler/run_mediacrawler.py \
 抖音仍是代码就绪状态；只有 Runner、扫码登录、输出和结果转换完成真实验证后，才可把
 `dy` 保留在 `.env` 的启用列表中。代码完成本身不等同于生产验证。
 
-当前低资源生产机应使用 `MEDIAOPS_ENABLED_PLATFORMS=bili,xhs`，让能力接口和前端
-明确显示抖音暂不可用。不要改用 Cookie 登录规避此限制：Cookie 属于敏感浏览器登录态，
+当前低资源生产机必须从 `MEDIAOPS_ENABLED_PLATFORMS` 排除 `dy`，让能力接口和前端
+明确显示抖音暂不可用；截至 2026-07-28，知乎已通过 5 条真实任务验证并可与
+`bili,xhs` 一起启用。不要改用 Cookie 登录规避抖音限制：Cookie 属于敏感浏览器登录态，
 而 MediaCrawler 的 Cookie 模式仍会启动 Chromium，不能解决主机资源瓶颈。恢复抖音前
 需要先提供足够的浏览器资源，或引入经过单独授权和评审的官方接口登录方案。
 
