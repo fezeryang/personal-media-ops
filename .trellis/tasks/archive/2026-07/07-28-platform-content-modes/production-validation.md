@@ -22,7 +22,7 @@ real tasks, deferred cells, and failed diagnostic tasks.
 - Migration backup:
   `/var/backups/mediaops/20260728T065514Z`, database SHA-256
   `f13244cdef22993a25f3560a605819bfc1ffc4fa81c8bd1d179d9dbbf639db05`.
-- Latest retained deployment backup:
+- Final stage-six implementation backup captured before archival:
   `/var/backups/mediaops/20260728T080500Z`, database SHA-256
   `e46d742e2eaed1a99edd36a8be38db8eeff99597f986f54aafb25aa9ed21d1e2`.
 
