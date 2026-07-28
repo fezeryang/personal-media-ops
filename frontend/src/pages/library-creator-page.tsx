@@ -1,4 +1,13 @@
-import { ArrowLeft, ArrowUpRight, UserRound } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Eye,
+  Pause,
+  Play,
+  TrendingUp,
+  UserRound,
+} from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 
 import { ErrorState } from "../components/error-state";
@@ -8,10 +17,47 @@ import { ContentCard } from "../features/library/components/content-card";
 import { SafeImage } from "../features/library/components/safe-image";
 import { useLibraryCreatorQuery } from "../features/library/hooks/use-library-queries";
 import { formatDateTime } from "../lib/utils";
+import { listCreatorMetrics } from "../api/library";
+import {
+  createWatch,
+  listWatches,
+  setWatchEnabled,
+} from "../api/watchlist";
 
 export function LibraryCreatorPage() {
   const { creatorId = "" } = useParams();
   const query = useLibraryCreatorQuery(creatorId);
+  const queryClient = useQueryClient();
+  const watches = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: ({ signal }) => listWatches(signal),
+  });
+  const metrics = useQuery({
+    queryKey: ["library", "creators", creatorId, "metrics"],
+    queryFn: ({ signal }) => listCreatorMetrics(creatorId, signal),
+    enabled: Boolean(creatorId),
+  });
+  const existingWatch = watches.data?.find(
+    (watch) => watch.creator_id === creatorId,
+  );
+  const watch = useMutation({
+    mutationFn: async () => {
+      if (existingWatch) {
+        return setWatchEnabled(existingWatch.id, !existingWatch.enabled);
+      }
+      return createWatch({
+        creator_id: creatorId,
+        enabled: false,
+        check_frequency: "daily",
+        requested_count: 3,
+        timezone:
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    },
+  });
 
   if (query.isPending) {
     return <div className="h-96 animate-pulse rounded-2xl bg-white" />;
@@ -70,6 +116,57 @@ export function LibraryCreatorPage() {
                 </a>
               ) : null}
             </div>
+            <Button
+              className="mt-5"
+              variant="secondary"
+              size="sm"
+              disabled={watch.isPending}
+              onClick={() => watch.mutate()}
+            >
+              {existingWatch?.enabled ? (
+                <Pause className="size-4" />
+              ) : existingWatch ? (
+                <Play className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
+              {existingWatch?.enabled
+                ? "暂停监控"
+                : existingWatch
+                  ? "开始监控"
+                  : "加入监控"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="size-4 text-signal" />
+            <h2 className="font-display text-lg font-semibold">
+              创作者指标快照
+            </h2>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {(metrics.data?.items ?? []).slice(-3).map((snapshot) => (
+              <div
+                key={snapshot.id}
+                className="rounded-xl border border-line bg-paper p-3 text-xs"
+              >
+                <p className="text-muted">
+                  {formatDateTime(snapshot.captured_at)}
+                </p>
+                <p className="mt-2 font-semibold">
+                  粉丝 {snapshot.follower_count ?? "—"}
+                </p>
+                <p className="mt-1 text-muted">
+                  内容 {snapshot.content_count ?? "—"}
+                </p>
+              </div>
+            ))}
+            {!metrics.data?.items.length ? (
+              <p className="text-sm text-muted">尚无指标快照</p>
+            ) : null}
           </div>
         </CardContent>
       </Card>

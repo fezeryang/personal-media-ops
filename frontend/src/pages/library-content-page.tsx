@@ -1,4 +1,12 @@
-import { ArrowLeft, ArrowUpRight, MessageCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Heart,
+  MessageCircle,
+  TrendingUp,
+  X,
+} from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 
 import { ErrorState } from "../components/error-state";
@@ -7,6 +15,13 @@ import { Card, CardContent } from "../components/ui/card";
 import { SafeImage } from "../features/library/components/safe-image";
 import { useLibraryContentQuery } from "../features/library/hooks/use-library-queries";
 import { formatDateTime } from "../lib/utils";
+import { listContentMetrics } from "../api/library";
+import {
+  addTag,
+  listTags,
+  removeTag,
+  setFavorite,
+} from "../api/organization";
 
 function metric(label: string, value: number | null) {
   return (
@@ -19,9 +34,43 @@ function metric(label: string, value: number | null) {
   );
 }
 
+const metricKeys = [
+  "view_count",
+  "like_count",
+  "favorite_count",
+  "comment_count",
+  "share_count",
+] as const;
+
 export function LibraryContentPage() {
   const { contentId = "" } = useParams();
   const query = useLibraryContentQuery(contentId);
+  const queryClient = useQueryClient();
+  const tags = useQuery({
+    queryKey: ["library", "tags"],
+    queryFn: ({ signal }) => listTags(signal),
+  });
+  const metrics = useQuery({
+    queryKey: ["library", "contents", contentId, "metrics"],
+    queryFn: ({ signal }) => listContentMetrics(contentId, signal),
+    enabled: Boolean(contentId),
+  });
+  const refreshContent = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["library", "contents", contentId],
+    });
+  const favorite = useMutation({
+    mutationFn: (value: boolean) => setFavorite(contentId, value),
+    onSuccess: refreshContent,
+  });
+  const assignTag = useMutation({
+    mutationFn: (tagId: string) => addTag(contentId, tagId),
+    onSuccess: refreshContent,
+  });
+  const unassignTag = useMutation({
+    mutationFn: (tagId: string) => removeTag(contentId, tagId),
+    onSuccess: refreshContent,
+  });
 
   if (query.isPending) {
     return <div className="h-96 animate-pulse rounded-2xl bg-white" />;
@@ -76,6 +125,51 @@ export function LibraryContentPage() {
               </a>
             ) : null}
           </div>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <Button
+              variant={content.is_favorite ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => favorite.mutate(!content.is_favorite)}
+            >
+              <Heart
+                className="size-4"
+                fill={content.is_favorite ? "currentColor" : "none"}
+              />
+              {content.is_favorite ? "已收藏" : "收藏"}
+            </Button>
+            {content.tags?.map((tag) => (
+              <button
+                type="button"
+                key={tag.id}
+                className="inline-flex items-center gap-1 rounded-full bg-[#e7f5f1] px-2.5 py-1 text-xs font-semibold text-signal-strong"
+                onClick={() => unassignTag.mutate(tag.id)}
+              >
+                #{tag.name} <X className="size-3" />
+              </button>
+            ))}
+            <select
+              className="h-8 rounded-lg border border-line bg-white px-2 text-xs"
+              aria-label="给内容添加标签"
+              value=""
+              onChange={(event) => {
+                if (event.currentTarget.value) {
+                  assignTag.mutate(event.currentTarget.value);
+                }
+              }}
+            >
+              <option value="">＋ 添加标签</option>
+              {(tags.data ?? [])
+                .filter(
+                  (tag) =>
+                    !content.tags?.some((current) => current.id === tag.id),
+                )
+                .map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+            </select>
+          </div>
         </div>
       </header>
 
@@ -86,6 +180,51 @@ export function LibraryContentPage() {
         {metric("评论", content.comment_count)}
         {metric("分享", content.share_count)}
       </section>
+
+      <Card>
+        <CardContent>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="size-4 text-signal" />
+            <h2 className="font-display text-lg font-semibold">指标快照</h2>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[620px] text-left text-xs">
+              <thead className="text-muted">
+                <tr>
+                  <th className="pb-2 font-semibold">采集时间</th>
+                  <th className="pb-2 font-semibold">浏览</th>
+                  <th className="pb-2 font-semibold">点赞</th>
+                  <th className="pb-2 font-semibold">收藏</th>
+                  <th className="pb-2 font-semibold">评论</th>
+                  <th className="pb-2 font-semibold">分享</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(metrics.data?.items ?? []).map((snapshot) => (
+                  <tr key={snapshot.id} className="border-t border-line">
+                    <td className="py-3">
+                      {formatDateTime(snapshot.captured_at)}
+                    </td>
+                    {metricKeys.map((key) => {
+                      const value = snapshot[key];
+                      return (
+                        <td key={key} className="py-3 tabular-nums">
+                          {value === null ? "—" : value}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!metrics.data?.items.length ? (
+              <p className="py-6 text-center text-sm text-muted">
+                尚无指标快照
+              </p>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
 
       {content.creator ? (
         <Card>

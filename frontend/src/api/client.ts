@@ -13,6 +13,12 @@ const errorPayloadSchema = z.object({
     z.string(),
     z.array(validationIssueSchema),
   ]).optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
 });
 
 export class ApiError extends Error {
@@ -50,7 +56,13 @@ async function responseError(response: Response): Promise<ApiError> {
 
   try {
     const parsed = errorPayloadSchema.safeParse(await response.json());
-    if (!parsed.success || parsed.data.detail === undefined) {
+    if (!parsed.success) {
+      return new ApiError(response.status, fallback);
+    }
+    if (parsed.data.error) {
+      return new ApiError(response.status, parsed.data.error.message);
+    }
+    if (parsed.data.detail === undefined) {
       return new ApiError(response.status, fallback);
     }
     const detail = parsed.data.detail;
@@ -63,20 +75,34 @@ async function responseError(response: Response): Promise<ApiError> {
   }
 }
 
+let csrfToken: string | null = null;
+
+export function setCsrfToken(value: string | null): void {
+  csrfToken = value;
+}
+
 async function fetchApi(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
   try {
+    const method = (init.method ?? "GET").toUpperCase();
+    const unsafe = ["POST", "PUT", "PATCH", "DELETE"].includes(method);
     const response = await fetch(apiUrl(path), {
       ...init,
+      credentials: "include",
       headers: {
         Accept: "application/json",
+        ...(unsafe && csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         ...init.headers,
       },
     });
     if (!response.ok) {
-      throw await responseError(response);
+      const error = await responseError(response);
+      if (error.status === 401 && !path.startsWith("/api/auth/login")) {
+        window.dispatchEvent(new Event("mediaops:unauthorized"));
+      }
+      throw error;
     }
     return response;
   } catch (error: unknown) {
@@ -139,4 +165,11 @@ export async function requestBlob(
     throw new ApiError(502, "服务返回的二维码格式无效");
   }
   return response.blob();
+}
+
+export async function requestEmpty(
+  path: string,
+  init: RequestInit = {},
+): Promise<void> {
+  await fetchApi(path, init);
 }

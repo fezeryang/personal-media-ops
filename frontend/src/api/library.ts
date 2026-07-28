@@ -32,6 +32,10 @@ export const libraryContentSchema = z.object({
   comment_count: z.number().int().nonnegative().nullable(),
   share_count: z.number().int().nonnegative().nullable(),
   has_comments: z.boolean(),
+  is_favorite: z.boolean().optional(),
+  tags: z
+    .array(z.object({ id: z.string(), name: z.string() }))
+    .optional(),
   created_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
 });
@@ -114,6 +118,48 @@ const libraryStatsSchema = z.object({
   comments: z.number().int().nonnegative(),
 });
 
+const contentMetricSnapshotSchema = z.object({
+  id: z.string(),
+  content_id: z.string(),
+  captured_at: z.string(),
+  view_count: z.number().nullable(),
+  like_count: z.number().nullable(),
+  favorite_count: z.number().nullable(),
+  comment_count: z.number().nullable(),
+  share_count: z.number().nullable(),
+  delta_from_previous: z.object({
+    view_count: z.number().nullable(),
+    like_count: z.number().nullable(),
+    favorite_count: z.number().nullable(),
+    comment_count: z.number().nullable(),
+    share_count: z.number().nullable(),
+  }),
+});
+
+const contentMetricPageSchema = z.object({
+  items: z.array(contentMetricSnapshotSchema),
+  ...pageFields,
+});
+
+const creatorMetricPageSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      creator_id: z.string(),
+      captured_at: z.string(),
+      follower_count: z.number().nullable(),
+      following_count: z.number().nullable(),
+      content_count: z.number().nullable(),
+      delta_from_previous: z.object({
+        follower_count: z.number().nullable(),
+        following_count: z.number().nullable(),
+        content_count: z.number().nullable(),
+      }),
+    }),
+  ),
+  ...pageFields,
+});
+
 export type LibraryContent = z.infer<typeof libraryContentSchema>;
 export type LibraryCreator = z.infer<typeof libraryCreatorSchema>;
 export type LibraryComment = z.infer<typeof libraryCommentSchema>;
@@ -136,6 +182,8 @@ export interface ContentFilters {
   date_from?: string;
   date_to?: string;
   has_comments?: boolean;
+  tag_id?: string;
+  is_favorite?: boolean;
   sort?:
     | "last_collected_desc"
     | "published_desc"
@@ -224,6 +272,28 @@ export function listLibraryComments(
   return requestJson(
     `/api/library/comments${queryString(filters)}`,
     libraryCommentPageSchema,
+    { signal },
+  );
+}
+
+export function listContentMetrics(
+  contentId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson(
+    `/api/library/contents/${encodeURIComponent(contentId)}/metrics`,
+    contentMetricPageSchema,
+    { signal },
+  );
+}
+
+export function listCreatorMetrics(
+  creatorId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson(
+    `/api/library/creators/${encodeURIComponent(creatorId)}/metrics`,
+    creatorMetricPageSchema,
     { signal },
   );
 }

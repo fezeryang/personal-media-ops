@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router";
 
 import { ApiError } from "./api/client";
 import { App } from "./app";
+import { AuthProvider } from "./features/auth/auth-context";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -32,7 +33,9 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <AuthProvider>
+          <App />
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

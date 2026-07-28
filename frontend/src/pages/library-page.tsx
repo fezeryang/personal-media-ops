@@ -1,5 +1,6 @@
 import { Database, Filter, Search } from "lucide-react";
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ErrorState } from "../components/error-state";
 import { PageHeader } from "../components/page-header";
@@ -11,11 +12,17 @@ import {
   useLibraryContentsQuery,
   useLibraryStatsQuery,
 } from "../features/library/hooks/use-library-queries";
+import { createTag, listTags, setFavorite } from "../api/organization";
+import { Button } from "../components/ui/button";
 
 export function LibraryPage() {
   const [platform, setPlatform] = useState("");
   const [keyword, setKeyword] = useState("");
   const [hasComments, setHasComments] = useState("");
+  const [tagId, setTagId] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [newTag, setNewTag] = useState("");
+  const queryClient = useQueryClient();
   const capabilities = useCrawlerCapabilitiesQuery();
   const stats = useLibraryStatsQuery();
   const contents = useLibraryContentsQuery({
@@ -23,7 +30,36 @@ export function LibraryPage() {
     keyword: keyword.trim() || undefined,
     has_comments:
       hasComments === "" ? undefined : hasComments === "with_comments",
+    tag_id: tagId || undefined,
+    is_favorite: favoriteOnly || undefined,
     limit: 50,
+  });
+  const tags = useQuery({
+    queryKey: ["library", "tags"],
+    queryFn: ({ signal }) => listTags(signal),
+  });
+  const favorite = useMutation({
+    mutationFn: ({
+      contentId,
+      value,
+    }: {
+      contentId: string;
+      value: boolean;
+    }) => setFavorite(contentId, value),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["library", "contents"],
+      });
+    },
+  });
+  const addNewTag = useMutation({
+    mutationFn: () => createTag(newTag.trim()),
+    onSuccess: async () => {
+      setNewTag("");
+      await queryClient.invalidateQueries({
+        queryKey: ["library", "tags"],
+      });
+    },
   });
 
   return (
@@ -50,7 +86,7 @@ export function LibraryPage() {
       </section>
 
       <Card className="p-4">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_160px_160px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <Input
@@ -87,6 +123,45 @@ export function LibraryPage() {
             <option value="with_comments">已有评论</option>
             <option value="without_comments">暂无评论</option>
           </select>
+          <select
+            className="form-select"
+            value={tagId}
+            onChange={(event) => setTagId(event.currentTarget.value)}
+            aria-label="按标签筛选"
+          >
+            <option value="">全部标签</option>
+            {(tags.data ?? []).map((tag) => (
+              <option key={tag.id} value={tag.id}>
+                #{tag.name} ({tag.content_count})
+              </option>
+            ))}
+          </select>
+          <label className="flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={favoriteOnly}
+              onChange={(event) =>
+                setFavoriteOnly(event.currentTarget.checked)
+              }
+            />
+            只看收藏
+          </label>
+        </div>
+        <div className="mt-3 flex gap-2 border-t border-line pt-3">
+          <Input
+            className="max-w-xs"
+            value={newTag}
+            onChange={(event) => setNewTag(event.currentTarget.value)}
+            placeholder="创建资料标签"
+            aria-label="新标签名称"
+          />
+          <Button
+            variant="secondary"
+            disabled={!newTag.trim() || addNewTag.isPending}
+            onClick={() => addNewTag.mutate()}
+          >
+            创建标签
+          </Button>
         </div>
       </Card>
 
@@ -118,7 +193,13 @@ export function LibraryPage() {
       ) : (
         <div className="space-y-4">
           {contents.data.items.map((content) => (
-            <ContentCard key={content.id} content={content} />
+            <ContentCard
+              key={content.id}
+              content={content}
+              onFavoriteChange={(contentId, value) =>
+                favorite.mutate({ contentId, value })
+              }
+            />
           ))}
           <p className="text-right text-xs text-muted">
             当前显示 {contents.data.items.length} 条
