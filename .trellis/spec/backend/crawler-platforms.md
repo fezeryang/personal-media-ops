@@ -27,8 +27,8 @@ Adapters implement capability metadata, fixed Runner arguments,
   `deferred_resource_constrained`, `deferred_upstream_breakage`, or
   `deferred_login_required`. `enabled` is the actual task-submission gate.
 - `bili`, `xhs`, `zhihu`, `wb`, and `tieba` are `production_verified`; `dy`
-  is `code_ready` and `deferred_resource_constrained`; `ks` remains
-  `code_ready` until a real task is recorded.
+  is `code_ready` and `deferred_resource_constrained`; `ks` is `code_ready`
+  and `deferred_upstream_breakage`.
 - Only explicitly enabled platforms accept new tasks; the default is `bili`.
 - Search, QR login, count `1..20`, one global task, no comments, no
   sub-comments, and no proxy are fixed service constraints.
@@ -105,6 +105,14 @@ Adapters implement capability metadata, fixed Runner arguments,
   timeout. It skips only upstream's immediately repeated coordinate click
   after the QR is open, then delegates QR reading and login polling to
   unchanged upstream.
+- The pinned Kuaishou crawler still calls GraphQL `visionSearchPhoto`, which
+  returned `result=50` with zero feeds after a verified login on 2026-07-28.
+  The current website instead calls `POST /rest/v/search/feed`; both headless
+  and headful/Xvfb website requests returned `result=2` without result data on
+  the production host. The `ks`-only Runner guard therefore rejects a missing
+  search object, non-success result, malformed feeds, or empty feeds with a
+  non-zero failure. It never lets this known upstream-contract drift become a
+  zero-result `succeeded` task.
 - Pre-QR timeout and cancellation terminate the whole process group. Seeing a
   QR file changes the task to `waiting_login`; seeing success returns it to
   `running`. A success marker before any QR disables the startup deadline.
@@ -151,6 +159,7 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Tieba normal page has the current or legacy login entry | Click one visible reviewed entry and require `tang-pass-qrcode-img` within a bounded timeout |
 | Kuaishou login entry is covered by the transparent page layer | Dispatch DOM `click()` only to the exact visible entry and require the reviewed QR selector |
 | Kuaishou exact login entry is absent or does not expose a QR | Fail explicitly after bounded attempts without removing page overlays |
+| Kuaishou GraphQL search is missing, non-successful, malformed, or empty | Raise an explicit upstream-contract failure; never report zero-result success |
 | Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
 | Malformed textual publication time | Normalized publication time is `null` |
@@ -174,6 +183,8 @@ Adapters implement capability metadata, fixed Runner arguments,
   before its intended login-entry fallback.
 - Bad: force a Kuaishou coordinate click, delete arbitrary overlay elements,
   or replace the whole upstream login implementation.
+- Bad: let Kuaishou's `result=50` or empty feeds exit zero and mark a task
+  successful without stored results.
 - Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
   or loop indefinitely around browser startup.
 
@@ -203,7 +214,8 @@ is classified as captcha, the current login entry exposes the legacy QR
 selector, and the patch is installed only for `tieba`.
 Kuaishou Runner tests must assert exact-entry DOM dispatch, QR confirmation,
 bounded missing-entry failure, suppression of only the redundant upstream
-click, and installation only for `ks`.
+click, acceptance of a valid non-empty search response, rejection of
+missing/non-successful/empty responses, and installation only for `ks`.
 
 ## 7. Wrong vs Correct
 
@@ -252,6 +264,7 @@ if args.platform == "tieba":
     install_tieba_runtime_patch()
 if args.platform == "ks":
     install_kuaishou_qrcode_entry_patch()
+    install_kuaishou_search_guard()
 ```
 
 Wrong:

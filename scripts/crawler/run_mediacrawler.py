@@ -617,6 +617,74 @@ def install_kuaishou_qrcode_entry_patch() -> None:
     KuaishouLogin.login_by_qrcode = login_by_qrcode_after_opening_entry
 
 
+async def search_kuaishou_with_result_guard(
+    client: object,
+    keyword: str,
+    pcursor: str,
+    search_session_id: str,
+    original_search: Callable[..., Awaitable[object]],
+) -> object:
+    """Reject upstream search-contract drift instead of producing false success."""
+    response = await original_search(
+        client,
+        keyword,
+        pcursor,
+        search_session_id,
+    )
+    search_result = (
+        response.get("visionSearchPhoto") if isinstance(response, dict) else None
+    )
+    feeds = (
+        search_result.get("feeds")
+        if isinstance(search_result, dict)
+        else None
+    )
+    if (
+        not isinstance(search_result, dict)
+        or search_result.get("result") != 1
+        or not isinstance(feeds, list)
+        or not feeds
+    ):
+        result_code = (
+            search_result.get("result")
+            if isinstance(search_result, dict)
+            else None
+        )
+        feed_count = len(feeds) if isinstance(feeds, list) else 0
+        print(
+            "[MediaOps] Kuaishou upstream search contract unavailable: "
+            f"result={result_code!r}, feeds={feed_count}",
+            flush=True,
+        )
+        raise RuntimeError(
+            "Kuaishou upstream search returned no usable results"
+        )
+    return response
+
+
+def install_kuaishou_search_guard() -> None:
+    """Fail closed when the pinned Kuaishou GraphQL search contract drifts."""
+    from media_platform.kuaishou.client import KuaiShouClient
+
+    original_search = KuaiShouClient.search_info_by_keyword
+
+    async def guarded_search(
+        client: object,
+        keyword: str,
+        pcursor: str,
+        search_session_id: str = "",
+    ) -> object:
+        return await search_kuaishou_with_result_guard(
+            client,
+            keyword,
+            pcursor,
+            search_session_id,
+            original_search,
+        )
+
+    KuaiShouClient.search_info_by_keyword = guarded_search
+
+
 def create_login_state_observer(
     platform: str,
     original_probe: Callable[..., Awaitable[bool]],
@@ -739,6 +807,7 @@ def main() -> None:
         install_tieba_runtime_patch()
     if args.platform == "ks":
         install_kuaishou_qrcode_entry_patch()
+        install_kuaishou_search_guard()
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

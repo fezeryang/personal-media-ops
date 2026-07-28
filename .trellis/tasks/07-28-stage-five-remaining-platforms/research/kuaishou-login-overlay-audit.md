@@ -41,3 +41,27 @@ Patch only the reviewed `ks` Runner process:
 
 Do not use a fuzzy selector, remove arbitrary overlays, copy the upstream
 login implementation, or edit `/opt/mediacrawler`.
+
+## Production Search Validation
+
+- Task `a090a2a4-8e68-4408-87ff-9270032e62f0` generated a QR code after the
+  login-overlay fix but timed out after its QR expired.
+- Refreshed task `5002a187-cfd6-4622-9ee4-c054223dd205` completed QR login,
+  reached Kuaishou search, and exited with zero stored results.
+- The pinned GraphQL `visionSearchPhoto` response had `result=50` and zero
+  feeds for cursors `1`, empty, and `0`.
+- The current logged-in website opens `/search/AI` and calls
+  `POST /rest/v/search/feed`, not GraphQL. Its safe response shape was
+  `result`, `error_msg`, and `request_id`; both headless and headful/Xvfb
+  probes returned `result=2` without result data.
+- Every diagnostic closed its browser, active tasks returned to zero, memory
+  returned above 960 MiB available, and swap use remained zero.
+
+## Final Capability Decision
+
+Keep Kuaishou `code_ready`, disable task submission, and report
+`deferred_upstream_breakage`. Install a `ks`-only Runner guard that turns the
+known missing/non-successful/empty GraphQL response into an explicit non-zero
+failure so it cannot be recorded as a zero-result success. Do not claim
+`production_verified` until a reviewed REST/upstream compatibility change and
+a real non-empty task both pass.

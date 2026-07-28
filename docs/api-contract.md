@@ -51,8 +51,11 @@ answer/article results. Weibo was verified on 2026-07-28 by task
 plain-text posts. Tieba was verified on 2026-07-28 by task
 `52d19084-7f17-4ede-8293-36f716919272`, which returned five normalized posts
 with forum metadata in each raw payload. `dy` is code-ready, disabled, and
-`deferred_resource_constrained`. `ks` remains code-ready and disabled until
-its production rollout explicitly enables and verifies it.
+`deferred_resource_constrained`. `ks` is code-ready, disabled, and
+`deferred_upstream_breakage`: QR login completed, but the pinned GraphQL
+search returned no usable data after the website moved search to a REST
+endpoint. It remains unverified until a compatible upstream or reviewed
+Adapter seam produces a successful real task.
 `enabled=false` always prevents task submission.
 
 ## Create a task

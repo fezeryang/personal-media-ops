@@ -907,6 +907,77 @@ def test_runner_skips_only_redundant_upstream_kuaishou_login_click() -> None:
     ]
 
 
+def test_runner_accepts_usable_kuaishou_search_response() -> None:
+    runner = load_runner()
+    client = object()
+    calls: list[tuple[object, str, str, str]] = []
+    response = {
+        "visionSearchPhoto": {
+            "result": 1,
+            "feeds": [{"photo": {"id": "video-1"}}],
+        }
+    }
+
+    async def search(
+        client_value: object,
+        keyword: str,
+        pcursor: str,
+        session_id: str,
+    ) -> object:
+        calls.append((client_value, keyword, pcursor, session_id))
+        return response
+
+    result = asyncio.run(
+        runner.search_kuaishou_with_result_guard(
+            client,
+            "AI",
+            "1",
+            "",
+            search,
+        )
+    )
+
+    assert result is response
+    assert calls == [(client, "AI", "1", "")]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"visionSearchPhoto": {"result": 50, "feeds": []}},
+        {"visionSearchPhoto": {"result": 1, "feeds": []}},
+        {"visionSearchPhoto": {"result": 1, "feeds": None}},
+    ],
+)
+def test_runner_rejects_unusable_kuaishou_search_response(
+    response: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+
+    async def search(
+        client_value: object,
+        keyword: str,
+        pcursor: str,
+        session_id: str,
+    ) -> object:
+        return response
+
+    with pytest.raises(RuntimeError, match="no usable results"):
+        asyncio.run(
+            runner.search_kuaishou_with_result_guard(
+                object(),
+                "AI",
+                "1",
+                "",
+                search,
+            )
+        )
+
+    assert "upstream search contract unavailable" in capsys.readouterr().out
+
+
 def test_runner_reports_existing_login_state_without_exposing_cookies(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -947,7 +1018,9 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
         in source
     )
     assert (
-        'if args.platform == "ks":\n        install_kuaishou_qrcode_entry_patch()'
+        'if args.platform == "ks":\n'
+        "        install_kuaishou_qrcode_entry_patch()\n"
+        "        install_kuaishou_search_guard()"
         in source
     )
     assert "install_login_state_observer(args.platform)" in source

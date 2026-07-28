@@ -125,6 +125,18 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
   HTTPS source URLs, publication times, reply counts, and non-empty raw
   payloads; every raw payload included forum name and link fields. Active
   tasks and browser processes returned to zero, with no swap use.
+- Kuaishou task `75315ab6-2412-4345-8f4b-f47d7fe2455d` exposed a transparent
+  login overlay. Commit `49dd3ee` added a bounded exact-entry DOM click without
+  modifying upstream. Task `a090a2a4-8e68-4408-87ff-9270032e62f0` then
+  generated a QR code but expired before login completed.
+- Refreshed Kuaishou task `5002a187-cfd6-4622-9ee4-c054223dd205` completed
+  login but produced zero results because the pinned GraphQL search returned
+  `result=50`. The current website uses `POST /rest/v/search/feed`; both
+  headless and headful/Xvfb probes returned `result=2` without result data.
+  Kuaishou is therefore `code_ready + deferred_upstream_breakage`, with an
+  explicit Runner guard preventing zero-result false success. Active tasks and
+  browsers returned to zero, available memory exceeded 960 MiB, and swap use
+  was zero.
 
 ## Acceptance Criteria
 
@@ -137,7 +149,7 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
 - [x] Zhihu has a real successful task or an evidence-backed deferred state.
 - [x] Weibo has a real successful task or an evidence-backed deferred state.
 - [x] Tieba has a real successful task or an evidence-backed deferred state.
-- [ ] Kuaishou has a real successful task or an evidence-backed deferred state.
+- [x] Kuaishou has a real successful task or an evidence-backed deferred state.
 - [ ] Bilibili and Xiaohongshu real regressions pass after relevant changes.
 - [x] Douyin remains disabled and `deferred_resource_constrained`.
 - [ ] Backend tests and frontend lint/test/build pass locally and in deploy.

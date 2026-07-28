@@ -180,6 +180,14 @@ Runner 只在 `ks` 进程内查找该精确入口并派发 DOM `click()`，随�
 重复的一次坐标点击，其余二维码读取、扫码状态和采集流程仍交给未修改的 MediaCrawler。
 入口不存在或二维码未出现时明确失败，不删除任意页面遮罩，也不使用模糊选择器。
 
+2026-07-28 的真实扫码验证确认快手登录成功，但固定上游仍调用 GraphQL
+`visionSearchPhoto`，返回 `result=50` 和 0 条 feeds；当前网页已改用
+`POST /rest/v/search/feed`，且生产环境的 headless 与 headful/Xvfb 对照请求均返回
+`result=2`、无结果数据。Runner 的 `ks` 专用搜索保护会把缺失、非成功、结构错误或空
+feeds 明确转为非零失败，禁止 0 条结果被记为 `succeeded`。在完成新 REST 契约兼容和
+真实任务验证前，生产配置必须排除 `ks`，能力状态为
+`code_ready + deferred_upstream_breakage`。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner

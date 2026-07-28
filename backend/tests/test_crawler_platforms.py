@@ -39,7 +39,8 @@ def test_registry_reports_truthful_platform_capabilities() -> None:
     assert capabilities[4].availability_status == "disabled"
     assert capabilities[5].verification_status == "production_verified"
     assert capabilities[6].verification_status == "code_ready"
-    assert all(item.availability_status == "disabled" for item in capabilities[5:])
+    assert capabilities[5].availability_status == "disabled"
+    assert capabilities[6].availability_status == "deferred_upstream_breakage"
     assert [item.icon_label for item in capabilities] == [
         "哔",
         "红",

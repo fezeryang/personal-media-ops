@@ -25,6 +25,15 @@ The pinned history already includes the Tieba PC-page rewrite repair
 `f328ee35b55e25e8aaeb9c847fe8b622e3f3447f` and the Kuaishou pagination repair
 `97e4142733b1ce1744714e29c9e43e540a503021`.
 
+The Kuaishou pagination repair only stops retrying after an empty response; it
+does not update the search transport. Production verification on 2026-07-28
+showed that the pinned GraphQL `visionSearchPhoto` call returns `result=50`
+with no feeds, while the website now sends `POST /rest/v/search/feed`.
+Headless and headful/Xvfb website requests both returned `result=2` without
+result data on the production host. Kuaishou therefore remains
+`deferred_upstream_breakage`; Personal Media Ops fails this response closed
+instead of recording a zero-result success.
+
 Production inspection on 2026-07-28 found two remaining Tieba integration
 gaps at this pinned head: Baidu navigation prefers its HTTP Tieba link before
 HTTPS and can land on `百度安全验证`, while QR login still falls back only to
