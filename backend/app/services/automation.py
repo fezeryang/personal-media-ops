@@ -245,6 +245,11 @@ class AutomationCoordinator:
         if creator is None:
             raise AutomationNotFoundError("creator not found")
         self._require_production_mode(str(creator["platform"]), "creator")
+        if not self.repository.creator_watch_target_available(creator_id):
+            raise AutomationCapabilityError(
+                "creator has no reusable platform target; "
+                "collect it through creator mode first"
+            )
         try:
             return self.repository.create_watch(
                 user_id=user_id,

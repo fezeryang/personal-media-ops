@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from app.services.scheduling import next_scheduled_time
 
 ACTIVE_TASK_STATUSES = {"pending", "running", "waiting_login"}
 TERMINAL_TASK_STATUSES = {"succeeded", "failed", "cancelled"}
+PRIVACY_SAFE_CREATOR_ID = re.compile(r"^[0-9a-f]{16}$")
 
 
 def _new_id() -> str:
@@ -385,6 +387,7 @@ class AutomationRepository:
         mode: str,
         keywords: str | None,
         creator_ids: Sequence[str],
+        creator_urls: Sequence[str] = (),
         requested_count: int,
         created_at: str,
     ) -> str:
@@ -402,7 +405,7 @@ class AutomationRepository:
             )
             VALUES (
                 ?, ?, ?, ?, 'qrcode', 'pending', ?, 0, ?, ?, ?,
-                NULL, NULL, ?, NULL, NULL, 0, '[]', '[]', ?, '[]',
+                NULL, NULL, ?, NULL, NULL, 0, '[]', '[]', ?, ?,
                 NULL, NULL, 0, 0
             )
             """,
@@ -417,9 +420,59 @@ class AutomationRepository:
                 str(self.settings.qrcode_root / f"{task_id}.png"),
                 created_at,
                 json.dumps(list(creator_ids), separators=(",", ":")),
+                json.dumps(list(creator_urls), separators=(",", ":")),
             ),
         )
         return task_id
+
+    @staticmethod
+    def _stored_creator_targets(
+        connection: sqlite3.Connection,
+        *,
+        creator_id: str,
+        source_creator_id: str,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        provenance = connection.execute(
+            """
+            SELECT task.creator_ids, task.creator_urls
+            FROM crawl_task_entities entity
+            JOIN crawler_tasks task ON task.id = entity.task_id
+            WHERE entity.entity_type = 'creator'
+              AND entity.entity_id = ?
+              AND task.crawler_type = 'creator'
+              AND task.status = 'succeeded'
+            ORDER BY COALESCE(task.finished_at, task.created_at) DESC
+            LIMIT 1
+            """,
+            (creator_id,),
+        ).fetchone()
+        if provenance is not None:
+            creator_ids = tuple(json.loads(str(provenance["creator_ids"])))
+            creator_urls = tuple(json.loads(str(provenance["creator_urls"])))
+            if creator_ids or creator_urls:
+                return creator_ids, creator_urls
+        if not PRIVACY_SAFE_CREATOR_ID.fullmatch(source_creator_id):
+            return (source_creator_id,), ()
+        return (), ()
+
+    def creator_watch_target_available(self, creator_id: str) -> bool:
+        with connect_database(self.database_path) as connection:
+            creator = connection.execute(
+                """
+                SELECT source_creator_id
+                FROM library_creators
+                WHERE id = ?
+                """,
+                (creator_id,),
+            ).fetchone()
+            if creator is None:
+                return False
+            creator_ids, creator_urls = self._stored_creator_targets(
+                connection,
+                creator_id=creator_id,
+                source_creator_id=str(creator["source_creator_id"]),
+            )
+            return bool(creator_ids or creator_urls)
 
     def _create_subscription_run(
         self,
@@ -930,12 +983,22 @@ class AutomationRepository:
         ).fetchone()
         if active is not None:
             return None
+        creator_ids, creator_urls = self._stored_creator_targets(
+            connection,
+            creator_id=str(watch["creator_id"]),
+            source_creator_id=str(watch["source_creator_id"]),
+        )
+        if not creator_ids and not creator_urls:
+            raise sqlite3.IntegrityError(
+                "creator has no reusable platform target"
+            )
         task_id = self._insert_task(
             connection,
             platform=str(watch["platform"]),
             mode="creator",
             keywords=None,
-            creator_ids=(str(watch["source_creator_id"]),),
+            creator_ids=creator_ids,
+            creator_urls=creator_urls,
             requested_count=int(watch["requested_count"]),
             created_at=scheduled_for,
         )

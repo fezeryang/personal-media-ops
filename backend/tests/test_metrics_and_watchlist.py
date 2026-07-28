@@ -201,6 +201,101 @@ def test_creator_watchlist_manual_run_and_capability_gate(
     assert deferred.status_code == 409
 
 
+def test_creator_watch_reuses_provenance_target_for_privacy_safe_id(
+    client: TestClient,
+) -> None:
+    now = "2026-07-28T00:00:00Z"
+    settings = client.app.state.settings
+    crawler = client.app.state.crawler_repository
+    crawler.create(
+        task_id="creator-source-task",
+        platform="bili",
+        crawler_type="creator",
+        keywords=None,
+        login_type="qrcode",
+        creator_ids=("3546860755093522",),
+        requested_count=1,
+        output_dir=str(settings.output_root / "tasks" / "creator-source-task"),
+        log_path=str(settings.log_root / "crawler" / "creator-source-task.log"),
+        qrcode_path=str(settings.qrcode_root / "creator-source-task.png"),
+    )
+    assert crawler.claim_next()["id"] == "creator-source-task"
+    crawler.complete_success("creator-source-task", 1)
+
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO library_creators (
+                id, platform, source_creator_id, display_name, profile_url,
+                avatar_url, description, follower_count, following_count,
+                content_count, first_collected_at, last_collected_at,
+                raw_payload, created_at, updated_at
+            )
+            VALUES (
+                'creator-private', 'bili', '33bf99b7e01f4ab4',
+                'Privacy-safe creator', NULL, NULL, NULL, 100, NULL, 5,
+                ?, ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO crawl_task_entities (
+                task_id, entity_type, entity_id, collected_at
+            )
+            VALUES ('creator-source-task', 'creator', 'creator-private', ?)
+            """,
+            (now,),
+        )
+        connection.execute(
+            """
+            INSERT INTO library_creators (
+                id, platform, source_creator_id, display_name, profile_url,
+                avatar_url, description, follower_count, following_count,
+                content_count, first_collected_at, last_collected_at,
+                raw_payload, created_at, updated_at
+            )
+            VALUES (
+                'creator-private-unresolved', 'bili', '0123456789abcdef',
+                'Unresolved creator', NULL, NULL, NULL, NULL, NULL, NULL,
+                ?, ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+
+    created = client.post(
+        "/api/watchlist",
+        json={
+            "creator_id": "creator-private",
+            "enabled": False,
+            "check_frequency": "daily",
+            "requested_count": 2,
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    assert created.status_code == 201
+    run = client.post(f"/api/watchlist/{created.json()['id']}/run")
+    assert run.status_code == 202
+    task = client.get(
+        f"/api/crawler/tasks/{run.json()['task_id']}"
+    ).json()
+    assert task["creator_ids"] == ["3546860755093522"]
+    unresolved = client.post(
+        "/api/watchlist",
+        json={
+            "creator_id": "creator-private-unresolved",
+            "enabled": False,
+            "check_frequency": "daily",
+            "requested_count": 2,
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    assert unresolved.status_code == 409
+    assert "collect it through creator mode first" in unresolved.json()["detail"]
+
+
 def test_creator_watch_schedule_is_idempotent_and_can_be_paused(
     client: TestClient,
 ) -> None:
