@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from tests.alembic_utils import run_alembic_command
+from tests.conftest import authenticate_test_client
 
 
 def enabled_client(test_settings: Settings) -> TestClient:
@@ -14,7 +15,9 @@ def enabled_client(test_settings: Settings) -> TestClient:
         enabled_platforms=("bili", "xhs", "zhihu", "wb", "tieba", "ks"),
     )
     run_alembic_command(settings.database_path, "upgrade", "head")
-    return TestClient(create_app(settings))
+    client = TestClient(create_app(settings))
+    authenticate_test_client(client, settings)
+    return client
 
 
 def test_capabilities_expose_seven_by_five_mode_matrix(

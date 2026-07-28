@@ -4,6 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.models.library import (
+    ContentMetricSnapshotPage,
+    CreatorMetricSnapshotPage,
     LibraryCommentPage,
     LibraryContentDetail,
     LibraryContentPage,
@@ -12,8 +14,13 @@ from app.models.library import (
     LibraryStats,
 )
 from app.repositories.library import ContentSort, LibraryRepository
+from app.security.dependencies import require_scopes
 
-router = APIRouter(prefix="/library", tags=["library"])
+router = APIRouter(
+    prefix="/library",
+    tags=["library"],
+    dependencies=[Depends(require_scopes("library:read"))],
+)
 MAX_LIBRARY_LIMIT = 100
 
 
@@ -29,8 +36,6 @@ PlatformQuery = Annotated[
     str | None,
     Query(min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9_-]+$"),
 ]
-
-
 def _utc_query_timestamp(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -56,6 +61,8 @@ def list_library_contents(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     has_comments: bool | None = None,
+    tag_id: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    is_favorite: bool | None = None,
     sort: ContentSort = "last_collected_desc",
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=MAX_LIBRARY_LIMIT)] = 20,
@@ -68,6 +75,8 @@ def list_library_contents(
         date_from=_utc_query_timestamp(date_from),
         date_to=_utc_query_timestamp(date_to),
         has_comments=has_comments,
+        tag_id=tag_id,
+        is_favorite=is_favorite,
         sort=sort,
         offset=offset,
         limit=limit,
@@ -84,6 +93,30 @@ def get_library_content(
     if content is None:
         raise HTTPException(status_code=404, detail="Library content not found")
     return content
+
+
+@router.get(
+    "/contents/{content_id}/metrics",
+    response_model=ContentMetricSnapshotPage,
+)
+def list_content_metrics(
+    content_id: str,
+    repository: LibraryDependency,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIBRARY_LIMIT)] = 50,
+) -> dict[str, object]:
+    result = repository.list_content_metric_snapshots(
+        content_id=content_id,
+        date_from=_utc_query_timestamp(date_from),
+        date_to=_utc_query_timestamp(date_to),
+        offset=offset,
+        limit=limit,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Library content not found")
+    return result
 
 
 @router.get("/creators", response_model=LibraryCreatorPage)
@@ -112,6 +145,30 @@ def get_library_creator(
     if creator is None:
         raise HTTPException(status_code=404, detail="Library creator not found")
     return creator
+
+
+@router.get(
+    "/creators/{creator_id}/metrics",
+    response_model=CreatorMetricSnapshotPage,
+)
+def list_creator_metrics(
+    creator_id: str,
+    repository: LibraryDependency,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIBRARY_LIMIT)] = 50,
+) -> dict[str, object]:
+    result = repository.list_creator_metric_snapshots(
+        creator_id=creator_id,
+        date_from=_utc_query_timestamp(date_from),
+        date_to=_utc_query_timestamp(date_to),
+        offset=offset,
+        limit=limit,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Library creator not found")
+    return result
 
 
 @router.get("/comments", response_model=LibraryCommentPage)

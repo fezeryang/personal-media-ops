@@ -1,6 +1,7 @@
+import hashlib
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -61,6 +62,27 @@ def _page(
         "next_offset": offset + len(items),
         "has_more": has_more,
     }
+
+
+class IngestionResult(dict[str, int]):
+    def __init__(
+        self,
+        *,
+        contents: int,
+        creators: int,
+        comments: int,
+        new_content_count: int,
+        existing_content_count: int,
+        changed_content_count: int,
+    ) -> None:
+        super().__init__(
+            contents=contents,
+            creators=creators,
+            comments=comments,
+        )
+        self.new_content_count = new_content_count
+        self.existing_content_count = existing_content_count
+        self.changed_content_count = changed_content_count
 
 
 class LibraryRepository:
@@ -373,7 +395,7 @@ class LibraryRepository:
         *,
         task_id: str,
         batch: TaskEntityBatch,
-    ) -> dict[str, int]:
+    ) -> IngestionResult:
         collected_at = utc_now()
         connection = connect_database(self.database_path)
         try:
@@ -391,6 +413,9 @@ class LibraryRepository:
             content_ids: list[str] = []
             comment_ids: list[str] = []
             task_creator_ids: set[str] = set()
+            new_content_count = 0
+            existing_content_count = 0
+            changed_content_count = 0
 
             for creator in batch.creators:
                 identifier = self._upsert_creator(
@@ -400,10 +425,50 @@ class LibraryRepository:
                 )
                 creator_ids[(creator.platform, creator.source_creator_id)] = identifier
                 task_creator_ids.add(identifier)
+                self._capture_creator_snapshot(
+                    connection,
+                    creator_id=identifier,
+                    captured_at=collected_at,
+                )
 
             for content in batch.contents:
+                existing = connection.execute(
+                    """
+                    SELECT view_count, like_count, favorite_count,
+                           comment_count, share_count
+                    FROM library_contents
+                    WHERE platform = ? AND source_content_id = ?
+                    """,
+                    (content.platform, content.source_content_id),
+                ).fetchone()
+                if existing is None:
+                    new_content_count += 1
+                else:
+                    existing_content_count += 1
+                    incoming_metrics = (
+                        content.view_count,
+                        content.like_count,
+                        content.favorite_count,
+                        content.comment_count,
+                        content.share_count,
+                    )
+                    previous_metrics = tuple(existing)
+                    if any(
+                        incoming is not None and incoming != previous
+                        for incoming, previous in zip(
+                            incoming_metrics,
+                            previous_metrics,
+                            strict=True,
+                        )
+                    ):
+                        changed_content_count += 1
                 identifier = self._upsert_content(connection, content, collected_at)
                 content_ids.append(identifier)
+                self._capture_content_snapshot(
+                    connection,
+                    content_id=identifier,
+                    captured_at=collected_at,
+                )
                 if content.author_source_id is not None:
                     creator_key = (content.platform, content.author_source_id)
                     creator_id = creator_ids.get(creator_key)
@@ -426,6 +491,11 @@ class LibraryRepository:
                             collected_at,
                         )
                         creator_ids[creator_key] = creator_id
+                        self._capture_creator_snapshot(
+                            connection,
+                            creator_id=creator_id,
+                            captured_at=collected_at,
+                        )
                     task_creator_ids.add(creator_id)
                     connection.execute(
                         """
@@ -474,17 +544,144 @@ class LibraryRepository:
             )
             if updated.rowcount != 1:
                 raise RuntimeError("crawler task completion state changed")
+            connection.execute(
+                """
+                UPDATE subscription_run_tasks
+                SET new_content_count = ?, existing_content_count = ?,
+                    changed_content_count = ?, error_summary = NULL
+                WHERE task_id = ?
+                """,
+                (
+                    new_content_count,
+                    existing_content_count,
+                    changed_content_count,
+                    task_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE creator_watch_runs
+                SET new_content_count = ?, existing_content_count = ?,
+                    changed_content_count = ?, error_summary = NULL
+                WHERE task_id = ?
+                """,
+                (
+                    new_content_count,
+                    existing_content_count,
+                    changed_content_count,
+                    task_id,
+                ),
+            )
             connection.commit()
-            return {
-                "contents": len(content_ids),
-                "creators": len(task_creator_ids),
-                "comments": len(comment_ids),
-            }
+            return IngestionResult(
+                contents=len(content_ids),
+                creators=len(task_creator_ids),
+                comments=len(comment_ids),
+                new_content_count=new_content_count,
+                existing_content_count=existing_content_count,
+                changed_content_count=changed_content_count,
+            )
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _snapshot_hash(values: tuple[object, ...]) -> str:
+        payload = json.dumps(values, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _snapshot_cutoff(captured_at: str) -> str:
+        captured = datetime.fromisoformat(captured_at).astimezone(UTC)
+        return (captured - timedelta(minutes=15)).isoformat().replace(
+            "+00:00",
+            "Z",
+        )
+
+    def _capture_content_snapshot(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        content_id: str,
+        captured_at: str,
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT view_count, like_count, favorite_count,
+                   comment_count, share_count
+            FROM library_contents WHERE id = ?
+            """,
+            (content_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("content disappeared before metric snapshot")
+        values = tuple(row)
+        if all(value is None for value in values):
+            return
+        metrics_hash = self._snapshot_hash(values)
+        duplicate = connection.execute(
+            """
+            SELECT 1 FROM content_metric_snapshots
+            WHERE content_id = ? AND metrics_hash = ? AND captured_at >= ?
+            LIMIT 1
+            """,
+            (content_id, metrics_hash, self._snapshot_cutoff(captured_at)),
+        ).fetchone()
+        if duplicate is not None:
+            return
+        connection.execute(
+            """
+            INSERT INTO content_metric_snapshots (
+                id, content_id, captured_at, view_count, like_count,
+                favorite_count, comment_count, share_count, metrics_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_new_id(), content_id, captured_at, *values, metrics_hash),
+        )
+
+    def _capture_creator_snapshot(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        creator_id: str,
+        captured_at: str,
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT follower_count, following_count, content_count
+            FROM library_creators WHERE id = ?
+            """,
+            (creator_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("creator disappeared before metric snapshot")
+        values = tuple(row)
+        if all(value is None for value in values):
+            return
+        metrics_hash = self._snapshot_hash(values)
+        duplicate = connection.execute(
+            """
+            SELECT 1 FROM creator_metric_snapshots
+            WHERE creator_id = ? AND metrics_hash = ? AND captured_at >= ?
+            LIMIT 1
+            """,
+            (creator_id, metrics_hash, self._snapshot_cutoff(captured_at)),
+        ).fetchone()
+        if duplicate is not None:
+            return
+        connection.execute(
+            """
+            INSERT INTO creator_metric_snapshots (
+                id, creator_id, captured_at, follower_count,
+                following_count, content_count, metrics_hash
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_new_id(), creator_id, captured_at, *values, metrics_hash),
+        )
 
     def list_contents(
         self,
@@ -496,6 +693,8 @@ class LibraryRepository:
         date_from: str | None = None,
         date_to: str | None = None,
         has_comments: bool | None = None,
+        tag_id: str | None = None,
+        is_favorite: bool | None = None,
         sort: ContentSort = "last_collected_desc",
         offset: int = 0,
         limit: int = 20,
@@ -530,6 +729,15 @@ class LibraryRepository:
         )
         if has_comments is not None:
             clauses.append(comment_exists if has_comments else f"NOT {comment_exists}")
+        if tag_id:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM library_content_tags tagged "
+                "WHERE tagged.content_id = c.id AND tagged.tag_id = ?)"
+            )
+            values.append(tag_id)
+        if is_favorite is not None:
+            clauses.append("c.is_favorite = ?")
+            values.append(int(is_favorite))
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         order_by = {
             "last_collected_desc": "c.last_collected_at DESC, c.id DESC",
@@ -547,6 +755,7 @@ class LibraryRepository:
                        c.first_collected_at, c.last_collected_at,
                        c.source_keyword, c.view_count, c.like_count,
                        c.favorite_count, c.comment_count, c.share_count,
+                       c.is_favorite,
                        {comment_exists} AS has_comments
                 FROM library_contents c
                 {where}
@@ -558,6 +767,31 @@ class LibraryRepository:
         page = _page(rows, offset=offset, limit=limit)
         for item in page["items"]:
             item["has_comments"] = bool(item["has_comments"])
+            item["is_favorite"] = bool(item["is_favorite"])
+            item["tags"] = []
+        if page["items"]:
+            content_ids = [str(item["id"]) for item in page["items"]]
+            placeholders = ",".join("?" for _ in content_ids)
+            with connect_database(self.database_path) as connection:
+                tags = connection.execute(
+                    f"""
+                    SELECT link.content_id, tag.id, tag.name
+                    FROM library_content_tags link
+                    JOIN library_tags tag ON tag.id = link.tag_id
+                    WHERE link.content_id IN ({placeholders})
+                    ORDER BY tag.name COLLATE NOCASE
+                    """,
+                    content_ids,
+                ).fetchall()
+            by_content: dict[str, list[dict[str, str]]] = {
+                content_id: [] for content_id in content_ids
+            }
+            for tag in tags:
+                by_content[str(tag["content_id"])].append(
+                    {"id": str(tag["id"]), "name": str(tag["name"])}
+                )
+            for item in page["items"]:
+                item["tags"] = by_content[str(item["id"])]
         return page
 
     def get_content(
@@ -584,6 +818,7 @@ class LibraryRepository:
                 return None
             result = dict(row)
             result["has_comments"] = bool(result["has_comments"])
+            result["is_favorite"] = bool(result["is_favorite"])
             raw_payload = result.pop("raw_payload")
             result["raw_payload"] = _read_payload(raw_payload) if include_raw else None
             creator = connection.execute(
@@ -622,9 +857,20 @@ class LibraryRepository:
                 """,
                 (content_id,),
             ).fetchall()
+            tags = connection.execute(
+                """
+                SELECT tag.id, tag.name
+                FROM library_tags tag
+                JOIN library_content_tags link ON link.tag_id = tag.id
+                WHERE link.content_id = ?
+                ORDER BY tag.name COLLATE NOCASE
+                """,
+                (content_id,),
+            ).fetchall()
         result["creator"] = dict(creator) if creator is not None else None
         result["comments"] = [dict(item) for item in comments]
         result["tasks"] = [dict(item) for item in tasks]
+        result["tags"] = [dict(item) for item in tags]
         return result
 
     def list_creators(
@@ -677,27 +923,6 @@ class LibraryRepository:
             result = dict(row)
             raw_payload = result.pop("raw_payload")
             result["raw_payload"] = _read_payload(raw_payload) if include_raw else None
-            contents = connection.execute(
-                """
-                SELECT c.id, c.platform, c.source_content_id, c.content_type,
-                       c.title, c.description, c.source_url, c.cover_url,
-                       c.author_source_id, c.author_name, c.published_at,
-                       c.first_collected_at, c.last_collected_at,
-                       c.source_keyword, c.view_count, c.like_count,
-                       c.favorite_count, c.comment_count, c.share_count,
-                       EXISTS (
-                           SELECT 1 FROM library_comments cm
-                           WHERE cm.platform = c.platform
-                             AND cm.source_content_id = c.source_content_id
-                       ) AS has_comments
-                FROM library_contents c
-                JOIN content_creator_links link ON link.content_id = c.id
-                WHERE link.creator_id = ?
-                ORDER BY c.last_collected_at DESC
-                LIMIT 100
-                """,
-                (creator_id,),
-            ).fetchall()
             tasks = connection.execute(
                 """
                 SELECT task_id, collected_at
@@ -707,11 +932,64 @@ class LibraryRepository:
                 """,
                 (creator_id,),
             ).fetchall()
-        result["contents"] = [dict(item) for item in contents]
-        for content in result["contents"]:
-            content["has_comments"] = bool(content["has_comments"])
+        content_page = self.list_creator_contents(
+            creator_id=creator_id,
+            offset=0,
+            limit=100,
+        )
+        result["contents"] = (
+            content_page["items"] if content_page is not None else []
+        )
         result["tasks"] = [dict(item) for item in tasks]
         return result
+
+    def list_creator_contents(
+        self,
+        *,
+        creator_id: str,
+        offset: int,
+        limit: int,
+    ) -> dict[str, object] | None:
+        with connect_database(self.database_path) as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM library_creators WHERE id = ?",
+                (creator_id,),
+            ).fetchone()
+            if exists is None:
+                return None
+            rows = connection.execute(
+                """
+                SELECT c.id, c.platform, c.source_content_id, c.content_type,
+                       c.title, c.description, c.source_url, c.cover_url,
+                       c.author_source_id, c.author_name, c.published_at,
+                       c.first_collected_at, c.last_collected_at,
+                       c.source_keyword, c.view_count, c.like_count,
+                       c.favorite_count, c.comment_count, c.share_count,
+                       c.is_favorite,
+                       EXISTS (
+                           SELECT 1 FROM library_comments cm
+                           WHERE cm.platform = c.platform
+                             AND cm.source_content_id = c.source_content_id
+                       ) AS has_comments
+                FROM library_contents c
+                JOIN content_creator_links link ON link.content_id = c.id
+                WHERE link.creator_id = ?
+                ORDER BY c.last_collected_at DESC, c.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (creator_id, limit + 1, offset),
+            ).fetchall()
+        page = _page(rows, offset=offset, limit=limit)
+        items = page["items"]
+        if not isinstance(items, list):
+            raise TypeError("creator content page is malformed")
+        for content in items:
+            if not isinstance(content, dict):
+                raise TypeError("creator content row is malformed")
+            content["has_comments"] = bool(content["has_comments"])
+            content["is_favorite"] = bool(content["is_favorite"])
+            content["tags"] = []
+        return page
 
     def list_comments(
         self,
@@ -769,3 +1047,129 @@ class LibraryRepository:
                     ).fetchone()[0]
                 ),
             }
+
+    def list_content_metric_snapshots(
+        self,
+        *,
+        content_id: str,
+        date_from: str | None,
+        date_to: str | None,
+        offset: int,
+        limit: int,
+    ) -> dict[str, object] | None:
+        return self._list_metric_snapshots(
+            entity_table="library_contents",
+            snapshot_table="content_metric_snapshots",
+            entity_column="content_id",
+            entity_id=content_id,
+            metric_columns=(
+                "view_count",
+                "like_count",
+                "favorite_count",
+                "comment_count",
+                "share_count",
+            ),
+            date_from=date_from,
+            date_to=date_to,
+            offset=offset,
+            limit=limit,
+        )
+
+    def list_creator_metric_snapshots(
+        self,
+        *,
+        creator_id: str,
+        date_from: str | None,
+        date_to: str | None,
+        offset: int,
+        limit: int,
+    ) -> dict[str, object] | None:
+        return self._list_metric_snapshots(
+            entity_table="library_creators",
+            snapshot_table="creator_metric_snapshots",
+            entity_column="creator_id",
+            entity_id=creator_id,
+            metric_columns=(
+                "follower_count",
+                "following_count",
+                "content_count",
+            ),
+            date_from=date_from,
+            date_to=date_to,
+            offset=offset,
+            limit=limit,
+        )
+
+    def _list_metric_snapshots(
+        self,
+        *,
+        entity_table: str,
+        snapshot_table: str,
+        entity_column: str,
+        entity_id: str,
+        metric_columns: tuple[str, ...],
+        date_from: str | None,
+        date_to: str | None,
+        offset: int,
+        limit: int,
+    ) -> dict[str, object] | None:
+        clauses = [f"{entity_column} = ?"]
+        values: list[object] = [entity_id]
+        if date_from is not None:
+            clauses.append("captured_at >= ?")
+            values.append(date_from)
+        if date_to is not None:
+            clauses.append("captured_at <= ?")
+            values.append(date_to)
+        where = " AND ".join(clauses)
+        with connect_database(self.database_path) as connection:
+            exists = connection.execute(
+                f"SELECT 1 FROM {entity_table} WHERE id = ?",
+                (entity_id,),
+            ).fetchone()
+            if exists is None:
+                return None
+            rows = connection.execute(
+                f"""
+                SELECT * FROM {snapshot_table}
+                WHERE {where}
+                ORDER BY captured_at ASC, id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (*values, limit + 1, offset),
+            ).fetchall()
+            previous = None
+            if offset > 0 and rows:
+                previous = connection.execute(
+                    f"""
+                    SELECT * FROM {snapshot_table}
+                    WHERE {where}
+                    ORDER BY captured_at ASC, id ASC
+                    LIMIT 1 OFFSET ?
+                    """,
+                    (*values, offset - 1),
+                ).fetchone()
+        items: list[dict[str, object]] = []
+        prior = dict(previous) if previous is not None else None
+        for row in rows[:limit]:
+            item = dict(row)
+            item.pop("metrics_hash", None)
+            item["delta_from_previous"] = {
+                column: (
+                    None
+                    if prior is None
+                    or item[column] is None
+                    or prior[column] is None
+                    else int(item[column]) - int(prior[column])
+                )
+                for column in metric_columns
+            }
+            items.append(item)
+            prior = item
+        return {
+            "items": items,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": offset + len(items),
+            "has_more": len(rows) > limit,
+        }

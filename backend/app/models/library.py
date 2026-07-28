@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 LibraryEntityType = Literal["content", "creator", "comment"]
 
@@ -73,6 +73,8 @@ class LibraryContentSummary(BaseModel):
     comment_count: int | None
     share_count: int | None
     has_comments: bool
+    is_favorite: bool = False
+    tags: list["LibraryTagSummary"] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -159,3 +161,52 @@ class LibraryStats(BaseModel):
     contents: int
     creators: int
     comments: int
+
+
+class LibraryTagSummary(BaseModel):
+    id: str
+    name: str
+
+
+class ContentMetricDelta(BaseModel):
+    view_count: int | None
+    like_count: int | None
+    favorite_count: int | None
+    comment_count: int | None
+    share_count: int | None
+
+
+class ContentMetricSnapshot(ContentMetricDelta):
+    id: str
+    content_id: str
+    captured_at: str
+    delta_from_previous: ContentMetricDelta
+
+
+class CreatorMetricDelta(BaseModel):
+    follower_count: int | None
+    following_count: int | None
+    content_count: int | None
+
+
+class CreatorMetricSnapshot(CreatorMetricDelta):
+    id: str
+    creator_id: str
+    captured_at: str
+    delta_from_previous: CreatorMetricDelta
+
+
+class ContentMetricSnapshotPage(BaseModel):
+    items: list[ContentMetricSnapshot]
+    offset: int
+    limit: int
+    next_offset: int
+    has_more: bool
+
+
+class CreatorMetricSnapshotPage(BaseModel):
+    items: list[CreatorMetricSnapshot]
+    offset: int
+    limit: int
+    next_offset: int
+    has_more: bool

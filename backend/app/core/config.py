@@ -20,6 +20,13 @@ class Settings:
     crawler_poll_interval_seconds: float
     douyin_qrcode_startup_timeout_seconds: float
     enabled_platforms: tuple[str, ...]
+    secure_session_cookie: bool = False
+    session_lifetime_seconds: int = 7 * 24 * 60 * 60
+    login_failure_limit: int = 5
+    login_lockout_seconds: int = 15 * 60
+    max_owner_accounts: int = 3
+    automation_poll_interval_seconds: float = 30
+    ai_provider: str = "disabled"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -56,6 +63,33 @@ class Settings:
         )
         if not enabled_platforms:
             raise ValueError("MEDIAOPS_ENABLED_PLATFORMS must not be empty")
+        session_lifetime = int(
+            os.getenv("MEDIAOPS_SESSION_LIFETIME_SECONDS", str(7 * 24 * 60 * 60))
+        )
+        login_failure_limit = int(os.getenv("MEDIAOPS_LOGIN_FAILURE_LIMIT", "5"))
+        login_lockout = int(os.getenv("MEDIAOPS_LOGIN_LOCKOUT_SECONDS", "900"))
+        max_owner_accounts = int(os.getenv("MEDIAOPS_MAX_OWNER_ACCOUNTS", "3"))
+        automation_poll_interval = float(
+            os.getenv("MEDIAOPS_AUTOMATION_POLL_INTERVAL_SECONDS", "30")
+        )
+        if session_lifetime <= 0:
+            raise ValueError("MEDIAOPS_SESSION_LIFETIME_SECONDS must be positive")
+        if login_failure_limit < 2:
+            raise ValueError("MEDIAOPS_LOGIN_FAILURE_LIMIT must be at least 2")
+        if login_lockout <= 0:
+            raise ValueError("MEDIAOPS_LOGIN_LOCKOUT_SECONDS must be positive")
+        if not 1 <= max_owner_accounts <= 10:
+            raise ValueError("MEDIAOPS_MAX_OWNER_ACCOUNTS must be between 1 and 10")
+        if (
+            not math.isfinite(automation_poll_interval)
+            or automation_poll_interval < 5
+        ):
+            raise ValueError(
+                "MEDIAOPS_AUTOMATION_POLL_INTERVAL_SECONDS must be at least 5"
+            )
+        ai_provider = os.getenv("MEDIAOPS_AI_PROVIDER", "disabled").strip()
+        if ai_provider != "disabled":
+            raise ValueError("MEDIAOPS_AI_PROVIDER must remain disabled")
         return cls(
             frontend_origins=origins,
             database_path=Path(
@@ -91,6 +125,16 @@ class Settings:
             crawler_poll_interval_seconds=poll_interval,
             douyin_qrcode_startup_timeout_seconds=(douyin_qrcode_startup_timeout),
             enabled_platforms=enabled_platforms,
+            secure_session_cookie=(
+                os.getenv("MEDIAOPS_SECURE_SESSION_COOKIE", "true").casefold()
+                not in {"0", "false", "no"}
+            ),
+            session_lifetime_seconds=session_lifetime,
+            login_failure_limit=login_failure_limit,
+            login_lockout_seconds=login_lockout,
+            max_owner_accounts=max_owner_accounts,
+            automation_poll_interval_seconds=automation_poll_interval,
+            ai_provider=ai_provider,
         )
 
 

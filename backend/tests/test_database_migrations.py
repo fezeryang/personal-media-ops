@@ -14,6 +14,7 @@ from tests.alembic_utils import run_alembic_command
 LEGACY_REVISION = "0001_legacy_tasks"
 MULTIPLATFORM_REVISION = "0002_multiplatform_tasks"
 REMAINING_PLATFORMS_REVISION = "0003_remaining_platforms"
+LIBRARY_REVISION = "0005_library_entities"
 REGISTERED_PLATFORMS = ("bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks")
 LEGACY_TASK_COLUMNS = (
     "id",
@@ -136,18 +137,40 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
                 (f"{platform}-task", platform),
             )
         assert {
+            "library_contents",
+            "library_creators",
+            "library_comments",
+            "users",
+            "sessions",
+            "api_keys",
+            "subscriptions",
+            "subscription_platforms",
+            "subscription_runs",
+            "subscription_run_tasks",
+            "library_tags",
+            "library_content_tags",
+            "library_collections",
+            "library_collection_items",
+            "creator_watchlist",
+            "creator_watch_runs",
+            "content_metric_snapshots",
+            "creator_metric_snapshots",
+            "trend_signals",
+            "trend_signal_contents",
+            "briefs",
+            "brief_items",
+            "brief_item_contents",
+            "brief_item_trends",
+            "brief_schedules",
+        }.issubset({
             row[0]
             for row in connection.execute(
                 """
                 SELECT name FROM sqlite_master
-                WHERE type = 'table' AND name LIKE 'library_%'
+                WHERE type = 'table'
                 """
             )
-        } == {
-            "library_contents",
-            "library_creators",
-            "library_comments",
-        }
+        })
         indexes = {
             row[0]
             for row in connection.execute(
@@ -163,6 +186,15 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "idx_library_contents_source_keyword",
             "idx_library_comments_content",
             "idx_library_comments_parent",
+            "idx_sessions_user_active",
+            "idx_api_keys_user_active",
+            "idx_subscriptions_due",
+            "idx_subscription_runs_subscription_created",
+            "idx_library_contents_favorite",
+            "idx_content_metric_snapshots_entity_time",
+            "idx_creator_metric_snapshots_entity_time",
+            "idx_trend_signals_window_score",
+            "idx_briefs_user_created",
         }.issubset(indexes)
 
 
@@ -215,6 +247,88 @@ def test_upgrade_from_0003_adds_modes_without_changing_old_task(
             """
         )
     assert old == ("xhs", "search", "AI", "succeeded", 5)
+
+
+def test_upgrade_from_0005_preserves_tasks_and_library_entities(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "stage-six.db"
+    run_alembic_command(database_path, "upgrade", LIBRARY_REVISION)
+    now = "2026-07-28T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawler_tasks (
+                id, platform, crawler_type, keywords, login_type, status,
+                requested_count, actual_count, output_dir, log_path,
+                qrcode_path, created_at, finished_at, cancel_requested
+            )
+            VALUES (
+                'stage-six-task', 'bili', 'search', 'AI Agent', 'qrcode',
+                'succeeded', 2, 1, '/output', '/log', '/qrcode', ?, ?, 0
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO library_contents (
+                id, platform, source_content_id, content_type, title,
+                description, source_url, cover_url, author_source_id,
+                author_name, published_at, first_collected_at,
+                last_collected_at, source_keyword, view_count, like_count,
+                favorite_count, comment_count, share_count, raw_payload,
+                created_at, updated_at
+            )
+            VALUES (
+                'stage-six-content', 'bili', 'BV-stage-six', 'video',
+                'Preserved content', NULL,
+                'https://www.bilibili.com/video/BV-stage-six', NULL,
+                NULL, NULL, NULL, ?, ?, 'AI Agent', 10, 2, NULL, 1,
+                NULL, '{}', ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO crawl_task_entities (
+                task_id, entity_type, entity_id, collected_at
+            )
+            VALUES (
+                'stage-six-task', 'content', 'stage-six-content', ?
+            )
+            """,
+            (now,),
+        )
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        task = connection.execute(
+            """
+            SELECT status, actual_count FROM crawler_tasks
+            WHERE id = 'stage-six-task'
+            """
+        ).fetchone()
+        content = connection.execute(
+            """
+            SELECT title, view_count, is_favorite FROM library_contents
+            WHERE id = 'stage-six-content'
+            """
+        ).fetchone()
+        provenance = connection.execute(
+            """
+            SELECT COUNT(*) FROM crawl_task_entities
+            WHERE task_id = 'stage-six-task'
+            """
+        ).fetchone()[0]
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    assert task == ("succeeded", 1)
+    assert content == ("Preserved content", 10, 0)
+    assert provenance == 1
+    assert integrity == "ok"
+    assert get_current_revision(database_path) == get_head_revision()
 
 
 def test_runtime_head_matches_alembic_script_head(tmp_path: Path) -> None:

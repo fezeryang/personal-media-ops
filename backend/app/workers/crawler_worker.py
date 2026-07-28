@@ -3,6 +3,7 @@ import fcntl
 import os
 import re
 import signal
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, Self
@@ -12,8 +13,14 @@ from app.crawler.adapters import CrawlerPlatformAdapter
 from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
 from app.crawler.results import parse_task_entities
 from app.models.crawler_platform import TaskMode
+from app.repositories.automation import AutomationRepository
 from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
+from app.services.automation import AutomationCoordinator
+from app.services.intelligence.briefs import DeterministicBriefGenerator
+from app.services.intelligence.coordinator import IntelligenceCoordinator
+from app.services.intelligence.trends import TrendService
 
 STREAM_READER_LIMIT_BYTES = 1024 * 1024
 SENSITIVE_LOG_ASSIGNMENT = re.compile(
@@ -93,6 +100,8 @@ class CrawlerWorker:
         terminate_timeout_seconds: float = 5,
         registry: CrawlerPlatformRegistry = platform_registry,
         library_repository: LibraryRepository | None = None,
+        automation_coordinator: AutomationCoordinator | None = None,
+        intelligence_coordinator: IntelligenceCoordinator | None = None,
     ) -> None:
         self.repository = repository
         self.settings = config
@@ -101,13 +110,42 @@ class CrawlerWorker:
         self.library_repository = library_repository or LibraryRepository(
             config.database_path
         )
+        self.automation_coordinator = automation_coordinator or AutomationCoordinator(
+            AutomationRepository(config),
+            config,
+            library_repository=self.library_repository,
+        )
+        intelligence_repository = IntelligenceRepository(config.database_path)
+        self.intelligence_coordinator = (
+            intelligence_coordinator
+            or IntelligenceCoordinator(
+                intelligence_repository,
+                TrendService(intelligence_repository),
+                DeterministicBriefGenerator(intelligence_repository),
+            )
+        )
 
     async def run_forever(self) -> None:
         self.registry.list_capabilities(self.settings.enabled_platforms)
         self.repository.initialize()
         with WorkerLock(self.settings.database_path):
             self.repository.fail_interrupted_tasks()
+            self.automation_coordinator.reconcile_runs()
+            next_automation_poll = 0.0
             while True:
+                loop_time = asyncio.get_running_loop().time()
+                if loop_time >= next_automation_poll:
+                    self.automation_coordinator.schedule_due(
+                        datetime.now(UTC)
+                    )
+                    self.intelligence_coordinator.schedule_due(
+                        datetime.now(UTC)
+                    )
+                    self.automation_coordinator.reconcile_runs()
+                    next_automation_poll = (
+                        loop_time
+                        + self.settings.automation_poll_interval_seconds
+                    )
                 claimed = await self.run_once()
                 if not claimed:
                     await asyncio.sleep(self.settings.crawler_poll_interval_seconds)
@@ -117,6 +155,7 @@ class CrawlerWorker:
         if task is None:
             return False
         await self._execute(task)
+        self.automation_coordinator.reconcile_runs()
         return True
 
     async def _execute(self, task: dict[str, Any]) -> None:

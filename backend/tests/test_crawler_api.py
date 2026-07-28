@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from tests.alembic_utils import run_alembic_command
+from tests.conftest import authenticate_test_client
 
 
 def create_task(
@@ -87,6 +88,7 @@ def test_create_supports_each_configured_remaining_platform(
     )
     run_alembic_command(enabled.database_path, "upgrade", "head")
     with TestClient(create_app(enabled)) as client:
+        authenticate_test_client(client, enabled)
         created = [
             create_task(client, platform=platform)
             for platform in ("zhihu", "wb", "tieba")
@@ -116,6 +118,7 @@ def test_create_rejects_disabled_platform(
     bili_only = replace(test_settings, enabled_platforms=("bili",))
     run_alembic_command(bili_only.database_path, "upgrade", "head")
     with TestClient(create_app(bili_only)) as client:
+        authenticate_test_client(client, bili_only)
         response = client.post(
             "/api/crawler/tasks",
             json={

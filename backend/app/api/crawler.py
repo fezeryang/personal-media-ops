@@ -26,6 +26,7 @@ from app.repositories.crawler_tasks import (
     CrawlerTaskRepository,
     TaskNotCancellableError,
 )
+from app.security.dependencies import require_scopes
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 MAX_LOG_BYTES = 256 * 1024
@@ -69,7 +70,11 @@ def _validated_task_path(
     return expected
 
 
-@router.get("/capabilities", response_model=CrawlerCapabilitiesResponse)
+@router.get(
+    "/capabilities",
+    response_model=CrawlerCapabilitiesResponse,
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def get_crawler_capabilities(
     settings: SettingsDependency,
 ) -> CrawlerCapabilitiesResponse:
@@ -83,7 +88,12 @@ def get_crawler_capabilities(
     )
 
 
-@router.post("/tasks", response_model=CrawlerTaskResponse, status_code=201)
+@router.post(
+    "/tasks",
+    response_model=CrawlerTaskResponse,
+    status_code=201,
+    dependencies=[Depends(require_scopes("tasks:write"))],
+)
 def create_crawler_task(
     payload: CreateCrawlerTaskRequest,
     repository: RepositoryDependency,
@@ -127,12 +137,20 @@ def create_crawler_task(
     )
 
 
-@router.get("/tasks", response_model=list[CrawlerTaskResponse])
+@router.get(
+    "/tasks",
+    response_model=list[CrawlerTaskResponse],
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def list_crawler_tasks(repository: RepositoryDependency) -> list[dict[str, Any]]:
     return repository.list()
 
 
-@router.get("/tasks/{task_id}", response_model=CrawlerTaskResponse)
+@router.get(
+    "/tasks/{task_id}",
+    response_model=CrawlerTaskResponse,
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def get_crawler_task(
     task_id: str,
     repository: RepositoryDependency,
@@ -140,7 +158,11 @@ def get_crawler_task(
     return _get_task_or_404(repository, task_id)
 
 
-@router.get("/tasks/{task_id}/logs", response_class=PlainTextResponse)
+@router.get(
+    "/tasks/{task_id}/logs",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def get_crawler_task_logs(
     task_id: str,
     repository: RepositoryDependency,
@@ -175,7 +197,11 @@ def get_crawler_task_logs(
     )
 
 
-@router.get("/tasks/{task_id}/qrcode", response_model=None)
+@router.get(
+    "/tasks/{task_id}/qrcode",
+    response_model=None,
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def get_crawler_task_qrcode(
     task_id: str,
     repository: RepositoryDependency,
@@ -198,7 +224,11 @@ def get_crawler_task_qrcode(
     return FileResponse(qrcode_path, media_type="image/png", filename="qrcode.png")
 
 
-@router.get("/tasks/{task_id}/results", response_model=CrawlerResultsResponse)
+@router.get(
+    "/tasks/{task_id}/results",
+    response_model=CrawlerResultsResponse,
+    dependencies=[Depends(require_scopes("tasks:read"))],
+)
 def get_crawler_task_results(
     task_id: str,
     repository: RepositoryDependency,
@@ -238,7 +268,11 @@ def get_crawler_task_results(
     }
 
 
-@router.post("/tasks/{task_id}/cancel", response_model=CrawlerTaskResponse)
+@router.post(
+    "/tasks/{task_id}/cancel",
+    response_model=CrawlerTaskResponse,
+    dependencies=[Depends(require_scopes("tasks:write"))],
+)
 def cancel_crawler_task(
     task_id: str,
     repository: RepositoryDependency,
