@@ -137,6 +137,17 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
   explicit Runner guard preventing zero-result false success. Active tasks and
   browsers returned to zero, available memory exceeded 960 MiB, and swap use
   was zero.
+- Post-Runner Bilibili regression task
+  `a9bc34bf-ca4a-4294-a5ed-67c404950661` succeeded with 2/2 results and reused
+  the existing login state. Both records had IDs, titles, authors, HTTPS
+  source URLs, publication times, matching source keywords, and non-empty raw
+  payloads. No QR code or residual browser process remained.
+- Post-Runner Xiaohongshu regression task
+  `730084a4-9a74-42b8-8c42-7acfde7fb39a` succeeded with 2/2 results and reused
+  the existing login state. Both records had IDs, titles, authors,
+  descriptions, HTTPS source URLs, publication times, matching source
+  keywords, and non-empty raw payloads. Active tasks and browser processes
+  returned to zero, available memory was 970 MiB, and swap use was zero.
 
 ## Acceptance Criteria
 
@@ -150,10 +161,10 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
 - [x] Weibo has a real successful task or an evidence-backed deferred state.
 - [x] Tieba has a real successful task or an evidence-backed deferred state.
 - [x] Kuaishou has a real successful task or an evidence-backed deferred state.
-- [ ] Bilibili and Xiaohongshu real regressions pass after relevant changes.
+- [x] Bilibili and Xiaohongshu real regressions pass after relevant changes.
 - [x] Douyin remains disabled and `deferred_resource_constrained`.
-- [ ] Backend tests and frontend lint/test/build pass locally and in deploy.
-- [ ] Code is committed and pushed; production is clean, healthy, idle, and
+- [x] Backend tests and frontend lint/test/build pass locally and in deploy.
+- [x] Code is committed and pushed; production is clean, healthy, idle, and
       has no browser residue.
 
 ## Definition of Done
