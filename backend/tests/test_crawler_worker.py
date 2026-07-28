@@ -422,7 +422,7 @@ args, _ = parser.parse_known_args()
 qrcode = Path(args.qrcode_path)
 qrcode.parent.mkdir(parents=True, exist_ok=True)
 qrcode.write_bytes(b"fake png")
-time.sleep(0.15)
+time.sleep(0.3)
 print("Login successful then wait for redirect", flush=True)
 result_dir = Path(args.output_dir) / "douyin" / "jsonl"
 result_dir.mkdir(parents=True, exist_ok=True)
@@ -435,7 +435,7 @@ result_dir.mkdir(parents=True, exist_ok=True)
     )
     settings = replace(
         worker_settings(test_settings, runner),
-        douyin_qrcode_startup_timeout_seconds=0.05,
+        douyin_qrcode_startup_timeout_seconds=0.2,
         enabled_platforms=("bili", "xhs", "dy"),
     )
     task = seed_task(repository, settings, platform="dy")
