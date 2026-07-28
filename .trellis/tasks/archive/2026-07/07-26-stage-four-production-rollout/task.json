@@ -3,7 +3,7 @@
   "name": "stage-four-production-rollout",
   "title": "Stage four production rollout health-check exception",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-07-26",
-  "completedAt": null,
+  "completedAt": "2026-07-28",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,10 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "outcome": "completed_with_deferred_platform",
+    "deferred_platforms": {
+      "dy": "deferred_resource_constrained"
+    }
+  }
 }

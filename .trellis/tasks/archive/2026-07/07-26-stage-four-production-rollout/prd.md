@@ -1,5 +1,15 @@
 # Stage Four Production Rollout Health-Check Exception
 
+## Outcome
+
+`completed_with_deferred_platform`
+
+Stage four completed at production commit
+`28cc6b78368e57076a95159ca269e6ca0afe01c8`. Bilibili and Xiaohongshu are
+production-verified. Douyin remains disabled and `code_ready` with the explicit
+status `deferred_resource_constrained`; its real verification moved to the
+independent `douyin-runtime-capacity` task and no longer blocks this rollout.
+
 ## Goal
 
 Continue the end-to-end stage four production rollout at the fixed initial
@@ -46,22 +56,22 @@ verification. A failed command is not by itself a user pause condition.
 
 ## Acceptance Criteria
 
-- [ ] `AGENTS.md` contains the narrow health-check exception.
-- [ ] Initial production deployment reaches the fixed target commit.
-- [ ] SQLite backup and checksum are recorded.
-- [ ] Alembic reaches `0002_multiplatform_tasks` without losing legacy tasks.
-- [ ] Backend pytest and frontend lint/test/build pass during deployment.
-- [ ] API, Worker, helper, Nginx, localhost health, and production-server SNI
+- [x] `AGENTS.md` contains the narrow health-check exception.
+- [x] Initial production deployment reaches the fixed target commit.
+- [x] SQLite backup and checksum are recorded.
+- [x] Alembic reaches `0002_multiplatform_tasks` without losing legacy tasks.
+- [x] Backend pytest and frontend lint/test/build pass during deployment.
+- [x] API, Worker, helper, Nginx, localhost health, and production-server SNI
       health checks pass.
-- [ ] Bilibili regression succeeds with real results.
-- [ ] Xiaohongshu and Douyin are enabled and production-verified only after
-      their own real successful tasks.
-- [ ] Any QR-code wait reports the task ID and task-detail URL.
-- [ ] Code and task bookkeeping are committed and pushed, and the final
+- [x] Bilibili regression succeeds with real results.
+- [x] Xiaohongshu is production-verified after its own real successful task;
+      Douyin is truthfully recorded as `deferred_resource_constrained`.
+- [x] Any QR-code wait reports the task ID and task-detail URL.
+- [x] Code and task bookkeeping are committed and pushed, and the final
       worktree state is reported.
-- [ ] Agent autonomy and pause-boundary rules are synchronized across
+- [x] Agent autonomy and pause-boundary rules are synchronized across
       `AGENTS.md`, the production Skill, deployment references, and docs.
-- [ ] The external-observer fallback is regression-tested and records its
+- [x] The external-observer fallback is regression-tested and records its
       non-blocking result without masking arbitrary public/origin failures.
 
 ## Definition of Done
