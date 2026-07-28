@@ -16,8 +16,11 @@ controls, or concurrency controls.
     {
       "platform": "bili",
       "display_name": "哔哩哔哩",
+      "icon_label": "哔",
       "enabled": true,
-      "verification_status": "verified",
+      "verification_status": "production_verified",
+      "availability_status": "enabled",
+      "login_prompt": "使用哔哩哔哩客户端扫码登录",
       "crawler_types": [{"value": "search", "label": "关键词搜索"}],
       "login_types": [{"value": "qrcode", "label": "二维码登录"}],
       "requested_count": {"minimum": 1, "maximum": 20, "default": 20},
@@ -28,10 +31,22 @@ controls, or concurrency controls.
 }
 ```
 
-The registry contains `bili`, `xhs`, and `dy`. `bili` and `xhs` are
-production-verified. `dy` reports `code_ready`. `xhs` and `dy` are disabled
-unless `MEDIAOPS_ENABLED_PLATFORMS` explicitly enables them after operator
-approval.
+The registry contains `bili`, `xhs`, `dy`, `zhihu`, `wb`, `tieba`, and `ks`.
+Verification maturity is independent of availability:
+
+```text
+verification_status:
+  not_implemented | code_ready | production_verified
+
+availability_status:
+  enabled | disabled | deferred_resource_constrained |
+  deferred_upstream_breakage | deferred_login_required
+```
+
+`bili` and `xhs` are production-verified. `dy` is code-ready, disabled, and
+`deferred_resource_constrained`. The four stage-five platforms are code-ready
+and disabled until each production rollout explicitly enables and verifies
+it. `enabled=false` always prevents task submission.
 
 ## Create a task
 
@@ -98,6 +113,10 @@ through its Adapter, and never returns more than `requested_count`. `limit` is
     "cover_url": "https://example.test/cover.jpg",
     "published_at": 1700000000,
     "source_keyword": "AI Agent",
+    "raw_payload": {
+      "video_id": "BV123",
+      "title": "Example"
+    },
     "metrics": {
       "play_count": 100,
       "like_count": 10,
@@ -114,7 +133,8 @@ through its Adapter, and never returns more than `requested_count`. `limit` is
 ```
 
 Missing source fields become empty or `null`. Unsafe non-HTTP(S) content and
-cover URLs become `null`; raw HTML is never rendered.
+cover URLs become `null`. `raw_payload` is the stored, privacy-normalized JSONL
+object; the workbench renders its JSON as text and never executes HTML.
 
 ## Cancel and polling
 

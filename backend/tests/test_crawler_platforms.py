@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.crawler.adapters import _integer
+from app.crawler.adapters import _integer, _timestamp
 from app.crawler.registry import (
     PlatformDisabledError,
     UnsupportedPlatformError,
@@ -13,16 +13,50 @@ from app.crawler.registry import (
 def test_registry_reports_truthful_platform_capabilities() -> None:
     capabilities = platform_registry.list_capabilities(("bili",))
 
-    assert [item.platform for item in capabilities] == ["bili", "xhs", "dy"]
+    assert [item.platform for item in capabilities] == [
+        "bili",
+        "xhs",
+        "dy",
+        "zhihu",
+        "wb",
+        "tieba",
+        "ks",
+    ]
     assert capabilities[0].enabled is True
-    assert capabilities[0].verification_status == "verified"
+    assert capabilities[0].verification_status == "production_verified"
+    assert capabilities[0].availability_status == "enabled"
     assert capabilities[1].enabled is False
-    assert capabilities[1].verification_status == "verified"
+    assert capabilities[1].verification_status == "production_verified"
+    assert capabilities[1].availability_status == "disabled"
     assert capabilities[2].enabled is False
     assert capabilities[2].verification_status == "code_ready"
+    assert capabilities[2].availability_status == "deferred_resource_constrained"
+    assert all(
+        item.verification_status == "code_ready" for item in capabilities[3:]
+    )
+    assert all(item.availability_status == "disabled" for item in capabilities[3:])
+    assert [item.icon_label for item in capabilities] == [
+        "哔",
+        "红",
+        "抖",
+        "知",
+        "微",
+        "贴",
+        "快",
+    ]
+    assert all(item.login_prompt for item in capabilities)
     assert all(item.crawler_types[0].value == "search" for item in capabilities)
     assert all(item.login_types[0].value == "qrcode" for item in capabilities)
     assert all(item.requested_count.maximum == 20 for item in capabilities)
+    assert [item.requested_count.default for item in capabilities] == [
+        20,
+        20,
+        3,
+        5,
+        5,
+        5,
+        3,
+    ]
     assert all(item.supports_comments is False for item in capabilities)
 
 
@@ -33,7 +67,9 @@ def test_registry_rejects_unknown_or_disabled_platform() -> None:
         platform_registry.require_enabled("xhs", ("bili",))
 
 
-@pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
+@pytest.mark.parametrize(
+    "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
+)
 def test_adapter_builds_fixed_safe_runner_arguments(platform: str) -> None:
     adapter = platform_registry.get(platform)
 
@@ -54,7 +90,15 @@ def test_adapter_builds_fixed_safe_runner_arguments(platform: str) -> None:
 
 @pytest.mark.parametrize(
     ("platform", "expected"),
-    [("bili", "true"), ("xhs", "true"), ("dy", "false")],
+    [
+        ("bili", "true"),
+        ("xhs", "true"),
+        ("dy", "false"),
+        ("zhihu", "true"),
+        ("wb", "true"),
+        ("tieba", "true"),
+        ("ks", "true"),
+    ],
 )
 def test_adapter_requests_headful_browser_only_for_douyin(
     platform: str,
@@ -149,6 +193,89 @@ def test_adapter_requests_headful_browser_only_for_douyin(
                 "play_count": None,
             },
         ),
+        (
+            "zhihu",
+            {
+                "content_id": "answer-1",
+                "content_type": "answer",
+                "title": "Zhihu title",
+                "desc": "Zhihu description",
+                "user_nickname": "Zhihu author",
+                "content_url": "https://www.zhihu.com/question/1/answer/2",
+                "voteup_count": "9",
+                "comment_count": "7",
+                "created_time": 1700000000,
+                "source_keyword": "AI",
+            },
+            {
+                "content_id": "answer-1",
+                "content_url": "https://www.zhihu.com/question/1/answer/2",
+                "cover_url": None,
+                "play_count": None,
+            },
+        ),
+        (
+            "wb",
+            {
+                "note_id": "weibo-1",
+                "content": "Weibo plain text",
+                "nickname": "Weibo author",
+                "note_url": "https://m.weibo.cn/detail/weibo-1",
+                "liked_count": "9",
+                "comments_count": "7",
+                "shared_count": "6",
+                "create_time": 1700000000,
+                "source_keyword": "AI",
+            },
+            {
+                "content_id": "weibo-1",
+                "content_url": "https://m.weibo.cn/detail/weibo-1",
+                "cover_url": None,
+                "play_count": None,
+            },
+        ),
+        (
+            "tieba",
+            {
+                "note_id": "tieba-1",
+                "title": "Tieba title",
+                "desc": "Tieba description",
+                "user_nickname": "Tieba author",
+                "note_url": "https://tieba.baidu.com/p/1",
+                "tieba_name": "人工智能吧",
+                "total_replay_num": "7",
+                "publish_time": "2026-07-28 12:34:56",
+                "source_keyword": "人工智能",
+            },
+            {
+                "content_id": "tieba-1",
+                "content_url": "https://tieba.baidu.com/p/1",
+                "cover_url": None,
+                "play_count": None,
+            },
+        ),
+        (
+            "ks",
+            {
+                "video_id": "ks-1",
+                "video_type": "video",
+                "title": "Kuaishou title",
+                "desc": "Kuaishou description",
+                "user_nickname": "Kuaishou author",
+                "video_url": "https://www.kuaishou.com/short-video/ks-1",
+                "video_cover_url": "https://example.test/ks.jpg",
+                "viewd_count": "10",
+                "liked_count": "9",
+                "create_time": 1700000000,
+                "source_keyword": "AI",
+            },
+            {
+                "content_id": "ks-1",
+                "content_url": "https://www.kuaishou.com/short-video/ks-1",
+                "cover_url": "https://example.test/ks.jpg",
+                "play_count": 10,
+            },
+        ),
     ],
 )
 def test_adapters_normalize_platform_results(
@@ -160,10 +287,15 @@ def test_adapters_normalize_platform_results(
 
     assert result.platform == platform
     assert result.title
-    assert result.metrics.like_count == 9
-    assert result.metrics.favorite_count == 8
-    assert result.metrics.comment_count == 7
-    assert result.metrics.share_count == 6
+    if platform != "tieba":
+        assert result.metrics.like_count == 9
+    if platform in {"bili", "xhs", "dy"}:
+        assert result.metrics.favorite_count == 8
+    if platform != "ks":
+        assert result.metrics.comment_count == 7
+    if platform in {"bili", "xhs", "dy", "wb"}:
+        assert result.metrics.share_count == 6
+    assert result.raw_payload == raw
     for field, value in expected.items():
         if field == "play_count":
             assert result.metrics.play_count == value
@@ -241,6 +373,26 @@ def test_integer_rejects_oversized_plain_numeric_text() -> None:
     assert _integer("9" * 5000) is None
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1700000000, 1700000000),
+        ("1700000000", 1700000000),
+        ("2026-07-28T12:34:56Z", 1785242096),
+        ("2026-07-28 12:34:56", 1785242096),
+        ("2026-07-28", 1785196800),
+        ("not-a-date", None),
+        (-1, None),
+        (None, None),
+    ],
+)
+def test_timestamp_normalizes_numeric_and_text_dates(
+    value: object,
+    expected: int | None,
+) -> None:
+    assert _timestamp(value) == expected
+
+
 def test_xhs_adapter_normalizes_abbreviated_metric_counts() -> None:
     raw = {
         "note_id": "note-prod-1",
@@ -298,6 +450,10 @@ def _write_result_file(task_dir: Path, storage_directory: str, name: str) -> Pat
         ("dy", "dy"),
         ("dy", "douyin"),
         ("xhs", "xhs"),
+        ("zhihu", "zhihu"),
+        ("wb", "weibo"),
+        ("tieba", "tieba"),
+        ("ks", "kuaishou"),
     ],
 )
 def test_content_result_files_supports_each_storage_layout(
@@ -355,7 +511,9 @@ def test_content_result_files_rejects_paths_escaping_task_directory(
         platform_registry.get("bili").content_result_files(task_dir)
 
 
-@pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
+@pytest.mark.parametrize(
+    "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
+)
 def test_login_success_detection_ignores_qr_save_line(platform: str) -> None:
     adapter = platform_registry.get(platform)
 
@@ -363,3 +521,25 @@ def test_login_success_detection_ignores_qr_save_line(platform: str) -> None:
         adapter.is_login_success("[MediaOps] QR code saved: /fixed/code.png") is False
     )
     assert adapter.is_login_success("Login successful then wait for 5 seconds") is True
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("Login successful then wait for redirect", "success"),
+        ("[MediaOps] Existing login state ready: zhihu", "success"),
+        ("需要验证码后继续", "captcha_required"),
+        ("Login state expired, please login again", "login_expired"),
+        ("QR code login timeout", "login_timeout"),
+        (
+            "login failed, have not found qrcode please check",
+            "login_timeout",
+        ),
+        ("ordinary crawler log", None),
+    ],
+)
+def test_adapter_classifies_bounded_login_states(
+    line: str,
+    expected: str | None,
+) -> None:
+    assert platform_registry.get("zhihu").classify_login_line(line) == expected

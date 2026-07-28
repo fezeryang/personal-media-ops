@@ -7,6 +7,7 @@ import {
   ImageOff,
   MessageCircle,
   Play,
+  Share2,
   Star,
   Tag,
   UserRound,
@@ -99,12 +100,19 @@ function ResultCard({
           ) : null}
         </div>
 
+        {item.description ? (
+          <p className="mt-3 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-muted">
+            {item.description}
+          </p>
+        ) : null}
+
         <div className="mt-4 flex flex-wrap gap-2">
           {[
             { label: "播放", value: item.playCount, icon: Play },
             { label: "点赞", value: item.likeCount, icon: Heart },
             { label: "收藏", value: item.favoriteCount, icon: Star },
             { label: "评论", value: item.commentCount, icon: MessageCircle },
+            { label: "分享", value: item.shareCount, icon: Share2 },
           ].map((metric) => (
             <span
               key={metric.label}
@@ -116,6 +124,14 @@ function ResultCard({
             </span>
           ))}
         </div>
+        <details className="mt-3 text-xs text-muted">
+          <summary className="cursor-pointer select-none font-medium">
+            原始字段
+          </summary>
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-paper p-3 font-mono text-[10px] leading-4">
+            {JSON.stringify(item.rawPayload, null, 2)}
+          </pre>
+        </details>
       </div>
     </article>
   );

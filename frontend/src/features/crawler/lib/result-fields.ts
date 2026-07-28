@@ -2,6 +2,7 @@ import type { CrawlerResult } from "../../../api/crawler";
 
 export interface NormalizedCrawlerResult {
   title: string;
+  description: string | null;
   author: string;
   contentUrl: string | null;
   coverUrl: string | null;
@@ -9,8 +10,10 @@ export interface NormalizedCrawlerResult {
   likeCount: string;
   favoriteCount: string;
   commentCount: string;
+  shareCount: string;
   publishedAt: number | null;
   sourceKeyword: string | null;
+  rawPayload: Record<string, unknown>;
 }
 
 function displayCount(value: number | null): string {
@@ -34,6 +37,7 @@ export function normalizeCrawlerResult(
 ): NormalizedCrawlerResult {
   return {
     title: record.title.trim() || record.description?.trim() || "未提供标题",
+    description: record.description?.trim() || null,
     author: record.author_name?.trim() || "未知作者",
     contentUrl: safeHttpUrl(record.content_url),
     coverUrl: safeHttpUrl(record.cover_url),
@@ -41,7 +45,9 @@ export function normalizeCrawlerResult(
     likeCount: displayCount(record.metrics.like_count),
     favoriteCount: displayCount(record.metrics.favorite_count),
     commentCount: displayCount(record.metrics.comment_count),
+    shareCount: displayCount(record.metrics.share_count),
     publishedAt: record.published_at,
     sourceKeyword: record.source_keyword?.trim() || null,
+    rawPayload: record.raw_payload,
   };
 }

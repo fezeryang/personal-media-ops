@@ -45,8 +45,11 @@ describe("crawler API", () => {
           {
             platform: "bili",
             display_name: "哔哩哔哩",
+            icon_label: "哔",
             enabled: true,
-            verification_status: "verified",
+            verification_status: "production_verified",
+            availability_status: "enabled",
+            login_prompt: "使用哔哩哔哩客户端扫码登录",
             crawler_types: [{ value: "search", label: "关键词搜索" }],
             login_types: [{ value: "qrcode", label: "二维码登录" }],
             requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -56,8 +59,11 @@ describe("crawler API", () => {
           {
             platform: "xhs",
             display_name: "小红书",
+            icon_label: "红",
             enabled: false,
             verification_status: "code_ready",
+            availability_status: "disabled",
+            login_prompt: "使用小红书客户端扫码登录",
             crawler_types: [{ value: "search", label: "关键词搜索" }],
             login_types: [{ value: "qrcode", label: "二维码登录" }],
             requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -140,6 +146,10 @@ describe("crawler API", () => {
               cover_url: null,
               published_at: 1700000000,
               source_keyword: "AI",
+              raw_payload: {
+                video_id: "BV1",
+                title: "<b>Video</b>",
+              },
               metrics: {
                 play_count: 10,
                 like_count: 9,

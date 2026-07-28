@@ -25,17 +25,20 @@ responses with Zod before returning inferred TypeScript types.
 
 ### 3. Contracts
 
-- Capabilities expose `platform`, display name, enabled state, verification
-  state, fixed crawler/login options, count bounds, and comment support.
+- Capabilities expose `platform`, display/icon name, enabled state, independent
+  verification and availability states, login prompt, fixed crawler/login
+  options, count bounds, and comment support.
 - The create form derives its platform and fixed labels from capabilities. It
   sends only `platform`, `crawler_type`, `keywords`, and `requested_count`.
 - Platform labels preserve both capability dimensions:
-  `verified + enabled` is `已验证`, `verified + disabled` is `已验证，未启用`,
-  `code_ready + enabled` is `代码就绪`, and `code_ready + disabled` is
-  `代码就绪，未启用`. Never infer verification from enabled state.
+  `production_verified + enabled` is `已生产验证`,
+  `production_verified + disabled` is `已生产验证，未启用`, and deferred
+  availability has its precise resource/upstream/login label. Never infer
+  verification from enabled state.
 - Task status remains the six-value backend enum.
 - Results are a paginated unified schema with safe nullable URLs, publication
-  time, source keyword, and nullable numeric metrics.
+  time, source keyword, nullable numeric metrics, and a `raw_payload` record.
+  Raw JSON and HTML-looking strings render only through React text nodes.
 - `VITE_API_BASE_URL` defaults to empty same-origin.
 - Task paths and PID may exist in the compatibility response but are never
   rendered.
@@ -52,8 +55,9 @@ responses with Zod before returning inferred TypeScript types.
 | QR 404 | Return `null` as not-ready |
 | QR non-PNG | Throw QR-format `ApiError(502)` |
 | Non-HTTP(S) result URL | Zod rejects the response |
-| Disabled verified capability | Show `已验证，未启用`; never submit it |
+| Disabled production-verified capability | Show `已生产验证，未启用`; never submit it |
 | Disabled code-ready capability | Show `代码就绪，未启用`; never submit it |
+| Resource-deferred capability | Show `资源限制，暂不可用`; never submit it |
 
 ### 5. Good / Base / Bad Cases
 
@@ -66,9 +70,10 @@ responses with Zod before returning inferred TypeScript types.
 ### 6. Tests Required
 
 Test capability parsing, exact create body, encoded IDs, bounded logs,
-pagination, QR behavior, unified result formatting, unsafe URLs, active status
-logic, capability-driven form submission, and all enabled/verification label
-combinations. At minimum, assert that a disabled verified option stays disabled
+pagination, QR behavior, unified result formatting/raw payload, unsafe URLs,
+active status logic, platform filtering, capability-driven form submission,
+login prompts, and enabled/verification/availability label combinations. At
+minimum, assert that a disabled production-verified option stays disabled
 without being mislabeled as code-ready.
 
 ### 7. Wrong vs Correct
@@ -88,7 +93,7 @@ const result = await requestJson(path, crawlerResultSchema, { signal });
 Wrong:
 
 ```typescript
-const label = capability.enabled ? "已验证" : "代码就绪，未启用";
+const label = capability.enabled ? "已生产验证" : "代码就绪，未启用";
 ```
 
 Correct:

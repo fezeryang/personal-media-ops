@@ -11,8 +11,11 @@ const capabilities = {
     {
       platform: "bili",
       display_name: "哔哩哔哩",
+      icon_label: "哔",
       enabled: false,
-      verification_status: "verified",
+      verification_status: "production_verified",
+      availability_status: "disabled",
+      login_prompt: "使用哔哩哔哩客户端扫码登录",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -22,8 +25,11 @@ const capabilities = {
     {
       platform: "xhs",
       display_name: "小红书",
+      icon_label: "红",
       enabled: true,
-      verification_status: "verified",
+      verification_status: "production_verified",
+      availability_status: "enabled",
+      login_prompt: "使用小红书客户端扫码登录",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -33,14 +39,36 @@ const capabilities = {
     {
       platform: "dy",
       display_name: "抖音",
+      icon_label: "抖",
       enabled: false,
       verification_status: "code_ready",
+      availability_status: "deferred_resource_constrained",
+      login_prompt: "资源条件允许后使用抖音客户端扫码登录",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
       supports_comments: false,
       supports_sub_comments: false,
     },
+    ...[
+      ["zhihu", "知乎", "知"],
+      ["wb", "微博", "微"],
+      ["tieba", "百度贴吧", "贴"],
+      ["ks", "快手", "快"],
+    ].map(([platform, display_name, icon_label]) => ({
+      platform,
+      display_name,
+      icon_label,
+      enabled: false,
+      verification_status: "code_ready",
+      availability_status: "disabled",
+      login_prompt: `使用${display_name}客户端扫码登录`,
+      crawler_types: [{ value: "search", label: "关键词搜索" }],
+      login_types: [{ value: "qrcode", label: "二维码登录" }],
+      requested_count: { minimum: 1, maximum: 20, default: 20 },
+      supports_comments: false,
+      supports_sub_comments: false,
+    })),
   ],
 };
 
@@ -103,14 +131,15 @@ describe("CreateTaskDialog", () => {
       name: "平台",
     });
     expect(
-      screen.getByRole("option", { name: "哔哩哔哩（已验证，未启用）" }),
+      screen.getByRole("option", { name: "哔哩哔哩（已生产验证，未启用）" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("option", { name: "小红书（已验证）" }),
+      screen.getByRole("option", { name: "小红书（已生产验证）" }),
     ).toBeEnabled();
     expect(
-      screen.getByRole("option", { name: "抖音（代码就绪，未启用）" }),
+      screen.getByRole("option", { name: "抖音（资源限制，暂不可用）" }),
     ).toBeDisabled();
+    expect(screen.getAllByRole("option")).toHaveLength(7);
 
     await user.selectOptions(platformSelect, "xhs");
     await user.type(screen.getByLabelText("关键词"), "AI Agent");

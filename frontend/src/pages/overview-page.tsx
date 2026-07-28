@@ -73,7 +73,8 @@ export function OverviewPage() {
   const verifiedPlatforms = capabilities
     .filter(
       (platform) =>
-        platform.enabled && platform.verification_status === "verified",
+        platform.enabled &&
+        platform.verification_status === "production_verified",
     )
     .map((platform) => platform.display_name);
 

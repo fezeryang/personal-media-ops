@@ -12,27 +12,28 @@ import {
   useCrawlerCapabilitiesQuery,
   useCrawlerTasksQuery,
 } from "../features/crawler/hooks/use-crawler-queries";
-import { TASK_STATUS_LABELS } from "../features/crawler/lib/task";
+import {
+  filterCrawlerTasks,
+  TASK_STATUS_LABELS,
+} from "../features/crawler/lib/task";
 
 type StatusFilter = "all" | CrawlerTaskStatus;
+type PlatformFilter = string;
 
 export function TasksPage() {
   const tasksQuery = useCrawlerTasksQuery();
   const capabilitiesQuery = useCrawlerCapabilitiesQuery();
   const [status, setStatus] = useState<StatusFilter>("all");
+  const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [search, setSearch] = useState("");
 
   const filteredTasks = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase("zh-CN");
-    return (tasksQuery.data ?? []).filter((task) => {
-      const matchesStatus = status === "all" || task.status === status;
-      const matchesSearch =
-        !needle ||
-        task.keywords.toLocaleLowerCase("zh-CN").includes(needle) ||
-        task.id.toLocaleLowerCase("zh-CN").includes(needle);
-      return matchesStatus && matchesSearch;
+    return filterCrawlerTasks(tasksQuery.data ?? [], {
+      platform,
+      search,
+      status,
     });
-  }, [search, status, tasksQuery.data]);
+  }, [platform, search, status, tasksQuery.data]);
   const enabledPlatformNames = (
     capabilitiesQuery.data?.platforms.filter((platform) => platform.enabled) ??
     []
@@ -59,7 +60,24 @@ export function TasksPage() {
               aria-label="搜索任务"
             />
           </div>
-          <div className="relative w-full sm:w-44">
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+            <div className="relative w-full sm:w-44">
+              <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+              <select
+                className="h-10 w-full appearance-none rounded-lg border border-line bg-white pl-9 pr-3 text-sm font-medium text-ink outline-none focus:border-signal focus:ring-2 focus:ring-signal/12"
+                value={platform}
+                onChange={(event) => setPlatform(event.currentTarget.value)}
+                aria-label="按平台筛选"
+              >
+                <option value="all">全部平台</option>
+                {(capabilitiesQuery.data?.platforms ?? []).map((capability) => (
+                  <option key={capability.platform} value={capability.platform}>
+                    {capability.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="relative w-full sm:w-44">
             <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <select
               className="h-10 w-full appearance-none rounded-lg border border-line bg-white pl-9 pr-3 text-sm font-medium text-ink outline-none focus:border-signal focus:ring-2 focus:ring-signal/12"
@@ -76,6 +94,7 @@ export function TasksPage() {
                 </option>
               ))}
             </select>
+            </div>
           </div>
         </div>
 

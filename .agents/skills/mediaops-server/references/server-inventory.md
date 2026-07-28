@@ -42,7 +42,11 @@ passwords, private keys, tokens, cookies, or `.env` values.
 | Restricted release helper | `/usr/local/sbin/mediaops-release` |
 | Release helper version | `1` |
 | MediaCrawler checkout | `/opt/mediacrawler` |
+| MediaCrawler pinned commit | `17f66121e0fcc40fc23958b995bec873d422667d` |
+| MediaCrawler branch/worktree | `main` / clean at 2026-07-28 audit |
 | MediaCrawler Python | `/opt/mediacrawler/.venv/bin/python` |
+| MediaCrawler Python version | `3.11.15` |
+| Playwright / browser | `1.61.0` / Chrome for Testing `149.0.7827.55` |
 | Reviewed Runner source | `/opt/personal-media-ops/scripts/crawler/run_mediacrawler.py` |
 | Active Runner | `/var/lib/mediaops/bin/run_mediacrawler.py` |
 

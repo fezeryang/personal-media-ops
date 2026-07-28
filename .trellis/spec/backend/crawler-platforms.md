@@ -11,7 +11,7 @@ normalizing MediaCrawler JSONL, or exposing platform choices to the frontend.
 GET  /api/crawler/capabilities
 POST /api/crawler/tasks
 GET  /api/crawler/tasks/{task_id}/results?offset=N&limit=N
-MEDIAOPS_ENABLED_PLATFORMS=bili[,xhs,dy]
+MEDIAOPS_ENABLED_PLATFORMS=bili[,xhs,zhihu,wb,tieba,ks]
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=<finite positive seconds; default 180>
 ```
 
@@ -20,8 +20,15 @@ Adapters implement capability metadata, fixed Runner arguments,
 
 ## 3. Contracts
 
-- Registry keys are `bili`, `xhs`, and `dy`; it is the backend source of truth.
-- `bili` and `xhs` are `verified`; `dy` is `code_ready`.
+- Registry keys are `bili`, `xhs`, `dy`, `zhihu`, `wb`, `tieba`, and `ks`; it
+  is the backend source of truth.
+- Verification is `not_implemented`, `code_ready`, or
+  `production_verified`. Availability is independently `enabled`, `disabled`,
+  `deferred_resource_constrained`, `deferred_upstream_breakage`, or
+  `deferred_login_required`. `enabled` is the actual task-submission gate.
+- `bili` and `xhs` are `production_verified`; `dy` is `code_ready` and
+  `deferred_resource_constrained`; the four stage-five adapters remain
+  `code_ready` until a real task is recorded.
 - Only explicitly enabled platforms accept new tasks; the default is `bili`.
 - Search, QR login, count `1..20`, one global task, no comments, no
   sub-comments, and no proxy are fixed service constraints.
@@ -63,12 +70,28 @@ Adapters implement capability metadata, fixed Runner arguments,
   excludes it from `MEDIAOPS_ENABLED_PLATFORMS`. Cookie login is not a resource
   fallback because MediaCrawler still launches Chromium and it would introduce
   sensitive browser state.
+- Each Adapter owns display/icon metadata, the unavailable state, login prompt,
+  storage directories, default small count, headless mode, finite pre-QR
+  startup timeout, login-line classification, normalization, and raw payload.
+  The four new store directories are `zhihu`, `weibo`, `tieba`, and
+  `kuaishou`.
+- The Runner wraps the selected upstream client's read-only `pong` method and
+  emits `[MediaOps] Existing login state ready: <platform>` only when the
+  persisted state is valid. It never logs Cookie values. The Worker uses that
+  marker plus Adapter classifiers to distinguish persisted login, QR waiting,
+  captcha, expiration, and timeout without platform branches.
+- Pre-QR timeout and cancellation terminate the whole process group. Seeing a
+  QR file changes the task to `waiting_login`; seeing success returns it to
+  `running`. A success marker before any QR disables the startup deadline.
 - Numeric result fields accept non-negative integers plus platform display
   forms such as `1,544`, `1000+`, `5.7万`, `1.2w`, and `3亿`. Abbreviated
   values use a bounded decimal format; malformed, negative, non-finite, or
   oversized strings normalize to `null` instead of failing result reads.
 - Result items use the unified Pydantic schema and are read incrementally,
   path-checked, paginated, and capped at `requested_count`.
+- `raw_payload` is the privacy-normalized JSONL object. Textual publication
+  times accept ISO-8601 and `YYYY-MM-DD[ HH:MM:SS]` as UTC; malformed values
+  become `null`. React may show raw JSON only as escaped text.
 
 ## 4. Validation & Error Matrix
 
@@ -95,13 +118,16 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin process priority cannot be lowered | Exit before browser startup with an explicit error |
 | Douyin QR code is not ready before its startup deadline | Terminate the task process group and persist an explicit failure |
 | Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
+| Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
+| Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
+| Malformed textual publication time | Normalized publication time is `null` |
 
 ## 5. Good / Base / Bad Cases
 
 - Good: add one Adapter, register it once, test normalized sample output, then
   let the capability API drive the UI.
-- Good: render a disabled-but-verified platform as verified and unavailable;
+- Good: render `production_verified + disabled` as verified and unavailable;
   enabled state does not erase verification history.
 - Base: a missing optional raw field becomes `null` or an empty display value.
 - Bad: hard-code a platform list in the frontend or pass Cookie/path/command
@@ -113,8 +139,9 @@ Adapters implement capability metadata, fixed Runner arguments,
 
 ## 6. Tests Required
 
-Test registry truthfulness, disabled/unknown platforms, fixed commands,
-platform JSONL samples, unsafe URLs/paths, QR progression, result caps, and
+Test registry truthfulness for all seven platforms, disabled/unknown platforms,
+fixed commands, platform JSONL samples, raw payloads, timestamp/null semantics,
+unsafe URLs/paths, QR progression, result caps, and
 cross-platform competing claims. Assert per-platform `--headless` arguments,
 legacy missing-argument compatibility, Xvfb re-exec/failure paths, abbreviated
 metric parsing, malformed/oversized metric rejection, Douyin navigation-race
@@ -122,8 +149,9 @@ recovery, unrelated-error propagation, bounded retry exhaustion, automatic
 Douyin login-dialog detection, visible exact-text fallback, and missing-entry
 failure. Assert that only Douyin receives the fixed niceness increment and
 that priority failures are explicit. Worker tests must assert that a pre-QR
-Douyin timeout terminates the subprocess and persists failure, a ready QR code
-disables that deadline, and Bilibili/Xiaohongshu are unaffected. Configuration
+timeout terminates the subprocess and persists failure, a ready QR code or
+persisted-login marker disables that deadline, captcha terminates the process
+group, and Bilibili/Xiaohongshu are unaffected. Configuration
 tests must reject zero, negative, NaN, and infinite deadlines. Real platform
 tests require explicit authorization and are not part of unit tests.
 

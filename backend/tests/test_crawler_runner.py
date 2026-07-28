@@ -55,7 +55,9 @@ def runner_arguments(
     ]
 
 
-@pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
+@pytest.mark.parametrize(
+    "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
+)
 def test_runner_accepts_only_registered_platform_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -270,6 +272,10 @@ def test_runner_fails_headful_run_without_xvfb(
         ("dy", [10]),
         ("bili", []),
         ("xhs", []),
+        ("zhihu", []),
+        ("wb", []),
+        ("tieba", []),
+        ("ks", []),
     ],
 )
 def test_runner_lowers_only_douyin_process_priority(
@@ -585,6 +591,22 @@ def test_runner_stops_after_bounded_douyin_navigation_retries() -> None:
     ]
 
 
+def test_runner_reports_existing_login_state_without_exposing_cookies(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+
+    async def pong(client: object) -> bool:
+        return True
+
+    observed = runner.create_login_state_observer("zhihu", pong)
+
+    assert asyncio.run(observed(object())) is True
+    output = capsys.readouterr().out
+    assert output == "[MediaOps] Existing login state ready: zhihu\n"
+    assert "cookie" not in output.casefold()
+
+
 def test_runner_forces_mediacrawler_safety_flags() -> None:
     source = RUNNER_PATH.read_text(encoding="utf-8")
 
@@ -600,3 +622,4 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
         'if args.platform == "dy":\n        install_douyin_navigation_retry()'
         in source
     )
+    assert "install_login_state_observer(args.platform)" in source

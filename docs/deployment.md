@@ -79,8 +79,10 @@ MEDIAOPS_DATABASE_PATH=/var/lib/mediaops/mediaops.db \
 
 `0001_legacy_tasks` 会创建空库，或在列结构完全匹配时接管原 B 站任务表；
 `0002_multiplatform_tasks` 将平台约束扩展为 `bili/xhs/dy`，逐列复制原记录，因此
-B 站任务 ID、状态、时间、计数和路径保持不变。应用启动只校验当前 revision，不会
-静默执行迁移。
+B 站任务 ID、状态、时间、计数和路径保持不变。`0003_remaining_platforms` 再将
+约束扩展为 `bili/xhs/dy/zhihu/wb/tieba/ks`，同样逐列复制全部记录，不读取或改写
+JSONL。存在四个新平台记录时，`0003` downgrade 会拒绝执行，避免隐式丢失。应用启动
+只校验当前 revision，不会静默执行迁移。
 
 生产迁移顺序固定为：确认无未审查变更 → SQLite 一致性备份 → 拉取目标代码 → 测试与
 前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查。数据库恢复属于
@@ -111,7 +113,7 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 `/var/lib/mediaops/bin/run_mediacrawler.py`。Runner 必须支持：
 
 ```text
---platform bili|xhs|dy
+--platform bili|xhs|dy|zhihu|wb|tieba|ks
 --crawler-type search
 --keywords <text>
 --login-type qrcode
@@ -124,7 +126,7 @@ Worker 通过参数数组调用固定 Python 和固定 Runner，绝不使用 `sh
 --headless true|false
 ```
 
-`--headless` 由 Adapter 的平台能力决定，不由 API 调用方传入：B 站与小红书为
+`--headless` 由 Adapter 的平台能力决定，不由 API 调用方传入：除抖音外当前平台为
 `true`，抖音为 `false`。抖音站点会对无头浏览器返回“验证码中间页”，登录按钮不会出现，
 任务会在生成二维码前因点击超时失败；有头浏览器在虚拟显示下可正常打开登录弹窗。
 因此当 `--headless false` 且环境没有可用 `DISPLAY` 时，仓库 Runner 会以
@@ -152,13 +154,19 @@ Worker 健康检查被采集任务饿死；B 站与小红书优先级不变。�
 到期会终止整个抖音进程组并明确标记失败。二维码生成后该启动超时立即解除，不会缩短
 操作员的扫码时间。
 
+所有 Adapter 都有有限的二维码启动窗口。Runner 会包装目标平台的只读 `pong`
+登录态探测：已有登录状态有效时仅输出统一的
+`[MediaOps] Existing login state ready: <platform>`，不输出 Cookie 或浏览器数据。
+Worker 因而可以区分已有登录、二维码等待、验证码、登录失效和登录超时；超时、取消和
+明确登录失败都终止完整进程组。该包装只作用于进程内集成 seam，不修改上游源码。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner
 在配置层和 MediaCrawler CLI 参数层都固定关闭代理。保持既有 B 站参数契约意味着
 只发布应用代码不会要求先替换生产 Runner。
 
-仓库 Runner 不属于 MediaCrawler 核心源码。首次启用小红书或抖音 Adapter 前，先以
+仓库 Runner 不属于 MediaCrawler 核心源码。首次启用任一新 Adapter 前，先以
 `mediaops` 身份把已审查版本安装到固定运行路径并验证语法：
 
 ```bash
@@ -168,7 +176,8 @@ install -m 0750 scripts/crawler/run_mediacrawler.py \
   /var/lib/mediaops/bin/run_mediacrawler.py
 ```
 
-不要编辑 `/opt/mediacrawler`。`MEDIAOPS_ENABLED_PLATFORMS` 默认只含 `bili`。
+不要编辑 `/opt/mediacrawler`。固定版本与升级流程见
+`docs/upstream-mediacrawler.md`。`MEDIAOPS_ENABLED_PLATFORMS` 默认只含 `bili`。
 小红书已通过 2026-07-26 的真实运营任务验证，可在操作员批准后显式启用 `xhs`。
 抖音仍是代码就绪状态；只有 Runner、扫码登录、输出和结果转换完成真实验证后，才可把
 `dy` 保留在 `.env` 的启用列表中。代码完成本身不等同于生产验证。
@@ -177,6 +186,10 @@ install -m 0750 scripts/crawler/run_mediacrawler.py \
 明确显示抖音暂不可用。不要改用 Cookie 登录规避此限制：Cookie 属于敏感浏览器登录态，
 而 MediaCrawler 的 Cookie 模式仍会启动 Chromium，不能解决主机资源瓶颈。恢复抖音前
 需要先提供足够的浏览器资源，或引入经过单独授权和评审的官方接口登录方案。
+
+知乎、微博、贴吧、快手的基础代码可以随应用发布，但每次只把一个平台加入
+`MEDIAOPS_ENABLED_PLATFORMS` 并运行小规模真实任务；只有任务成功、结果字段正确、
+浏览器退出和资源恢复后才把该平台标记为 `production_verified`。
 
 ## systemd
 

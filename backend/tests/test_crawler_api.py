@@ -50,23 +50,54 @@ def test_capabilities_report_registry_and_global_limit(
     assert response.status_code == 200
     assert response.json()["max_concurrent_tasks"] == 1
     assert [
-        (item["platform"], item["enabled"], item["verification_status"])
+        (
+            item["platform"],
+            item["enabled"],
+            item["verification_status"],
+            item["availability_status"],
+        )
         for item in response.json()["platforms"]
     ] == [
-        ("bili", True, "verified"),
-        ("xhs", True, "verified"),
-        ("dy", True, "code_ready"),
+        ("bili", True, "production_verified", "enabled"),
+        ("xhs", True, "production_verified", "enabled"),
+        ("dy", False, "code_ready", "deferred_resource_constrained"),
+        ("zhihu", False, "code_ready", "disabled"),
+        ("wb", False, "code_ready", "disabled"),
+        ("tieba", False, "code_ready", "disabled"),
+        ("ks", False, "code_ready", "disabled"),
     ]
+    assert all(item["icon_label"] for item in response.json()["platforms"])
+    assert all(item["login_prompt"] for item in response.json()["platforms"])
 
 
-def test_create_supports_enabled_xhs_and_douyin(
+def test_create_supports_enabled_xhs(
     client: TestClient,
 ) -> None:
     xhs = create_task(client, platform="xhs")
-    dy = create_task(client, platform="dy")
 
     assert xhs["platform"] == "xhs"
-    assert dy["platform"] == "dy"
+
+
+def test_create_supports_each_configured_remaining_platform(
+    test_settings: Settings,
+) -> None:
+    enabled = replace(
+        test_settings,
+        enabled_platforms=("bili", "xhs", "zhihu", "wb", "tieba", "ks"),
+    )
+    run_alembic_command(enabled.database_path, "upgrade", "head")
+    with TestClient(create_app(enabled)) as client:
+        created = [
+            create_task(client, platform=platform)
+            for platform in ("zhihu", "wb", "tieba", "ks")
+        ]
+
+    assert [task["platform"] for task in created] == [
+        "zhihu",
+        "wb",
+        "tieba",
+        "ks",
+    ]
 
 
 def test_create_rejects_disabled_platform(
@@ -179,6 +210,11 @@ def test_results_are_paginated_without_loading_every_line(
                 "cover_url": None,
                 "published_at": None,
                 "source_keyword": None,
+                "raw_payload": {
+                    "video_id": "1",
+                    "title": "Video 1",
+                    "video_play_count": "1",
+                },
                 "metrics": {
                     "play_count": 1,
                     "like_count": None,
@@ -198,6 +234,11 @@ def test_results_are_paginated_without_loading_every_line(
                 "cover_url": None,
                 "published_at": None,
                 "source_keyword": None,
+                "raw_payload": {
+                    "video_id": "2",
+                    "title": "Video 2",
+                    "video_play_count": "2",
+                },
                 "metrics": {
                     "play_count": 2,
                     "like_count": None,

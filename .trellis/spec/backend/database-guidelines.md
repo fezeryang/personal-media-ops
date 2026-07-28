@@ -32,7 +32,10 @@ MEDIAOPS_DATABASE_PATH=/path/to/mediaops.db uv run alembic upgrade head
 
 `0001_legacy_tasks` creates a blank database or adopts the exact legacy column
 set. `0002_multiplatform_tasks` rebuilds the table with the
-`bili/xhs/dy` platform constraint while copying every column. Keep
+`bili/xhs/dy` platform constraint while copying every column.
+`0003_remaining_platforms` rebuilds it for
+`bili/xhs/dy/zhihu/wb/tieba/ks`, preserves every task field, and refuses
+downgrade while any of the four new platform rows exist. Keep
 `app.database_migrations.HEAD_REVISION` synchronized with the Alembic script
 head; a regression test compares them.
 
@@ -87,6 +90,7 @@ The database must be at `HEAD_REVISION` before API or Worker startup.
 | Blank database is upgraded | Alembic creates the current schema |
 | Legacy Bilibili table is upgraded | Existing row values are preserved |
 | Non-Bilibili rows exist during `0002` downgrade | Downgrade fails before rebuild |
+| New-platform rows exist during `0003` downgrade | Downgrade fails before rebuild |
 | Active task exists | `claim_next()` returns `None` |
 | Pending task exists and no active task | Oldest pending task becomes `running` atomically |
 | Worker restarts with active tasks | Active tasks become `failed` with interruption text |
@@ -104,8 +108,9 @@ The database must be at `HEAD_REVISION` before API or Worker startup.
 Repository tests must assert one-task claiming, concurrent claimer exclusion,
 interrupted-task recovery, terminal cancellation conflicts, and persisted
 timestamps/statuses. Migration tests must cover blank and legacy databases,
-row preservation, platform constraints, script-head synchronization, and
-downgrade refusal. API tests must use temporary SQLite files.
+row preservation from both `0001` and `0002`, all seven platform constraints,
+script-head synchronization, and downgrade refusal. API tests must use
+temporary SQLite files.
 
 ### 7. Wrong vs Correct
 

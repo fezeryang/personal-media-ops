@@ -4,7 +4,11 @@ from app.crawler.adapters import (
     BilibiliAdapter,
     CrawlerPlatformAdapter,
     DouyinAdapter,
+    KuaishouAdapter,
+    TiebaAdapter,
+    WeiboAdapter,
     XiaohongshuAdapter,
+    ZhihuAdapter,
 )
 from app.models.crawler_platform import CrawlerPlatformCapability
 
@@ -68,5 +72,9 @@ platform_registry = CrawlerPlatformRegistry(
         BilibiliAdapter(),
         XiaohongshuAdapter(),
         DouyinAdapter(),
+        ZhihuAdapter(),
+        WeiboAdapter(),
+        TiebaAdapter(),
+        KuaishouAdapter(),
     )
 )

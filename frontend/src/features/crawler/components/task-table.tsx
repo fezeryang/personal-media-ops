@@ -5,7 +5,7 @@ import type { CrawlerTask } from "../../../api/crawler";
 import { Button } from "../../../components/ui/button";
 import { cn, formatDateTime, shortTaskId } from "../../../lib/utils";
 import { useCrawlerCapabilitiesQuery } from "../hooks/use-crawler-queries";
-import { platformDisplayName } from "../lib/task";
+import { platformDisplayName, platformIconLabel } from "../lib/task";
 import { TaskStatusBadge } from "./task-status-badge";
 
 interface TaskTableProps {
@@ -115,7 +115,7 @@ export function TaskTable({ tasks, compact = false }: TaskTableProps) {
                 <td className={cn("px-4 py-4", compact && "hidden")}>
                   <span className="inline-flex items-center gap-2 text-sm text-ink">
                     <span className="grid size-6 place-items-center rounded-md bg-signal/10 text-[10px] font-bold uppercase text-signal-strong">
-                      {task.platform.slice(0, 1)}
+                      {platformIconLabel(task.platform, capabilities)}
                     </span>
                     {platformDisplayName(task.platform, capabilities)}
                   </span>

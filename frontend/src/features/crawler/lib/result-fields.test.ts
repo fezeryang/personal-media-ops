@@ -14,6 +14,7 @@ describe("crawler result normalization", () => {
         cover_url: "https://i.example.test/cover.jpg",
         published_at: 1700000000,
         source_keyword: "AI Agent",
+        raw_payload: { video_id: "BV123" },
         metrics: {
           play_count: 12000,
           like_count: 456,
@@ -33,6 +34,9 @@ describe("crawler result normalization", () => {
       commentCount: "9",
       publishedAt: 1700000000,
       sourceKeyword: "AI Agent",
+      description: null,
+      shareCount: "3",
+      rawPayload: { video_id: "BV123" },
     });
   });
 
@@ -49,6 +53,9 @@ describe("crawler result normalization", () => {
         cover_url: "data:text/html,bad",
         published_at: null,
         source_keyword: null,
+        raw_payload: {
+          content: "<script>alert(1)</script>",
+        },
         metrics: {
           play_count: null,
           like_count: null,
@@ -68,6 +75,11 @@ describe("crawler result normalization", () => {
       commentCount: "—",
       publishedAt: null,
       sourceKeyword: null,
+      description: null,
+      shareCount: "—",
+      rawPayload: {
+        content: "<script>alert(1)</script>",
+      },
     });
   });
 });

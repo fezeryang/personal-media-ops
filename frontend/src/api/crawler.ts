@@ -41,8 +41,21 @@ const capabilityOptionSchema = z.object({
 export const crawlerPlatformCapabilitySchema = z.object({
   platform: z.string(),
   display_name: z.string(),
+  icon_label: z.string().min(1).max(4),
   enabled: z.boolean(),
-  verification_status: z.enum(["verified", "code_ready"]),
+  verification_status: z.enum([
+    "not_implemented",
+    "code_ready",
+    "production_verified",
+  ]),
+  availability_status: z.enum([
+    "enabled",
+    "disabled",
+    "deferred_resource_constrained",
+    "deferred_upstream_breakage",
+    "deferred_login_required",
+  ]),
+  login_prompt: z.string().min(1),
   crawler_types: z.array(capabilityOptionSchema).min(1),
   login_types: z.array(capabilityOptionSchema).min(1),
   requested_count: z.object({
@@ -84,6 +97,7 @@ export const crawlerResultSchema = z.object({
   cover_url: optionalHttpUrlSchema,
   published_at: z.number().int().nonnegative().nullable(),
   source_keyword: z.string().nullable(),
+  raw_payload: z.record(z.string(), z.unknown()),
   metrics: z.object({
     play_count: z.number().int().nonnegative().nullable(),
     like_count: z.number().int().nonnegative().nullable(),

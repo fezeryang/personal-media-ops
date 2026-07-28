@@ -34,9 +34,11 @@ function QrcodeImage({
 export function QrcodePanel({
   task,
   platformName,
+  loginPrompt,
 }: {
   task: CrawlerTask;
   platformName: string;
+  loginPrompt: string;
 }) {
   const waitingForLogin = task.status === "waiting_login";
   const qrcodeQuery = useCrawlerTaskQrcodeQuery(task.id, waitingForLogin);
@@ -86,7 +88,7 @@ export function QrcodePanel({
               />
             </div>
             <p className="mt-4 text-sm font-semibold text-ink">
-              使用{platformName}客户端扫码
+              {loginPrompt}
             </p>
             <p className="mt-1 text-xs text-muted">
               登录完成后，任务状态会自动恢复为采集中。

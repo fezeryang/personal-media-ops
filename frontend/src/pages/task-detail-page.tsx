@@ -23,6 +23,7 @@ import {
 import {
   isActiveTask,
   platformDisplayName,
+  platformLoginPrompt,
   taskStatusLabel,
 } from "../features/crawler/lib/task";
 import { formatDateTime, shortTaskId } from "../lib/utils";
@@ -85,6 +86,10 @@ export function TaskDetailPage() {
     task.platform,
     capabilitiesQuery.data?.platforms,
   );
+  const loginPrompt = platformLoginPrompt(
+    task.platform,
+    capabilitiesQuery.data?.platforms,
+  );
 
   return (
     <div className="space-y-7">
@@ -107,7 +112,7 @@ export function TaskDetailPage() {
               {task.keywords}
             </h1>
             <p className="mt-2 text-sm text-muted">
-              {platformName} · 关键词搜索 · 二维码登录
+              {platformName} · 关键词搜索 · {loginPrompt}
             </p>
           </div>
           {active ? <CancelTaskDialog taskId={task.id} /> : null}
@@ -183,7 +188,11 @@ export function TaskDetailPage() {
             </div>
           </CardContent>
         </Card>
-        <QrcodePanel task={task} platformName={platformName} />
+        <QrcodePanel
+          task={task}
+          platformName={platformName}
+          loginPrompt={loginPrompt}
+        />
       </section>
 
       <LogViewer taskId={task.id} active={active} />

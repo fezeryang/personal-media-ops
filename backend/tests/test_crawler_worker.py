@@ -288,6 +288,7 @@ while True:
     settings = replace(
         worker_settings(test_settings, runner),
         douyin_qrcode_startup_timeout_seconds=0.05,
+        enabled_platforms=("bili", "xhs", "dy"),
     )
     task = seed_task(repository, settings, platform="dy")
     worker = CrawlerWorker(repository, settings, terminate_timeout_seconds=0.2)
@@ -331,6 +332,7 @@ print("Login successful then wait for redirect", flush=True)
     settings = replace(
         worker_settings(test_settings, runner),
         douyin_qrcode_startup_timeout_seconds=0.05,
+        enabled_platforms=("bili", "xhs", "dy"),
     )
     task = seed_task(repository, settings, platform="dy")
 
@@ -341,6 +343,69 @@ print("Login successful then wait for redirect", flush=True)
     stored = repository.get(str(task["id"]))
     assert stored is not None
     assert stored["status"] == "succeeded"
+
+
+def test_worker_stops_startup_timeout_after_persisted_login_is_detected(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "persisted_login_runner.py"
+    runner.write_text(
+        """
+import time
+print("[MediaOps] Existing login state ready: dy", flush=True)
+time.sleep(0.15)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        douyin_qrcode_startup_timeout_seconds=0.05,
+        enabled_platforms=("bili", "xhs", "dy"),
+    )
+    task = seed_task(repository, settings, platform="dy")
+
+    asyncio.run(
+        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+    )
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "succeeded"
+
+
+def test_worker_terminates_when_login_requires_manual_captcha(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "captcha_runner.py"
+    runner.write_text(
+        """
+import time
+print("平台需要验证码后继续", flush=True)
+while True:
+    time.sleep(0.1)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        enabled_platforms=("bili", "xhs", "zhihu"),
+    )
+    task = seed_task(repository, settings, platform="zhihu")
+
+    asyncio.run(
+        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+    )
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert "manual verification" in str(stored["error_message"])
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(stored["pid"]), 0)
 
 
 @pytest.mark.parametrize("platform", ["bili", "xhs"])
@@ -418,7 +483,9 @@ def test_second_worker_lock_is_rejected(test_settings: Settings) -> None:
         pass
 
 
-@pytest.mark.parametrize("platform", ["bili", "xhs", "dy"])
+@pytest.mark.parametrize(
+    "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
+)
 def test_worker_command_uses_only_fixed_executables_and_service_flags(
     test_settings: Settings,
     repository: CrawlerTaskRepository,

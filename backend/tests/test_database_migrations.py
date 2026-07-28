@@ -12,6 +12,8 @@ from app.database_migrations import (
 from tests.alembic_utils import run_alembic_command
 
 LEGACY_REVISION = "0001_legacy_tasks"
+MULTIPLATFORM_REVISION = "0002_multiplatform_tasks"
+REGISTERED_PLATFORMS = ("bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks")
 LEGACY_TASK_VALUES = (
     "28a58041-9be7-4b39-9dea-2493fe10c249",
     "bili",
@@ -96,32 +98,20 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
 
     assert get_current_revision(database_path) == get_head_revision()
     with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO crawler_tasks (
-                id, platform, crawler_type, keywords, login_type, status,
-                requested_count, actual_count, output_dir, log_path,
-                qrcode_path, created_at, cancel_requested
+        for platform in REGISTERED_PLATFORMS:
+            connection.execute(
+                """
+                INSERT INTO crawler_tasks (
+                    id, platform, crawler_type, keywords, login_type, status,
+                    requested_count, actual_count, output_dir, log_path,
+                    qrcode_path, created_at, cancel_requested
+                )
+                VALUES (?, ?, 'search', 'test', 'qrcode', 'pending',
+                        1, 0, '/output', '/log', '/qrcode',
+                        '2026-07-26T00:00:00Z', 0)
+                """,
+                (f"{platform}-task", platform),
             )
-            VALUES (
-                'xhs-task', 'xhs', 'search', 'test', 'qrcode', 'pending',
-                1, 0, '/output', '/log', '/qrcode', '2026-07-26T00:00:00Z', 0
-            )
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO crawler_tasks (
-                id, platform, crawler_type, keywords, login_type, status,
-                requested_count, actual_count, output_dir, log_path,
-                qrcode_path, created_at, cancel_requested
-            )
-            VALUES (
-                'dy-task', 'dy', 'search', 'test', 'qrcode', 'pending',
-                1, 0, '/output', '/log', '/qrcode', '2026-07-26T00:00:00Z', 0
-            )
-            """
-        )
 
 
 def test_runtime_head_matches_alembic_script_head(tmp_path: Path) -> None:
@@ -165,6 +155,55 @@ def test_upgrade_legacy_database_preserves_bilibili_row(tmp_path: Path) -> None:
     assert get_current_revision(database_path) == get_head_revision()
 
 
+def test_upgrade_from_0002_preserves_all_existing_platform_rows(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "mediaops.db"
+    run_alembic_command(database_path, "upgrade", MULTIPLATFORM_REVISION)
+    existing = (
+        ("bili-task", "bili", "succeeded", 2),
+        ("xhs-task", "xhs", "succeeded", 5),
+        ("dy-task", "dy", "failed", 0),
+    )
+    with sqlite3.connect(database_path) as connection:
+        for task_id, platform, status, actual_count in existing:
+            connection.execute(
+                """
+                INSERT INTO crawler_tasks (
+                    id, platform, crawler_type, keywords, login_type, status,
+                    requested_count, actual_count, output_dir, log_path,
+                    qrcode_path, error_message, created_at, finished_at,
+                    cancel_requested
+                )
+                VALUES (?, ?, 'search', 'AI', 'qrcode', ?, 5, ?,
+                        ?, ?, ?, ?, '2026-07-26T00:00:00Z',
+                        '2026-07-26T00:01:00Z', 0)
+                """,
+                (
+                    task_id,
+                    platform,
+                    status,
+                    actual_count,
+                    f"/output/{task_id}",
+                    f"/log/{task_id}",
+                    f"/qrcode/{task_id}",
+                    None if status == "succeeded" else "resource constrained",
+                ),
+            )
+        before = connection.execute(
+            "SELECT * FROM crawler_tasks ORDER BY id"
+        ).fetchall()
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        after = connection.execute(
+            "SELECT * FROM crawler_tasks ORDER BY id"
+        ).fetchall()
+    assert after == before
+    assert get_current_revision(database_path) == get_head_revision()
+
+
 def test_runtime_rejects_missing_or_outdated_database(tmp_path: Path) -> None:
     missing = tmp_path / "missing.db"
 
@@ -203,4 +242,37 @@ def test_downgrade_refuses_when_multiplatform_rows_exist(tmp_path: Path) -> None
 
     assert result.returncode != 0
     assert "non-Bilibili" in result.stderr
+    assert get_current_revision(database_path) == get_head_revision()
+
+
+def test_downgrade_to_0002_refuses_when_remaining_platform_rows_exist(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "mediaops.db"
+    run_alembic_command(database_path, "upgrade", "head")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawler_tasks (
+                id, platform, crawler_type, keywords, login_type, status,
+                requested_count, actual_count, output_dir, log_path,
+                qrcode_path, created_at, cancel_requested
+            )
+            VALUES (
+                'zhihu-task', 'zhihu', 'search', 'test', 'qrcode', 'pending',
+                1, 0, '/output', '/log', '/qrcode',
+                '2026-07-28T00:00:00Z', 0
+            )
+            """
+        )
+
+    result = run_alembic_command(
+        database_path,
+        "downgrade",
+        MULTIPLATFORM_REVISION,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "remaining-platform" in result.stderr
     assert get_current_revision(database_path) == get_head_revision()

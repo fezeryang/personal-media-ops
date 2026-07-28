@@ -2,6 +2,19 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+VerificationStatus = Literal[
+    "not_implemented",
+    "code_ready",
+    "production_verified",
+]
+AvailabilityStatus = Literal[
+    "enabled",
+    "disabled",
+    "deferred_resource_constrained",
+    "deferred_upstream_breakage",
+    "deferred_login_required",
+]
+
 
 class CapabilityOption(BaseModel):
     value: str
@@ -17,8 +30,11 @@ class RequestedCountCapability(BaseModel):
 class CrawlerPlatformCapability(BaseModel):
     platform: str
     display_name: str
+    icon_label: str
     enabled: bool
-    verification_status: Literal["verified", "code_ready"]
+    verification_status: VerificationStatus
+    availability_status: AvailabilityStatus
+    login_prompt: str
     crawler_types: list[CapabilityOption]
     login_types: list[CapabilityOption]
     requested_count: RequestedCountCapability
@@ -50,4 +66,5 @@ class CrawlerResultItem(BaseModel):
     cover_url: str | None
     published_at: int | None
     source_keyword: str | None
+    raw_payload: dict[str, object]
     metrics: CrawlerResultMetrics

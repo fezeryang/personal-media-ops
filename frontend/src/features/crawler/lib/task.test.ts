@@ -1,8 +1,12 @@
 import {
   ACTIVE_TASK_STATUSES,
   buildTaskMetrics,
+  capabilityStatusLabel,
+  filterCrawlerTasks,
   getEngineState,
   isActiveTask,
+  platformIconLabel,
+  platformLoginPrompt,
   platformDisplayName,
   taskStatusLabel,
 } from "./task";
@@ -80,8 +84,11 @@ describe("crawler task helpers", () => {
     const capability = {
       platform: "xhs",
       display_name: "小红书",
+      icon_label: "红",
       enabled: true,
       verification_status: "code_ready" as const,
+      availability_status: "enabled" as const,
+      login_prompt: "使用小红书客户端扫码登录",
       crawler_types: [{ value: "search", label: "关键词搜索" }],
       login_types: [{ value: "qrcode", label: "二维码登录" }],
       requested_count: { minimum: 1, maximum: 20, default: 20 },
@@ -90,6 +97,10 @@ describe("crawler task helpers", () => {
     };
 
     expect(platformDisplayName("xhs", [capability])).toBe("小红书");
+    expect(platformIconLabel("xhs", [capability])).toBe("红");
+    expect(platformLoginPrompt("xhs", [capability])).toBe(
+      "使用小红书客户端扫码登录",
+    );
     expect(platformDisplayName("unknown", [capability])).toBe("unknown");
     expect(
       getEngineState(
@@ -98,5 +109,50 @@ describe("crawler task helpers", () => {
         [capability],
       ).detail,
     ).toContain("小红书");
+  });
+
+  it("keeps verification and availability labels independent", () => {
+    expect(
+      capabilityStatusLabel({
+        verification_status: "production_verified",
+        availability_status: "disabled",
+        enabled: false,
+      }),
+    ).toBe("（已生产验证，未启用）");
+    expect(
+      capabilityStatusLabel({
+        verification_status: "code_ready",
+        availability_status: "deferred_resource_constrained",
+        enabled: false,
+      }),
+    ).toBe("（资源限制，暂不可用）");
+  });
+
+  it("filters tasks by platform, status, and search text", () => {
+    const tasks = [
+      baseTask,
+      {
+        ...baseTask,
+        id: "task-2",
+        platform: "xhs",
+        keywords: "人工智能",
+        status: "succeeded" as const,
+      },
+    ];
+
+    expect(
+      filterCrawlerTasks(tasks, {
+        platform: "xhs",
+        status: "succeeded",
+        search: "人工",
+      }),
+    ).toEqual([tasks[1]]);
+    expect(
+      filterCrawlerTasks(tasks, {
+        platform: "bili",
+        status: "all",
+        search: "",
+      }),
+    ).toEqual([tasks[0]]);
   });
 });

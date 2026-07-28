@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import importlib
 import os
 import runpy
 import shutil
@@ -23,6 +24,15 @@ DOUYIN_LOGIN_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='登录']"
 DOUYIN_LOGIN_ENTRY_SCAN_ATTEMPTS = 40
 DOUYIN_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
 DOUYIN_PROCESS_NICE_INCREMENT = 10
+LOGIN_STATE_CLIENTS = {
+    "bili": ("media_platform.bilibili.client", "BilibiliClient"),
+    "xhs": ("media_platform.xhs.client", "XiaoHongShuClient"),
+    "dy": ("media_platform.douyin.client", "DouYinClient"),
+    "zhihu": ("media_platform.zhihu.client", "ZhiHuClient"),
+    "wb": ("media_platform.weibo.client", "WeiboClient"),
+    "tieba": ("media_platform.tieba.client", "BaiduTieBaClient"),
+    "ks": ("media_platform.kuaishou.client", "KuaiShouClient"),
+}
 
 
 def parse_bool(value: str) -> bool:
@@ -45,7 +55,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--platform",
         required=True,
-        choices=["bili", "xhs", "dy"],
+        choices=["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"],
     )
     parser.add_argument(
         "--crawler-type",
@@ -298,6 +308,29 @@ def install_douyin_navigation_retry() -> None:
     DouYinLogin.popup_login_dialog = popup_login_dialog
 
 
+def create_login_state_observer(
+    platform: str,
+    original_probe: Callable[..., Awaitable[bool]],
+) -> Callable[..., Awaitable[bool]]:
+    async def observed_probe(client: object, *args: object, **kwargs: object) -> bool:
+        ready = await original_probe(client, *args, **kwargs)
+        if ready:
+            print(
+                f"[MediaOps] Existing login state ready: {platform}",
+                flush=True,
+            )
+        return ready
+
+    return observed_probe
+
+
+def install_login_state_observer(platform: str) -> None:
+    module_name, class_name = LOGIN_STATE_CLIENTS[platform]
+    client_module = importlib.import_module(module_name)
+    client_class = getattr(client_module, class_name)
+    client_class.pong = create_login_state_observer(platform, client_class.pong)
+
+
 def main() -> None:
     args = parse_arguments()
     ensure_virtual_display(args.headless)
@@ -361,6 +394,7 @@ def main() -> None:
         )
 
     crawler_utils.show_qrcode = save_qrcode
+    install_login_state_observer(args.platform)
     sys.argv = [
         str(MEDIACRAWLER_ROOT / "main.py"),
         "--platform",
