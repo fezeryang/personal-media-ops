@@ -97,6 +97,14 @@ Adapters implement capability metadata, fixed Runner arguments,
   existing QR or clicks one visible current/legacy login entry
   (`div.user-or-login, li.u_login`) before delegating the unchanged
   `tang-pass-qrcode-img` read to upstream. All scans and waits are bounded.
+- Kuaishou's exact visible `//p[text()='登录']` entry can be covered by a
+  transparent element that intercepts pointer-coordinate clicks. The
+  `ks`-only Runner patch keeps an existing QR, otherwise scans only that exact
+  entry, requires it to be visible, dispatches its DOM `click()`, and requires
+  the existing `//div[@class='qrcode-img']//img` selector within a bounded
+  timeout. It skips only upstream's immediately repeated coordinate click
+  after the QR is open, then delegates QR reading and login polling to
+  unchanged upstream.
 - Pre-QR timeout and cancellation terminate the whole process group. Seeing a
   QR file changes the task to `waiting_login`; seeing success returns it to
   `running`. A success marker before any QR disables the startup deadline.
@@ -141,6 +149,8 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Tieba upstream finishes on HTTP or `百度安全验证` | Navigate once to the HTTPS homepage with the Baidu referrer |
 | Tieba safety verification remains after HTTPS recovery | Emit `captcha required` and fail without treating it as a login QR |
 | Tieba normal page has the current or legacy login entry | Click one visible reviewed entry and require `tang-pass-qrcode-img` within a bounded timeout |
+| Kuaishou login entry is covered by the transparent page layer | Dispatch DOM `click()` only to the exact visible entry and require the reviewed QR selector |
+| Kuaishou exact login entry is absent or does not expose a QR | Fail explicitly after bounded attempts without removing page overlays |
 | Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
 | Malformed textual publication time | Normalized publication time is `null` |
@@ -162,6 +172,8 @@ Adapters implement capability metadata, fixed Runner arguments,
 - Bad: accept Tieba's HTTP safety page as a login page, treat its “扫码验证” as
   a login QR, or let the Worker's generic timeout classifier kill upstream
   before its intended login-entry fallback.
+- Bad: force a Kuaishou coordinate click, delete arbitrary overlay elements,
+  or replace the whole upstream login implementation.
 - Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
   or loop indefinitely around browser startup.
 
@@ -189,6 +201,9 @@ Tieba Runner tests must assert that normal HTTPS navigation stays unchanged,
 HTTP/safety navigation recovers through HTTPS, persistent safety verification
 is classified as captcha, the current login entry exposes the legacy QR
 selector, and the patch is installed only for `tieba`.
+Kuaishou Runner tests must assert exact-entry DOM dispatch, QR confirmation,
+bounded missing-entry failure, suppression of only the redundant upstream
+click, and installation only for `ks`.
 
 ## 7. Wrong vs Correct
 
@@ -235,6 +250,8 @@ if args.platform == "wb":
     install_weibo_qrcode_entry_patch()
 if args.platform == "tieba":
     install_tieba_runtime_patch()
+if args.platform == "ks":
+    install_kuaishou_qrcode_entry_patch()
 ```
 
 Wrong:

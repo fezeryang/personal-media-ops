@@ -174,6 +174,12 @@ seam：已有二维码时不点击；否则以 0.5 秒间隔最多检查 20 次�
 `div.user-or-login` 或旧 `li.u_login`，确认 `tang-pass-qrcode-img` 后交回上游读取。
 所有入口扫描和二维码等待都有上限，且不修改 MediaCrawler 源码。
 
+快手当前页面的精确可见 `//p[text()='登录']` 节点可能被透明层拦截普通坐标点击。
+Runner 只在 `ks` 进程内查找该精确入口并派发 DOM `click()`，随后必须在有限时间内
+确认上游既有 `//div[@class='qrcode-img']//img` 节点；二维码已打开后只跳过上游紧接着
+重复的一次坐标点击，其余二维码读取、扫码状态和采集流程仍交给未修改的 MediaCrawler。
+入口不存在或二维码未出现时明确失败，不删除任意页面遮罩，也不使用模糊选择器。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner

@@ -35,6 +35,10 @@ TIEBA_QRCODE_SELECTOR = "xpath=//img[@class='tang-pass-qrcode-img']"
 TIEBA_LOGIN_ENTRY_SELECTOR = "div.user-or-login, li.u_login"
 TIEBA_LOGIN_ENTRY_SCAN_ATTEMPTS = 20
 TIEBA_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
+KUAISHOU_QRCODE_SELECTOR = "xpath=//div[@class='qrcode-img']//img"
+KUAISHOU_LOGIN_ENTRY_SELECTOR = "xpath=//p[text()='登录']"
+KUAISHOU_LOGIN_ENTRY_SCAN_ATTEMPTS = 20
+KUAISHOU_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
 LOGIN_STATE_CLIENTS = {
     "bili": ("media_platform.bilibili.client", "BilibiliClient"),
     "xhs": ("media_platform.xhs.client", "XiaoHongShuClient"),
@@ -331,6 +335,7 @@ async def open_qrcode_entry(
     click_timeout_ms: int = 5_000,
     entry_scan_attempts: int,
     entry_scan_delay_seconds: float,
+    click_entry: Callable[[object, int], Awaitable[None]] | None = None,
 ) -> None:
     """Expose a platform QR code through one bounded, exact entry selector."""
     try:
@@ -356,7 +361,10 @@ async def open_qrcode_entry(
             try:
                 if not await entry.is_visible():
                     continue
-                await entry.click(timeout=click_timeout_ms)
+                if click_entry is None:
+                    await entry.click(timeout=click_timeout_ms)
+                else:
+                    await click_entry(entry, click_timeout_ms)
                 await context_page.wait_for_selector(
                     qrcode_selector,
                     state="visible",
@@ -523,6 +531,92 @@ def install_tieba_runtime_patch() -> None:
     crawler_utils.find_login_qrcode = find_login_qrcode_with_entry
 
 
+async def _click_kuaishou_login_entry(
+    entry: object,
+    timeout_ms: int,
+) -> None:
+    """Dispatch the exact login entry after a transparent overlay intercept."""
+    async with asyncio.timeout(timeout_ms / 1_000):
+        await entry.evaluate("element => element.click()")
+
+
+async def open_kuaishou_qrcode_entry(
+    context_page: object,
+    retryable_error: type[BaseException],
+    *,
+    qrcode_selector: str = KUAISHOU_QRCODE_SELECTOR,
+    initial_timeout_ms: int = 1_000,
+    qrcode_timeout_ms: int = 10_000,
+    click_timeout_ms: int = 5_000,
+    entry_scan_attempts: int = KUAISHOU_LOGIN_ENTRY_SCAN_ATTEMPTS,
+    entry_scan_delay_seconds: float = KUAISHOU_LOGIN_ENTRY_SCAN_DELAY_SECONDS,
+) -> None:
+    """Expose Kuaishou's QR code despite its transparent click interceptor."""
+    await open_qrcode_entry(
+        context_page,
+        retryable_error,
+        platform_name="Kuaishou",
+        qrcode_selector=qrcode_selector,
+        login_entry_selector=KUAISHOU_LOGIN_ENTRY_SELECTOR,
+        initial_timeout_ms=initial_timeout_ms,
+        qrcode_timeout_ms=qrcode_timeout_ms,
+        click_timeout_ms=click_timeout_ms,
+        entry_scan_attempts=entry_scan_attempts,
+        entry_scan_delay_seconds=entry_scan_delay_seconds,
+        click_entry=_click_kuaishou_login_entry,
+    )
+
+
+class KuaishouOpenedLoginEntry:
+    """Keep upstream's redundant click from landing on the page overlay."""
+
+    def __init__(self, locator: object) -> None:
+        self._locator = locator
+
+    async def click(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._locator, name)
+
+
+class KuaishouLoginPage:
+    """Delegate the Page API except for the already-opened login entry."""
+
+    def __init__(self, page: object) -> None:
+        self._page = page
+
+    def locator(self, selector: str, *args: object, **kwargs: object) -> object:
+        locator = self._page.locator(selector, *args, **kwargs)
+        if selector == KUAISHOU_LOGIN_ENTRY_SELECTOR:
+            return KuaishouOpenedLoginEntry(locator)
+        return locator
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._page, name)
+
+
+def install_kuaishou_qrcode_entry_patch() -> None:
+    """Patch the reviewed Kuaishou QR-login seam, never upstream source."""
+    from media_platform.kuaishou.login import KuaishouLogin
+    from playwright.async_api import Error as PlaywrightError
+
+    original_login_by_qrcode = KuaishouLogin.login_by_qrcode
+
+    async def login_by_qrcode_after_opening_entry(login: object) -> None:
+        context_page = getattr(login, "context_page", None)
+        if context_page is None:
+            raise RuntimeError("Kuaishou login has no context page")
+        await open_kuaishou_qrcode_entry(context_page, PlaywrightError)
+        login.context_page = KuaishouLoginPage(context_page)
+        try:
+            await original_login_by_qrcode(login)
+        finally:
+            login.context_page = context_page
+
+    KuaishouLogin.login_by_qrcode = login_by_qrcode_after_opening_entry
+
+
 def create_login_state_observer(
     platform: str,
     original_probe: Callable[..., Awaitable[bool]],
@@ -643,6 +737,8 @@ def main() -> None:
         install_weibo_qrcode_entry_patch()
     if args.platform == "tieba":
         install_tieba_runtime_patch()
+    if args.platform == "ks":
+        install_kuaishou_qrcode_entry_patch()
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

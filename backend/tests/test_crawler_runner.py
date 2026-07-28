@@ -599,6 +599,7 @@ class FakeWeiboLoginEntry:
     def __init__(self, *, visible: bool) -> None:
         self.visible = visible
         self.click_calls: list[int] = []
+        self.evaluate_calls: list[str] = []
         self.on_click: object | None = None
 
     async def is_visible(self) -> bool:
@@ -606,6 +607,11 @@ class FakeWeiboLoginEntry:
 
     async def click(self, *, timeout: int) -> None:
         self.click_calls.append(timeout)
+        if callable(self.on_click):
+            self.on_click()
+
+    async def evaluate(self, expression: str) -> None:
+        self.evaluate_calls.append(expression)
         if callable(self.on_click):
             self.on_click()
 
@@ -828,6 +834,79 @@ def test_runner_opens_current_tieba_qrcode_entry() -> None:
     ]
 
 
+def test_runner_opens_kuaishou_qrcode_through_exact_dom_click() -> None:
+    runner = load_runner()
+    visible_entry = FakeWeiboLoginEntry(visible=True)
+    page = FakeWeiboLoginPage(
+        qrcode_visible=False,
+        entries=[visible_entry],
+    )
+    visible_entry.on_click = lambda: setattr(page, "qrcode_visible", True)
+
+    asyncio.run(
+        runner.open_kuaishou_qrcode_entry(
+            page,
+            FakeWeiboPlaywrightError,
+        )
+    )
+
+    assert page.locator_calls == [runner.KUAISHOU_LOGIN_ENTRY_SELECTOR]
+    assert visible_entry.click_calls == []
+    assert visible_entry.evaluate_calls == ["element => element.click()"]
+    assert page.wait_calls == [
+        (runner.KUAISHOU_QRCODE_SELECTOR, "visible", 1_000),
+        (runner.KUAISHOU_QRCODE_SELECTOR, "visible", 10_000),
+    ]
+
+
+def test_runner_fails_clearly_when_kuaishou_qrcode_entry_is_absent() -> None:
+    runner = load_runner()
+    page = FakeWeiboLoginPage(qrcode_visible=False, entries=[])
+
+    with pytest.raises(RuntimeError, match="Kuaishou QR-code login entry"):
+        asyncio.run(
+            runner.open_kuaishou_qrcode_entry(
+                page,
+                FakeWeiboPlaywrightError,
+                entry_scan_attempts=1,
+                entry_scan_delay_seconds=0,
+            )
+        )
+
+
+class FakeKuaishouPage:
+    def __init__(self, locator: FakeWeiboLoginEntry) -> None:
+        self.entry = locator
+        self.locator_calls: list[str] = []
+
+    def locator(self, selector: str) -> FakeWeiboLoginEntry:
+        self.locator_calls.append(selector)
+        return self.entry
+
+    def marker(self) -> str:
+        return "delegated"
+
+
+def test_runner_skips_only_redundant_upstream_kuaishou_login_click() -> None:
+    runner = load_runner()
+    entry = FakeWeiboLoginEntry(visible=True)
+    original_page = FakeKuaishouPage(entry)
+    page = runner.KuaishouLoginPage(original_page)
+
+    asyncio.run(
+        page.locator(runner.KUAISHOU_LOGIN_ENTRY_SELECTOR).click(timeout=30_000)
+    )
+    other_locator = page.locator("css=.other")
+
+    assert entry.click_calls == []
+    assert other_locator is entry
+    assert page.marker() == "delegated"
+    assert original_page.locator_calls == [
+        runner.KUAISHOU_LOGIN_ENTRY_SELECTOR,
+        "css=.other",
+    ]
+
+
 def test_runner_reports_existing_login_state_without_exposing_cookies(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -865,6 +944,10 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     )
     assert (
         'if args.platform == "tieba":\n        install_tieba_runtime_patch()'
+        in source
+    )
+    assert (
+        'if args.platform == "ks":\n        install_kuaishou_qrcode_entry_patch()'
         in source
     )
     assert "install_login_state_observer(args.platform)" in source
