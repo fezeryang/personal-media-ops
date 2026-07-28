@@ -203,3 +203,44 @@ Added platform adapters and capabilities, Alembic migrations, unified results, X
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Stage five remaining platform rollout
+
+**Date**: 2026-07-28
+**Task**: Stage five remaining platform rollout
+**Branch**: `main`
+
+### Summary
+
+Released remaining-platform foundations and Alembic 0003; production-verified Zhihu, Weibo, and Tieba; deferred Kuaishou for verified upstream search breakage; preserved Douyin resource deferral; and passed Bilibili/Xiaohongshu production regressions.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c752842f763a9293afe94ea8ed8582a87d98afe` | (see git log) |
+| `27b163716da52a15a2f0c1b281bf84e02caaf97d` | (see git log) |
+| `a95d62a8b8614ca18c5573608825d50749667acf` | (see git log) |
+| `dc2cbdeee121106ca9683a2a535d52a5a035b5a5` | (see git log) |
+| `271825d9714d1723a0e7c6b423896b9248cd991c` | (see git log) |
+| `f895ebe99f2d15aa56e8dbbfe4b7ce21595bd34c` | (see git log) |
+| `49dd3ee5e4b7599279ed6f89d83bb28455489b5f` | (see git log) |
+| `a398afc9f3359088bf08349e0fcc26ab8a0d6dd2` | (see git log) |
+| `4df42050ff35d1a61e3e55bcf983419a9cbd13b5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
