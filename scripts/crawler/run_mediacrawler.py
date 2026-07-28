@@ -24,6 +24,10 @@ DOUYIN_LOGIN_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='登录']"
 DOUYIN_LOGIN_ENTRY_SCAN_ATTEMPTS = 40
 DOUYIN_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
 DOUYIN_PROCESS_NICE_INCREMENT = 10
+WEIBO_QRCODE_SELECTOR = "xpath=//img[@class='w-full h-full']"
+WEIBO_QRCODE_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='扫码登录']"
+WEIBO_QRCODE_ENTRY_SCAN_ATTEMPTS = 20
+WEIBO_QRCODE_ENTRY_SCAN_DELAY_SECONDS = 0.5
 LOGIN_STATE_CLIENTS = {
     "bili": ("media_platform.bilibili.client", "BilibiliClient"),
     "xhs": ("media_platform.xhs.client", "XiaoHongShuClient"),
@@ -308,6 +312,88 @@ def install_douyin_navigation_retry() -> None:
     DouYinLogin.popup_login_dialog = popup_login_dialog
 
 
+async def open_weibo_qrcode_entry(
+    context_page: object,
+    retryable_error: type[BaseException],
+    *,
+    qrcode_selector: str = WEIBO_QRCODE_SELECTOR,
+    initial_timeout_ms: int = 1_000,
+    qrcode_timeout_ms: int = 10_000,
+    click_timeout_ms: int = 5_000,
+    entry_scan_attempts: int = WEIBO_QRCODE_ENTRY_SCAN_ATTEMPTS,
+    entry_scan_delay_seconds: float = WEIBO_QRCODE_ENTRY_SCAN_DELAY_SECONDS,
+) -> None:
+    """Expose Weibo's QR code when its mobile-UA login page hides it."""
+    try:
+        await context_page.wait_for_selector(
+            qrcode_selector,
+            state="visible",
+            timeout=initial_timeout_ms,
+        )
+        return
+    except retryable_error as initial_error:
+        last_error: BaseException = initial_error
+
+    login_entries = context_page.locator(WEIBO_QRCODE_ENTRY_SELECTOR)
+    for scan_attempt in range(entry_scan_attempts):
+        try:
+            entry_count = await login_entries.count()
+        except retryable_error as error:
+            last_error = error
+            entry_count = 0
+
+        for index in range(entry_count):
+            entry = login_entries.nth(index)
+            try:
+                if not await entry.is_visible():
+                    continue
+                await entry.click(timeout=click_timeout_ms)
+                await context_page.wait_for_selector(
+                    qrcode_selector,
+                    state="visible",
+                    timeout=qrcode_timeout_ms,
+                )
+                print(
+                    "[MediaOps] Opened Weibo QR-code login through the "
+                    "visible exact-text entry",
+                    flush=True,
+                )
+                return
+            except retryable_error as error:
+                last_error = error
+
+        if (
+            scan_attempt + 1 < entry_scan_attempts
+            and entry_scan_delay_seconds > 0
+        ):
+            await asyncio.sleep(entry_scan_delay_seconds)
+
+    raise RuntimeError(
+        "Weibo QR-code login entry was not visible or did not expose a QR code"
+    ) from last_error
+
+
+def install_weibo_qrcode_entry_patch() -> None:
+    """Patch the reviewed Weibo QR-login seam, never MediaCrawler source."""
+    from playwright.async_api import Error as PlaywrightError
+    from tools import utils as crawler_utils
+
+    original_find_login_qrcode = crawler_utils.find_login_qrcode
+
+    async def find_login_qrcode_with_entry(
+        context_page: object,
+        selector: str,
+    ) -> str:
+        await open_weibo_qrcode_entry(
+            context_page,
+            PlaywrightError,
+            qrcode_selector=selector,
+        )
+        return await original_find_login_qrcode(context_page, selector)
+
+    crawler_utils.find_login_qrcode = find_login_qrcode_with_entry
+
+
 def create_login_state_observer(
     platform: str,
     original_probe: Callable[..., Awaitable[bool]],
@@ -424,6 +510,8 @@ def main() -> None:
     ]
     if args.platform == "dy":
         install_douyin_navigation_retry()
+    if args.platform == "wb":
+        install_weibo_qrcode_entry_patch()
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

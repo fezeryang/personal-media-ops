@@ -80,6 +80,14 @@ Adapters implement capability metadata, fixed Runner arguments,
   persisted state is valid. It never logs Cookie values. The Worker uses that
   marker plus Adapter classifiers to distinguish persisted login, QR waiting,
   captcha, expiration, and timeout without platform branches.
+- MediaCrawler opens Weibo with a mobile user agent, for which the passport
+  page defaults to SMS login and does not render the QR image until the exact
+  visible `扫码登录` entry is clicked. The reviewed Runner patches only the
+  `wb` process's QR-discovery seam: it keeps an already visible QR, otherwise
+  scans for that exact entry at most 20 times at 0.5-second intervals, clicks
+  it, confirms the upstream QR selector within 10 seconds, and then delegates
+  image reading to MediaCrawler. It never edits upstream source or uses a
+  fuzzy text match.
 - Pre-QR timeout and cancellation terminate the whole process group. Seeing a
   QR file changes the task to `waiting_login`; seeing success returns it to
   `running`. A success marker before any QR disables the startup deadline.
@@ -119,6 +127,8 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Douyin QR code is not ready before its startup deadline | Terminate the task process group and persist an explicit failure |
 | Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
 | Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
+| Weibo mobile-UA login page defaults to SMS | Click the exact visible `扫码登录` entry and require the QR image within a bounded timeout |
+| Weibo QR entry is absent or does not reveal a QR | Fail explicitly without changing login method or waiting indefinitely |
 | Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
 | Malformed textual publication time | Normalized publication time is `null` |
@@ -134,6 +144,9 @@ Adapters implement capability metadata, fixed Runner arguments,
   controls through the task API.
 - Bad: hard-code every platform to headless or continue a headful run after an
   Xvfb wrapper failed to establish `DISPLAY`.
+- Bad: make Weibo wait on its desktop QR selector without first handling the
+  mobile-UA login-mode switch, or use a fuzzy click that could select another
+  login control.
 - Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
   or loop indefinitely around browser startup.
 
@@ -154,6 +167,9 @@ persisted-login marker disables that deadline, captcha terminates the process
 group, and Bilibili/Xiaohongshu are unaffected. Configuration
 tests must reject zero, negative, NaN, and infinite deadlines. Real platform
 tests require explicit authorization and are not part of unit tests.
+Runner tests must also assert that Weibo keeps an already-visible QR without
+clicking, clicks only a visible exact-text QR entry when needed, fails clearly
+when the entry is absent, and installs this patch only for `wb`.
 
 ## 7. Wrong vs Correct
 
@@ -196,6 +212,8 @@ Correct:
 ```python
 if args.platform == "dy":
     install_douyin_navigation_retry()
+if args.platform == "wb":
+    install_weibo_qrcode_entry_patch()
 ```
 
 Wrong:

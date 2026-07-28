@@ -591,6 +591,122 @@ def test_runner_stops_after_bounded_douyin_navigation_retries() -> None:
     ]
 
 
+class FakeWeiboPlaywrightError(Exception):
+    pass
+
+
+class FakeWeiboLoginEntry:
+    def __init__(self, *, visible: bool) -> None:
+        self.visible = visible
+        self.click_calls: list[int] = []
+        self.on_click: object | None = None
+
+    async def is_visible(self) -> bool:
+        return self.visible
+
+    async def click(self, *, timeout: int) -> None:
+        self.click_calls.append(timeout)
+        if callable(self.on_click):
+            self.on_click()
+
+
+class FakeWeiboLoginEntries:
+    def __init__(self, entries: list[FakeWeiboLoginEntry]) -> None:
+        self.entries = entries
+
+    async def count(self) -> int:
+        return len(self.entries)
+
+    def nth(self, index: int) -> FakeWeiboLoginEntry:
+        return self.entries[index]
+
+
+class FakeWeiboLoginPage:
+    def __init__(
+        self,
+        *,
+        qrcode_visible: bool,
+        entries: list[FakeWeiboLoginEntry],
+    ) -> None:
+        self.qrcode_visible = qrcode_visible
+        self.entries = FakeWeiboLoginEntries(entries)
+        self.wait_calls: list[tuple[str, str, int]] = []
+        self.locator_calls: list[str] = []
+
+    async def wait_for_selector(
+        self,
+        selector: str,
+        *,
+        state: str,
+        timeout: int,
+    ) -> None:
+        self.wait_calls.append((selector, state, timeout))
+        if not self.qrcode_visible:
+            raise FakeWeiboPlaywrightError("Timeout waiting for Weibo QR code")
+
+    def locator(self, selector: str) -> FakeWeiboLoginEntries:
+        self.locator_calls.append(selector)
+        return self.entries
+
+
+def test_runner_keeps_visible_weibo_qrcode_without_clicking() -> None:
+    runner = load_runner()
+    page = FakeWeiboLoginPage(qrcode_visible=True, entries=[])
+
+    asyncio.run(
+        runner.open_weibo_qrcode_entry(
+            page,
+            FakeWeiboPlaywrightError,
+        )
+    )
+
+    assert page.wait_calls == [
+        (runner.WEIBO_QRCODE_SELECTOR, "visible", 1_000)
+    ]
+    assert page.locator_calls == []
+
+
+def test_runner_opens_weibo_qrcode_from_exact_visible_entry() -> None:
+    runner = load_runner()
+    hidden_entry = FakeWeiboLoginEntry(visible=False)
+    visible_entry = FakeWeiboLoginEntry(visible=True)
+    page = FakeWeiboLoginPage(
+        qrcode_visible=False,
+        entries=[hidden_entry, visible_entry],
+    )
+    visible_entry.on_click = lambda: setattr(page, "qrcode_visible", True)
+
+    asyncio.run(
+        runner.open_weibo_qrcode_entry(
+            page,
+            FakeWeiboPlaywrightError,
+        )
+    )
+
+    assert page.locator_calls == [runner.WEIBO_QRCODE_ENTRY_SELECTOR]
+    assert hidden_entry.click_calls == []
+    assert visible_entry.click_calls == [5_000]
+    assert page.wait_calls == [
+        (runner.WEIBO_QRCODE_SELECTOR, "visible", 1_000),
+        (runner.WEIBO_QRCODE_SELECTOR, "visible", 10_000),
+    ]
+
+
+def test_runner_fails_clearly_when_weibo_qrcode_entry_is_absent() -> None:
+    runner = load_runner()
+    page = FakeWeiboLoginPage(qrcode_visible=False, entries=[])
+
+    with pytest.raises(RuntimeError, match="Weibo QR-code login entry"):
+        asyncio.run(
+            runner.open_weibo_qrcode_entry(
+                page,
+                FakeWeiboPlaywrightError,
+                entry_scan_attempts=1,
+                entry_scan_delay_seconds=0,
+            )
+        )
+
+
 def test_runner_reports_existing_login_state_without_exposing_cookies(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -620,6 +736,10 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     assert '"--headless",\n        "true" if args.headless else "false"' in source
     assert (
         'if args.platform == "dy":\n        install_douyin_navigation_retry()'
+        in source
+    )
+    assert (
+        'if args.platform == "wb":\n        install_weibo_qrcode_entry_patch()'
         in source
     )
     assert "install_login_state_observer(args.platform)" in source
