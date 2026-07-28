@@ -166,6 +166,14 @@ seam：已有二维码时不点击；否则以 0.5 秒间隔最多检查 20 次�
 10 秒内确认二维码，再交回上游读取。入口缺失或二维码未出现时明确失败，不使用模糊
 文本、不改登录方式，也不修改 `/opt/mediacrawler`。
 
+贴吧上游即使已包含 PC 页面改版提交，仍会优先点击百度首页的 HTTP 贴吧链接，并在部分
+请求中进入“百度安全验证”；其登录 fallback 也仍只查找旧 `li.u_login`。Runner 仅在
+`tieba` 进程内让上游导航先完成，然后把 HTTP/安全验证页定向恢复到带百度 Referer 的
+`https://tieba.baidu.com/`。持续安全验证会输出通用 `captcha required` 标记并失败，
+不会把“扫码验证”当成登录二维码。正常页面则在上游首次等待前点击当前
+`div.user-or-login` 或旧 `li.u_login`，确认 `tang-pass-qrcode-img` 后交回上游读取。
+所有入口扫描和二维码等待都有上限，且不修改 MediaCrawler 源码。
+
 API 调用方不能覆盖命令、脚本或文件路径。每台服务器只启用一个 Worker；第二个
 Worker 会因独占锁失败退出。Worker 重启时会把遗留的 `running` 或
 `waiting_login` 任务标记为异常中断。代理开关不暴露为 Runner 参数；仓库 Runner

@@ -176,3 +176,4 @@ become a synthetic success or block other production verification.
 - `research/upstream-mediacrawler-audit.md`
 - `research/current-cross-layer-contract.md`
 - `research/database-schema-audit.md`
+- `research/tieba-pc-login-audit.md`

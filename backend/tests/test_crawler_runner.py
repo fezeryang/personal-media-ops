@@ -707,6 +707,127 @@ def test_runner_fails_clearly_when_weibo_qrcode_entry_is_absent() -> None:
         )
 
 
+class FakeTiebaNavigationPage:
+    def __init__(
+        self,
+        *,
+        url: str,
+        title: str,
+        redirected_title: str = "百度贴吧",
+    ) -> None:
+        self.url = url
+        self.title_value = title
+        self.redirected_title = redirected_title
+        self.goto_calls: list[tuple[str, str, int, str]] = []
+
+    async def title(self) -> str:
+        return self.title_value
+
+    async def goto(
+        self,
+        url: str,
+        *,
+        wait_until: str,
+        timeout: int,
+        referer: str,
+    ) -> None:
+        self.goto_calls.append((url, wait_until, timeout, referer))
+        self.url = url
+        self.title_value = self.redirected_title
+
+
+class FakeTiebaCrawler:
+    def __init__(self, page: FakeTiebaNavigationPage) -> None:
+        self.context_page = page
+
+
+def test_runner_keeps_normal_tieba_https_navigation() -> None:
+    runner = load_runner()
+    page = FakeTiebaNavigationPage(
+        url="https://tieba.baidu.com/",
+        title="百度贴吧",
+    )
+    crawler = FakeTiebaCrawler(page)
+    navigation_calls = 0
+
+    async def navigate(crawler_value: object) -> None:
+        nonlocal navigation_calls
+        navigation_calls += 1
+        assert crawler_value is crawler
+
+    asyncio.run(runner.navigate_tieba_with_https(crawler, navigate))
+
+    assert navigation_calls == 1
+    assert page.goto_calls == []
+
+
+def test_runner_recovers_tieba_http_security_route_through_https() -> None:
+    runner = load_runner()
+    page = FakeTiebaNavigationPage(
+        url="http://tieba.baidu.com/",
+        title="百度安全验证",
+    )
+    crawler = FakeTiebaCrawler(page)
+
+    async def navigate(crawler_value: object) -> None:
+        assert crawler_value is crawler
+
+    asyncio.run(runner.navigate_tieba_with_https(crawler, navigate))
+
+    assert page.goto_calls == [
+        (
+            runner.TIEBA_INDEX_URL,
+            "domcontentloaded",
+            30_000,
+            runner.BAIDU_INDEX_URL,
+        )
+    ]
+
+
+def test_runner_reports_persistent_tieba_security_verification(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+    page = FakeTiebaNavigationPage(
+        url="http://tieba.baidu.com/",
+        title="百度安全验证",
+        redirected_title="百度安全验证",
+    )
+    crawler = FakeTiebaCrawler(page)
+
+    async def navigate(crawler_value: object) -> None:
+        assert crawler_value is crawler
+
+    with pytest.raises(RuntimeError, match="security verification"):
+        asyncio.run(runner.navigate_tieba_with_https(crawler, navigate))
+
+    assert "captcha required" in capsys.readouterr().out.casefold()
+
+
+def test_runner_opens_current_tieba_qrcode_entry() -> None:
+    runner = load_runner()
+    visible_entry = FakeWeiboLoginEntry(visible=True)
+    page = FakeWeiboLoginPage(
+        qrcode_visible=False,
+        entries=[visible_entry],
+    )
+    visible_entry.on_click = lambda: setattr(page, "qrcode_visible", True)
+
+    asyncio.run(
+        runner.open_tieba_qrcode_entry(
+            page,
+            FakeWeiboPlaywrightError,
+        )
+    )
+
+    assert page.locator_calls == [runner.TIEBA_LOGIN_ENTRY_SELECTOR]
+    assert visible_entry.click_calls == [5_000]
+    assert page.wait_calls == [
+        (runner.TIEBA_QRCODE_SELECTOR, "visible", 1_000),
+        (runner.TIEBA_QRCODE_SELECTOR, "visible", 10_000),
+    ]
+
+
 def test_runner_reports_existing_login_state_without_exposing_cookies(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -740,6 +861,10 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
     )
     assert (
         'if args.platform == "wb":\n        install_weibo_qrcode_entry_patch()'
+        in source
+    )
+    assert (
+        'if args.platform == "tieba":\n        install_tieba_runtime_patch()'
         in source
     )
     assert "install_login_state_observer(args.platform)" in source

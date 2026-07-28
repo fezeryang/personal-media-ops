@@ -88,6 +88,15 @@ Adapters implement capability metadata, fixed Runner arguments,
   it, confirms the upstream QR selector within 10 seconds, and then delegates
   image reading to MediaCrawler. It never edits upstream source or uses a
   fuzzy text match.
+- The pinned Tieba PC rewrite still prefers an `http://tieba.baidu.com/` Baidu
+  navigation link before HTTPS; that route can open `百度安全验证`. The
+  `tieba`-only Runner patch lets the upstream navigation complete, then
+  recovers HTTP or that title through `https://tieba.baidu.com/` with the
+  Baidu referrer. A persistent safety page emits the generic non-sensitive
+  `captcha required` marker and fails. On the normal page, the patch keeps an
+  existing QR or clicks one visible current/legacy login entry
+  (`div.user-or-login, li.u_login`) before delegating the unchanged
+  `tang-pass-qrcode-img` read to upstream. All scans and waits are bounded.
 - Pre-QR timeout and cancellation terminate the whole process group. Seeing a
   QR file changes the task to `waiting_login`; seeing success returns it to
   `running`. A success marker before any QR disables the startup deadline.
@@ -129,6 +138,9 @@ Adapters implement capability metadata, fixed Runner arguments,
 | Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
 | Weibo mobile-UA login page defaults to SMS | Click the exact visible `扫码登录` entry and require the QR image within a bounded timeout |
 | Weibo QR entry is absent or does not reveal a QR | Fail explicitly without changing login method or waiting indefinitely |
+| Tieba upstream finishes on HTTP or `百度安全验证` | Navigate once to the HTTPS homepage with the Baidu referrer |
+| Tieba safety verification remains after HTTPS recovery | Emit `captcha required` and fail without treating it as a login QR |
+| Tieba normal page has the current or legacy login entry | Click one visible reviewed entry and require `tang-pass-qrcode-img` within a bounded timeout |
 | Adapter detects captcha, expired login, or login timeout | Terminate the process group and persist a normalized failure |
 | Malformed or oversized metric text | Normalized metric is `null` |
 | Malformed textual publication time | Normalized publication time is `null` |
@@ -147,6 +159,9 @@ Adapters implement capability metadata, fixed Runner arguments,
 - Bad: make Weibo wait on its desktop QR selector without first handling the
   mobile-UA login-mode switch, or use a fuzzy click that could select another
   login control.
+- Bad: accept Tieba's HTTP safety page as a login page, treat its “扫码验证” as
+  a login QR, or let the Worker's generic timeout classifier kill upstream
+  before its intended login-entry fallback.
 - Bad: modify `/opt/mediacrawler` to add sleeps, retry every Playwright error,
   or loop indefinitely around browser startup.
 
@@ -170,6 +185,10 @@ tests require explicit authorization and are not part of unit tests.
 Runner tests must also assert that Weibo keeps an already-visible QR without
 clicking, clicks only a visible exact-text QR entry when needed, fails clearly
 when the entry is absent, and installs this patch only for `wb`.
+Tieba Runner tests must assert that normal HTTPS navigation stays unchanged,
+HTTP/safety navigation recovers through HTTPS, persistent safety verification
+is classified as captcha, the current login entry exposes the legacy QR
+selector, and the patch is installed only for `tieba`.
 
 ## 7. Wrong vs Correct
 
@@ -214,6 +233,8 @@ if args.platform == "dy":
     install_douyin_navigation_retry()
 if args.platform == "wb":
     install_weibo_qrcode_entry_patch()
+if args.platform == "tieba":
+    install_tieba_runtime_patch()
 ```
 
 Wrong:

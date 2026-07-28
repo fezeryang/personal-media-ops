@@ -28,6 +28,13 @@ WEIBO_QRCODE_SELECTOR = "xpath=//img[@class='w-full h-full']"
 WEIBO_QRCODE_ENTRY_SELECTOR = "xpath=//*[normalize-space(.)='扫码登录']"
 WEIBO_QRCODE_ENTRY_SCAN_ATTEMPTS = 20
 WEIBO_QRCODE_ENTRY_SCAN_DELAY_SECONDS = 0.5
+BAIDU_INDEX_URL = "https://www.baidu.com/"
+TIEBA_INDEX_URL = "https://tieba.baidu.com/"
+TIEBA_SECURITY_VERIFICATION_TITLE = "百度安全验证"
+TIEBA_QRCODE_SELECTOR = "xpath=//img[@class='tang-pass-qrcode-img']"
+TIEBA_LOGIN_ENTRY_SELECTOR = "div.user-or-login, li.u_login"
+TIEBA_LOGIN_ENTRY_SCAN_ATTEMPTS = 20
+TIEBA_LOGIN_ENTRY_SCAN_DELAY_SECONDS = 0.5
 LOGIN_STATE_CLIENTS = {
     "bili": ("media_platform.bilibili.client", "BilibiliClient"),
     "xhs": ("media_platform.xhs.client", "XiaoHongShuClient"),
@@ -312,18 +319,20 @@ def install_douyin_navigation_retry() -> None:
     DouYinLogin.popup_login_dialog = popup_login_dialog
 
 
-async def open_weibo_qrcode_entry(
+async def open_qrcode_entry(
     context_page: object,
     retryable_error: type[BaseException],
     *,
-    qrcode_selector: str = WEIBO_QRCODE_SELECTOR,
+    platform_name: str,
+    qrcode_selector: str,
+    login_entry_selector: str,
     initial_timeout_ms: int = 1_000,
     qrcode_timeout_ms: int = 10_000,
     click_timeout_ms: int = 5_000,
-    entry_scan_attempts: int = WEIBO_QRCODE_ENTRY_SCAN_ATTEMPTS,
-    entry_scan_delay_seconds: float = WEIBO_QRCODE_ENTRY_SCAN_DELAY_SECONDS,
+    entry_scan_attempts: int,
+    entry_scan_delay_seconds: float,
 ) -> None:
-    """Expose Weibo's QR code when its mobile-UA login page hides it."""
+    """Expose a platform QR code through one bounded, exact entry selector."""
     try:
         await context_page.wait_for_selector(
             qrcode_selector,
@@ -334,7 +343,7 @@ async def open_weibo_qrcode_entry(
     except retryable_error as initial_error:
         last_error: BaseException = initial_error
 
-    login_entries = context_page.locator(WEIBO_QRCODE_ENTRY_SELECTOR)
+    login_entries = context_page.locator(login_entry_selector)
     for scan_attempt in range(entry_scan_attempts):
         try:
             entry_count = await login_entries.count()
@@ -354,8 +363,8 @@ async def open_weibo_qrcode_entry(
                     timeout=qrcode_timeout_ms,
                 )
                 print(
-                    "[MediaOps] Opened Weibo QR-code login through the "
-                    "visible exact-text entry",
+                    f"[MediaOps] Opened {platform_name} QR-code login through "
+                    "a visible reviewed entry",
                     flush=True,
                 )
                 return
@@ -369,8 +378,35 @@ async def open_weibo_qrcode_entry(
             await asyncio.sleep(entry_scan_delay_seconds)
 
     raise RuntimeError(
-        "Weibo QR-code login entry was not visible or did not expose a QR code"
+        f"{platform_name} QR-code login entry was not visible or did not "
+        "expose a QR code"
     ) from last_error
+
+
+async def open_weibo_qrcode_entry(
+    context_page: object,
+    retryable_error: type[BaseException],
+    *,
+    qrcode_selector: str = WEIBO_QRCODE_SELECTOR,
+    initial_timeout_ms: int = 1_000,
+    qrcode_timeout_ms: int = 10_000,
+    click_timeout_ms: int = 5_000,
+    entry_scan_attempts: int = WEIBO_QRCODE_ENTRY_SCAN_ATTEMPTS,
+    entry_scan_delay_seconds: float = WEIBO_QRCODE_ENTRY_SCAN_DELAY_SECONDS,
+) -> None:
+    """Expose Weibo's QR code when its mobile-UA login page hides it."""
+    await open_qrcode_entry(
+        context_page,
+        retryable_error,
+        platform_name="Weibo",
+        qrcode_selector=qrcode_selector,
+        login_entry_selector=WEIBO_QRCODE_ENTRY_SELECTOR,
+        initial_timeout_ms=initial_timeout_ms,
+        qrcode_timeout_ms=qrcode_timeout_ms,
+        click_timeout_ms=click_timeout_ms,
+        entry_scan_attempts=entry_scan_attempts,
+        entry_scan_delay_seconds=entry_scan_delay_seconds,
+    )
 
 
 def install_weibo_qrcode_entry_patch() -> None:
@@ -391,6 +427,99 @@ def install_weibo_qrcode_entry_patch() -> None:
         )
         return await original_find_login_qrcode(context_page, selector)
 
+    crawler_utils.find_login_qrcode = find_login_qrcode_with_entry
+
+
+async def navigate_tieba_with_https(
+    crawler: object,
+    original_navigation: Callable[[object], Awaitable[None]],
+) -> None:
+    """Recover the upstream HTTP Tieba link before login or collection."""
+    await original_navigation(crawler)
+    context_page = getattr(crawler, "context_page", None)
+    if context_page is None:
+        raise RuntimeError("Tieba crawler has no context page")
+
+    current_title = await context_page.title()
+    needs_https_recovery = (
+        str(getattr(context_page, "url", "")).startswith("http://")
+        or TIEBA_SECURITY_VERIFICATION_TITLE in current_title
+    )
+    if not needs_https_recovery:
+        return
+
+    print(
+        "[MediaOps] Recovering Tieba navigation through the HTTPS homepage",
+        flush=True,
+    )
+    await context_page.goto(
+        TIEBA_INDEX_URL,
+        wait_until="domcontentloaded",
+        timeout=30_000,
+        referer=BAIDU_INDEX_URL,
+    )
+    recovered_title = await context_page.title()
+    if TIEBA_SECURITY_VERIFICATION_TITLE in recovered_title:
+        print(
+            "[MediaOps] captcha required: Tieba security verification "
+            "persisted after HTTPS recovery",
+            flush=True,
+        )
+        raise RuntimeError(
+            "Tieba security verification persisted after HTTPS recovery"
+        )
+
+
+async def open_tieba_qrcode_entry(
+    context_page: object,
+    retryable_error: type[BaseException],
+    *,
+    qrcode_selector: str = TIEBA_QRCODE_SELECTOR,
+    initial_timeout_ms: int = 1_000,
+    qrcode_timeout_ms: int = 10_000,
+    click_timeout_ms: int = 5_000,
+    entry_scan_attempts: int = TIEBA_LOGIN_ENTRY_SCAN_ATTEMPTS,
+    entry_scan_delay_seconds: float = TIEBA_LOGIN_ENTRY_SCAN_DELAY_SECONDS,
+) -> None:
+    """Open the current or legacy Tieba login entry before upstream waits."""
+    await open_qrcode_entry(
+        context_page,
+        retryable_error,
+        platform_name="Tieba",
+        qrcode_selector=qrcode_selector,
+        login_entry_selector=TIEBA_LOGIN_ENTRY_SELECTOR,
+        initial_timeout_ms=initial_timeout_ms,
+        qrcode_timeout_ms=qrcode_timeout_ms,
+        click_timeout_ms=click_timeout_ms,
+        entry_scan_attempts=entry_scan_attempts,
+        entry_scan_delay_seconds=entry_scan_delay_seconds,
+    )
+
+
+def install_tieba_runtime_patch() -> None:
+    """Patch reviewed Tieba navigation/login seams, never upstream source."""
+    from media_platform.tieba.core import TieBaCrawler
+    from playwright.async_api import Error as PlaywrightError
+    from tools import utils as crawler_utils
+
+    original_navigation = TieBaCrawler._navigate_to_tieba_via_baidu
+    original_find_login_qrcode = crawler_utils.find_login_qrcode
+
+    async def navigate_with_https(crawler: object) -> None:
+        await navigate_tieba_with_https(crawler, original_navigation)
+
+    async def find_login_qrcode_with_entry(
+        context_page: object,
+        selector: str,
+    ) -> str:
+        await open_tieba_qrcode_entry(
+            context_page,
+            PlaywrightError,
+            qrcode_selector=selector,
+        )
+        return await original_find_login_qrcode(context_page, selector)
+
+    TieBaCrawler._navigate_to_tieba_via_baidu = navigate_with_https
     crawler_utils.find_login_qrcode = find_login_qrcode_with_entry
 
 
@@ -512,6 +641,8 @@ def main() -> None:
         install_douyin_navigation_retry()
     if args.platform == "wb":
         install_weibo_qrcode_entry_patch()
+    if args.platform == "tieba":
+        install_tieba_runtime_patch()
     runpy.run_path(
         str(MEDIACRAWLER_ROOT / "main.py"),
         run_name="__main__",

@@ -25,6 +25,13 @@ The pinned history already includes the Tieba PC-page rewrite repair
 `f328ee35b55e25e8aaeb9c847fe8b622e3f3447f` and the Kuaishou pagination repair
 `97e4142733b1ce1744714e29c9e43e540a503021`.
 
+Production inspection on 2026-07-28 found two remaining Tieba integration
+gaps at this pinned head: Baidu navigation prefers its HTTP Tieba link before
+HTTPS and can land on `百度安全验证`, while QR login still falls back only to
+the removed `li.u_login` entry. The reviewed Personal Media Ops Runner handles
+these through a `tieba`-only HTTPS recovery and current/legacy login-entry
+adapter seam. `/opt/mediacrawler` remains unchanged.
+
 ## Supported integration contract
 
 The reviewed Personal Media Ops Runner uses upstream platform codes:
