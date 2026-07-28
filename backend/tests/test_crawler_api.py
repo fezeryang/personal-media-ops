@@ -62,7 +62,7 @@ def test_capabilities_report_registry_and_global_limit(
         ("xhs", True, "production_verified", "enabled"),
         ("dy", False, "code_ready", "deferred_resource_constrained"),
         ("zhihu", False, "production_verified", "disabled"),
-        ("wb", False, "code_ready", "disabled"),
+        ("wb", False, "production_verified", "disabled"),
         ("tieba", False, "code_ready", "disabled"),
         ("ks", False, "code_ready", "disabled"),
     ]

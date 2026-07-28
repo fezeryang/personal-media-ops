@@ -438,7 +438,7 @@ class WeiboAdapter(CrawlerPlatformAdapter):
             display_name="微博",
             icon_label="微",
             storage_directories=("weibo",),
-            verification_status="code_ready",
+            verification_status="production_verified",
             unavailable_status="disabled",
             login_prompt="使用微博客户端扫码登录；正文始终按纯文本展示",
             headless_browser=True,

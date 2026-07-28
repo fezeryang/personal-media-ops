@@ -106,6 +106,16 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
   HTTPS source URLs, publication times, vote/comment metrics, matching source
   keywords, and non-empty raw payloads; the set covered both answers and
   articles. The browser process count returned to zero.
+- Weibo task `329d0c61-b2dd-4802-bcd7-d052c0b02a6c` exposed an upstream
+  mobile-UA login mismatch: the page defaulted to SMS while MediaCrawler
+  waited directly for a QR image. Commit `a95d62a` added a bounded, `wb`-only
+  exact-text QR-mode switch without modifying upstream source.
+- Weibo task `92c566d2-37b0-47eb-b379-c855df34c731` then succeeded on
+  2026-07-28 with 5/5 results. All posts had IDs, plain-text bodies, authors,
+  HTTPS source URLs, publication times, repost/comment/like metrics, matching
+  source keywords, and non-empty raw payloads. This batch contained no media
+  field, so all cover URLs correctly remained `null`. Browser processes
+  returned to zero.
 
 ## Acceptance Criteria
 
@@ -116,7 +126,7 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
       and `0002` upgrade tests; no meaningless migration is added.
 - [x] Capability API and frontend truthfully represent all seven platforms.
 - [x] Zhihu has a real successful task or an evidence-backed deferred state.
-- [ ] Weibo has a real successful task or an evidence-backed deferred state.
+- [x] Weibo has a real successful task or an evidence-backed deferred state.
 - [ ] Tieba has a real successful task or an evidence-backed deferred state.
 - [ ] Kuaishou has a real successful task or an evidence-backed deferred state.
 - [ ] Bilibili and Xiaohongshu real regressions pass after relevant changes.
