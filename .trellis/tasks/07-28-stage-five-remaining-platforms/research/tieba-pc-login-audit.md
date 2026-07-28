@@ -41,3 +41,13 @@ Keep the generic terminal classifier unchanged. Patch only the reviewed
 
 All waits are bounded. The patch neither treats `扫码验证` as a login QR nor
 edits `/opt/mediacrawler`.
+
+## Production Verification
+
+After deploying commit `271825d9714d1723a0e7c6b423896b9248cd991c`, task
+`52d19084-7f17-4ede-8293-36f716919272` completed on 2026-07-28 with keyword
+`人工智能` and 5/5 results. All five normalized records had IDs, titles,
+authors, descriptions, HTTPS source URLs, publication times, reply counts,
+and non-empty raw payloads. Every raw payload included `tieba_name` and
+`tieba_link`. The active-task and browser-process counts both returned to
+zero, and host swap use remained zero.

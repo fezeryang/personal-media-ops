@@ -472,7 +472,7 @@ class TiebaAdapter(CrawlerPlatformAdapter):
             display_name="百度贴吧",
             icon_label="贴",
             storage_directories=("tieba",),
-            verification_status="code_ready",
+            verification_status="production_verified",
             unavailable_status="disabled",
             login_prompt="使用百度客户端或网页二维码登录贴吧",
             headless_browser=True,

@@ -26,8 +26,8 @@ Adapters implement capability metadata, fixed Runner arguments,
   `production_verified`. Availability is independently `enabled`, `disabled`,
   `deferred_resource_constrained`, `deferred_upstream_breakage`, or
   `deferred_login_required`. `enabled` is the actual task-submission gate.
-- `bili`, `xhs`, `zhihu`, and `wb` are `production_verified`; `dy` is
-  `code_ready` and `deferred_resource_constrained`; `tieba` and `ks` remain
+- `bili`, `xhs`, `zhihu`, `wb`, and `tieba` are `production_verified`; `dy`
+  is `code_ready` and `deferred_resource_constrained`; `ks` remains
   `code_ready` until a real task is recorded.
 - Only explicitly enabled platforms accept new tasks; the default is `bili`.
 - Search, QR login, count `1..20`, one global task, no comments, no

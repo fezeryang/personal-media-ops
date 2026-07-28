@@ -116,6 +116,15 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
   source keywords, and non-empty raw payloads. This batch contained no media
   field, so all cover URLs correctly remained `null`. Browser processes
   returned to zero.
+- Tieba task `cffa6e3b-6ae5-42ab-b9eb-6297d345219c` exposed the pinned
+  upstream's stale HTTP navigation and login-entry assumptions. Commit
+  `271825d` added a bounded, `tieba`-only HTTPS recovery and current/legacy
+  login-entry seam without modifying upstream source.
+- Tieba task `52d19084-7f17-4ede-8293-36f716919272` then succeeded on
+  2026-07-28 with 5/5 results. All posts had IDs, titles, authors, summaries,
+  HTTPS source URLs, publication times, reply counts, and non-empty raw
+  payloads; every raw payload included forum name and link fields. Active
+  tasks and browser processes returned to zero, with no swap use.
 
 ## Acceptance Criteria
 
@@ -127,7 +136,7 @@ the others or regress the production-verified Bilibili and Xiaohongshu paths.
 - [x] Capability API and frontend truthfully represent all seven platforms.
 - [x] Zhihu has a real successful task or an evidence-backed deferred state.
 - [x] Weibo has a real successful task or an evidence-backed deferred state.
-- [ ] Tieba has a real successful task or an evidence-backed deferred state.
+- [x] Tieba has a real successful task or an evidence-backed deferred state.
 - [ ] Kuaishou has a real successful task or an evidence-backed deferred state.
 - [ ] Bilibili and Xiaohongshu real regressions pass after relevant changes.
 - [x] Douyin remains disabled and `deferred_resource_constrained`.

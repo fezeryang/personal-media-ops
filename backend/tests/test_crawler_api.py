@@ -63,7 +63,7 @@ def test_capabilities_report_registry_and_global_limit(
         ("dy", False, "code_ready", "deferred_resource_constrained"),
         ("zhihu", False, "production_verified", "disabled"),
         ("wb", False, "production_verified", "disabled"),
-        ("tieba", False, "code_ready", "disabled"),
+        ("tieba", False, "production_verified", "disabled"),
         ("ks", False, "code_ready", "disabled"),
     ]
     assert all(item["icon_label"] for item in response.json()["platforms"])

@@ -43,13 +43,16 @@ availability_status:
   deferred_upstream_breakage | deferred_login_required
 ```
 
-`bili`, `xhs`, `zhihu`, and `wb` are production-verified. Zhihu was verified
-on 2026-07-28 by task `bb63be5c-0a9b-48e2-bde5-b20bdaf637e6`, which returned
-five normalized answer/article results. Weibo was verified on 2026-07-28 by
-task `92c566d2-37b0-47eb-b379-c855df34c731`, which returned five normalized
-plain-text posts. `dy` is code-ready, disabled, and
-`deferred_resource_constrained`. `tieba` and `ks` remain code-ready and
-disabled until each production rollout explicitly enables and verifies it.
+`bili`, `xhs`, `zhihu`, `wb`, and `tieba` are production-verified. Zhihu was
+verified on 2026-07-28 by task
+`bb63be5c-0a9b-48e2-bde5-b20bdaf637e6`, which returned five normalized
+answer/article results. Weibo was verified on 2026-07-28 by task
+`92c566d2-37b0-47eb-b379-c855df34c731`, which returned five normalized
+plain-text posts. Tieba was verified on 2026-07-28 by task
+`52d19084-7f17-4ede-8293-36f716919272`, which returned five normalized posts
+with forum metadata in each raw payload. `dy` is code-ready, disabled, and
+`deferred_resource_constrained`. `ks` remains code-ready and disabled until
+its production rollout explicitly enables and verifies it.
 `enabled=false` always prevents task submission.
 
 ## Create a task
