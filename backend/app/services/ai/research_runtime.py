@@ -346,15 +346,31 @@ class ResearchRuntime:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            parsed = None
+            # Compatible models sometimes wrap an otherwise valid JSON plan
+            # in a Markdown code fence.  Strip only that presentation layer;
+            # the persisted raw model plan remains untouched for auditability.
+            fenced = text.strip()
+            if fenced.startswith("```") and fenced.endswith("```"):
+                lines = fenced.splitlines()
+                fenced = "\n".join(lines[1:-1]).strip()
+                if fenced.casefold().startswith("json\n"):
+                    fenced = fenced[5:]
+            try:
+                parsed = json.loads(fenced)
+            except json.JSONDecodeError:
+                parsed = None
+        parsed_candidates = False
         if isinstance(parsed, dict):
             for key in ("search_terms", "keywords", "queries", "derived_keywords"):
                 value = parsed.get(key)
                 if isinstance(value, list):
                     raw_candidates.extend(str(item) for item in value)
+                    parsed_candidates = True
         elif isinstance(parsed, list):
             raw_candidates.extend(str(item) for item in parsed)
-        raw_candidates.extend(text.replace("\n", ",").split(","))
+            parsed_candidates = True
+        if not parsed_candidates:
+            raw_candidates.extend(text.replace("\n", ",").split(","))
         for raw in raw_candidates:
             item = raw.strip(" -*•`\t:：0123456789.[]{}\"'")
             if len(item) < 2 or len(item) > 80 or not item.isprintable():

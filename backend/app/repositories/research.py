@@ -965,7 +965,12 @@ class ResearchTaskRepository:
                 JOIN research_tasks t ON t.id = c.research_task_id
                 WHERE t.status = 'Researching'
                   AND t.waiting_crawl_task_id IS NULL
-                  AND c.status IN ('pending', 'running', 'waiting_login', 'succeeded', 'failed', 'cancelled')
+                  -- A completed crawler has already been reconciled by the
+                  -- Worker.  Re-attaching it here would consume the same
+                  -- crawl budget repeatedly on every runtime tick.  A
+                  -- process can only leave an orphan in an active state
+                  -- between crawler creation and the durable association.
+                  AND c.status IN ('pending', 'running', 'waiting_login')
                 ORDER BY c.created_at, c.id
                 """
             ).fetchall()

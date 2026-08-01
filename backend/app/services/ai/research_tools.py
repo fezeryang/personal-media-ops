@@ -196,7 +196,7 @@ class ResearchToolService:
             platform = arguments.get("platform")
             if platform is not None and not isinstance(platform, str):
                 raise ResearchTaskConflict("platform must be a string")
-            return self.library_tools.search_contents(
+            result = self.library_tools.search_contents(
                 query=query,
                 platform=platform.strip() if isinstance(platform, str) else None,
                 tag_id=None,
@@ -204,6 +204,57 @@ class ResearchToolService:
                 offset=0,
                 limit=20,
             )
+            # Library search is intentionally conservative for the public API
+            # and treats a query as one phrase.  Research rounds often receive
+            # a natural-language objective, however, and a newly collected
+            # result may contain only one of its meaningful terms.  When the
+            # phrase has no hit, retry a small bounded set of extracted terms
+            # and merge by content id.  This keeps the mandatory library-first
+            # lookup while allowing entity extraction from real first-round
+            # results.
+            data = result.get("data") if isinstance(result, dict) else None
+            if isinstance(data, list) and data:
+                return result
+            terms: list[str] = []
+            for term in TOKEN_RE.findall(query):
+                if term.casefold() in STOPWORDS:
+                    continue
+                terms.append(term)
+                if all("\u4e00" <= char <= "\u9fff" for char in term):
+                    # Add bounded two-character n-grams so a phrase such as
+                    # "工作台产品" can still match a title containing only
+                    # "产品" after the first crawl.
+                    terms.extend(term[index : index + 2] for index in range(len(term) - 1))
+            terms = list(dict.fromkeys(terms))[:6]
+            merged: dict[str, dict[str, object]] = {}
+            for term in terms:
+                fallback = self.library_tools.search_contents(
+                    query=term,
+                    platform=platform.strip() if isinstance(platform, str) else None,
+                    tag_id=None,
+                    is_favorite=None,
+                    offset=0,
+                    limit=20,
+                )
+                fallback_data = fallback.get("data") if isinstance(fallback, dict) else None
+                if not isinstance(fallback_data, list):
+                    continue
+                for item in fallback_data:
+                    if isinstance(item, dict) and item.get("id"):
+                        merged[str(item["id"])] = item
+                if len(merged) >= 20:
+                    break
+            if not merged:
+                return result
+            return {
+                "data": list(merged.values())[:20],
+                "meta": {
+                    "offset": 0,
+                    "limit": 20,
+                    "next_offset": 0,
+                    "has_more": False,
+                },
+            }
         if tool_name == "get_content":
             content_id = self._string(arguments, "content_id", max_length=200)
             result = self.library_tools.get_content(content_id)

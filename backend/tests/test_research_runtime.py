@@ -276,6 +276,51 @@ def test_research_tools_cover_read_dedupe_find_and_action_paths(
     assert action["status"] == "pending"
 
 
+def test_search_library_falls_back_to_bounded_terms_for_objectives(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    task = create_task(database, owner_id)
+    library_tools = Mock()
+
+    def search_contents(**kwargs: object) -> dict[str, object]:
+        query = str(kwargs["query"])
+        if query == "工作台产品，分析其解决的需求、产品形态与可能机会。":
+            return {"data": [], "meta": {}}
+        if query in {"工作台产品", "产品"}:
+            return {
+                "data": [
+                    {
+                        "id": "content-1",
+                        "title": "AI 工作台产品",
+                        "description": "agent workspace",
+                    }
+                ],
+                "meta": {},
+            }
+        return {"data": [], "meta": {}}
+
+    library_tools.search_contents.side_effect = search_contents
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=library_tools,
+        crawler=CrawlerTaskRepository(database),
+        research=ResearchTaskRepository(database),
+    )
+    result = asyncio.run(
+        tools.execute(
+            task=task,
+            tool_name="search_library",
+            arguments={
+                "query": "工作台产品，分析其解决的需求、产品形态与可能机会。"
+            },
+        )
+    )
+    assert result["data"][0]["id"] == "content-1"
+    assert library_tools.search_contents.call_count >= 2
+
+
 def test_submit_crawl_is_persisted_as_waiting_state_after_library_search(
     tmp_path: Path,
     test_settings,
@@ -338,6 +383,13 @@ def test_orphan_crawl_is_reconciled_after_runtime_restart(tmp_path: Path) -> Non
     current = repository.get_for_runtime(task_id)
     assert current is not None
     assert current["status"] == "WaitingCrawl"
+    assert current["consumed_crawl_count"] == 1
+    assert crawler.claim_next() is not None
+    crawler.complete_success(str(orphan["id"]), actual_count=0)
+    repository.record_crawl_completion(str(orphan["id"]), succeeded=True)
+    assert repository.reconcile_orphan_crawls() == []
+    current = repository.get_for_runtime(task_id)
+    assert current is not None
     assert current["consumed_crawl_count"] == 1
 
 
@@ -669,6 +721,14 @@ def test_runtime_plan_keywords_are_bounded_and_non_verbatim() -> None:
         "Find AI workbench products",
     )
     assert keywords == [
+        "local-first workspace",
+        "agent memory",
+        "evidence graph",
+    ]
+    assert ResearchRuntime._plan_keywords(
+        "```json\n{\"search_terms\": [\"local-first workspace\", \"agent memory\", \"evidence graph\"]}\n```",
+        "Find AI workbench products",
+    ) == [
         "local-first workspace",
         "agent memory",
         "evidence graph",
