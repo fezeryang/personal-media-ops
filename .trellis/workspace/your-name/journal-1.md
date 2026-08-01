@@ -430,3 +430,37 @@ Delivered durable AI Runtime and controlled Research Agent on the existing Model
 ### Next Steps
 
 - None - task complete
+
+## Session 13: Phase 8C-1 前置诊断与架构审查准备
+
+**Date**: 2026-08-01
+**Task**: 08-01-research-quality-foundation
+
+### 诊断基线
+
+对生产研究任务 `f496000c-742e-42c2-91c2-e7218e6961b2` 做只读核查。两条真实
+bili search 采集均 succeeded，requested_count 均为 5，实际耗时分别为 68.653s
+和 65.161s；上游各尝试约 20 个候选，得到 17/19 条可用 JSONL，解析器只取前
+5 条，且两批取入库的 5/5 条均在采集开始前已存在。完整 JSONL 中仍分别有 8/10
+条当时无库记录的候选，故新增 0 的主判定是 (c) requested_count 过小，直接表现
+为被执行子集全部 (a) 去重命中；(b)/(d) 无证据。
+
+研究从 `10:01:58.476721Z` 到首次提出人工动作 `10:05:22.038521Z` 为 203.562s：
+两次真实采集合计 133.814s，模型调用 trace elapsed 合计 84.224s，其余为规划、
+队列/入库和调用间隙；之后摘要模型约 18.9s，等待人工确认约 56.2s，最终 Done。
+DB 记录总生命周期到 Done 为 278.710s，解释了“203 秒”口径与完整生命周期的差异。
+
+3 条 inference 均人工抽查为“部分支撑”：已有正文确实支撑若干案例和推导起点，
+但均存在从单平台教程外推到跨产品趋势/市场机会的跨度；尤其“执行力外包”不是
+凭空绑定，但不能据此断言广泛核心需求。旧 save_finding 只校验 content_id 存在，
+未做语义支持约束。
+
+### 约束
+
+8B 任务状态更新为 `completed_with_quality_followups`；平台配置未改，生产状态
+API/Worker active，工作树原有未跟踪 `CLAUDE.md` 保留。
+
+### 下一步
+
+架构审查门禁通过后，先修复 requested_count 并在 bili 单平台重跑验证，再进入
+0012、查询质量闸门、四类内容计数、occurrences/support metadata 与既有研究页增强。

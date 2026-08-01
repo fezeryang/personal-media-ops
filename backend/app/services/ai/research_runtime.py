@@ -14,7 +14,11 @@ from app.repositories.research import (
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.providers import ProviderError
 from app.services.ai.research_rendering import render_research_markdown
-from app.services.ai.research_tools import ResearchToolService, extract_entities
+from app.services.ai.research_tools import (
+    RESEARCH_DEFAULT_REQUESTED_COUNT,
+    ResearchToolService,
+    extract_entities,
+)
 
 MAX_TOOL_ROUNDS = 8
 MAX_ARTIFACT_ROUNDS = 3
@@ -545,7 +549,7 @@ class ResearchRuntime:
             {
                 "platform": platform,
                 "keywords": keywords,
-                "requested_count": 5,
+                "requested_count": RESEARCH_DEFAULT_REQUESTED_COUNT,
             },
         )
         if result.get("status") == "waiting_crawl":

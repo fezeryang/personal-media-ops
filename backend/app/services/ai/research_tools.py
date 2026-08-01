@@ -30,6 +30,7 @@ STOPWORDS = {
     "没有",
     "进行",
 }
+RESEARCH_DEFAULT_REQUESTED_COUNT = 12
 
 
 class ResearchToolService:
@@ -353,8 +354,15 @@ class ResearchToolService:
         if int(task["consumed_crawl_count"]) >= int(task["budget_crawl_limit"]):
             raise ResearchTaskConflict("crawl budget is exhausted")
         identifier = self.crawler.new_id()
-        requested = arguments.get("requested_count", 5)
-        requested_count = int(requested) if isinstance(requested, int) else 5
+        requested = arguments.get(
+            "requested_count",
+            RESEARCH_DEFAULT_REQUESTED_COUNT,
+        )
+        requested_count = (
+            int(requested)
+            if isinstance(requested, int)
+            else RESEARCH_DEFAULT_REQUESTED_COUNT
+        )
         requested_count = max(1, min(requested_count, 20))
         task_id = str(task["id"])
         current = self.research.get_for_runtime(task_id)

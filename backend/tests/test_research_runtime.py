@@ -359,6 +359,9 @@ def test_submit_crawl_is_persisted_as_waiting_state_after_library_search(
     assert current is not None
     assert current["status"] == "WaitingCrawl"
     assert current["waiting_crawl_task_id"] == result["crawler_task_id"]
+    crawler_task = CrawlerTaskRepository(database).get(str(result["crawler_task_id"]))
+    assert crawler_task is not None
+    assert crawler_task["requested_count"] == 12
 
 
 def test_orphan_crawl_is_reconciled_after_runtime_restart(tmp_path: Path) -> None:

@@ -3,7 +3,7 @@
   "name": "ai-orchestrator-research-runtime",
   "title": "AI Runtime and controlled research task",
   "description": "",
-  "status": "completed",
+  "status": "completed_with_quality_followups",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "8C-1 前置诊断确认：8B 真实研究任务新增 0 的主因是 requested_count=5 截断候选池；全部已入库子集均命中既有 bili source_content_id。Finding evidence 仅形式绑定，进入质量跟进。",
   "meta": {}
 }
