@@ -240,6 +240,23 @@ class AIRepository:
         assignments.append("updated_at = ?")
         values.extend([_utc_now(), provider_id])
         with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if "enabled" in changes and not bool(changes["enabled"]):
+                routed_roles = connection.execute(
+                    """
+                    SELECT r.role
+                    FROM ai_model_routes r
+                    JOIN ai_models m ON m.id = r.model_id
+                    WHERE m.provider_id = ? AND r.model_id IS NOT NULL
+                    ORDER BY r.role
+                    """,
+                    (provider_id,),
+                ).fetchall()
+                if routed_roles:
+                    roles = ", ".join(str(row["role"]) for row in routed_roles)
+                    raise RuntimeError(
+                        f"Provider is assigned to route(s): {roles}; update routes before disabling"
+                    )
             cursor = connection.execute(
                 f"UPDATE ai_providers SET {', '.join(assignments)} WHERE id = ?",
                 values,
@@ -393,6 +410,21 @@ class AIRepository:
         assignments.append("updated_at = ?")
         values.extend([_utc_now(), model_record_id])
         with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if "enabled" in changes and not bool(changes["enabled"]):
+                routed_roles = connection.execute(
+                    """
+                    SELECT role FROM ai_model_routes
+                    WHERE model_id = ?
+                    ORDER BY role
+                    """,
+                    (model_record_id,),
+                ).fetchall()
+                if routed_roles:
+                    roles = ", ".join(str(row["role"]) for row in routed_roles)
+                    raise RuntimeError(
+                        f"Model is assigned to route(s): {roles}; update routes before disabling"
+                    )
             cursor = connection.execute(
                 f"UPDATE ai_models SET {', '.join(assignments)} WHERE id = ?",
                 values,

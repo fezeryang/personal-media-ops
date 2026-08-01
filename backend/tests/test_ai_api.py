@@ -225,6 +225,23 @@ def test_model_and_routes_require_enabled_records_and_guard_deletion(
     )
     assert (
         client.put(f"/api/ai/providers/{provider['id']}", json=disabled_payload).status_code
+        == 409
+    )
+    assert client.put(
+        "/api/ai/routes",
+        json={
+            "routes": {
+                "default": None,
+                "fast": None,
+                "deep": None,
+                "tool_calling": None,
+                "final_report": None,
+                "fallback": None,
+            }
+        },
+    ).status_code == 200
+    assert (
+        client.put(f"/api/ai/providers/{provider['id']}", json=disabled_payload).status_code
         == 200
     )
     invalid_route = client.put(

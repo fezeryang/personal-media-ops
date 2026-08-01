@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -199,7 +200,15 @@ def test_gateway_does_not_fake_cost_and_rejects_disabled_route(tmp_path: Path) -
     asyncio.run(run_once())
     invocation = repository.list_invocations(limit=1)[0]
     assert invocation["estimated_cost"] is None
+    with pytest.raises(RuntimeError, match="assigned to route"):
+        repository.update_model(str(model["id"]), enabled=False)
+    repository.replace_routes({"default": None})
     repository.update_model(str(model["id"]), enabled=False)
+    with sqlite3.connect(repository.database_path) as connection:
+        connection.execute(
+            "UPDATE ai_model_routes SET model_id = ? WHERE role = 'default'",
+            (model["id"],),
+        )
     with pytest.raises(RuntimeError, match="disabled"):
         asyncio.run(run_once())
 
