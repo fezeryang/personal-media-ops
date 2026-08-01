@@ -13,6 +13,7 @@ from app.repositories.research import (
 )
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.providers import ProviderError
+from app.services.ai.research_rendering import render_research_markdown
 from app.services.ai.research_tools import ResearchToolService, extract_entities
 
 MAX_TOOL_ROUNDS = 8
@@ -458,44 +459,29 @@ class ResearchRuntime:
             # Always spend the first bounded crawl after checking the library;
             # this makes the first round a real retrieval pass even when the
             # library already contains adjacent material.
-            context["crawl_requested"] = True
-            self.research.update_context(task_id, context, step="submit_crawl", round_number=round_number)
-            await self._execute_tool(
+            await self._submit_research_crawl(
                 task,
-                "submit_crawl",
-                {
-                    "platform": str((task.get("platforms") or ["bili"])[0]),
-                    "keywords": query[:200],
-                    "requested_count": 5,
-                },
+                context=context,
+                keywords=query[:200],
+                round_number=round_number,
             )
             return
         if crawl_count < min(2, crawl_limit) and items and round_number >= 1 and entities:
             # The second-round query is made only from entities extracted from
             # actual first-round library results; it never repeats the goal.
-            context["crawl_requested"] = True
-            self.research.update_context(task_id, context, step="submit_crawl", round_number=round_number + 1)
-            await self._execute_tool(
+            await self._submit_research_crawl(
                 task,
-                "submit_crawl",
-                {
-                    "platform": str((task.get("platforms") or ["bili"])[0]),
-                    "keywords": " ".join(entities[:6]),
-                    "requested_count": 5,
-                },
+                context=context,
+                keywords=" ".join(entities[:6]),
+                round_number=round_number + 1,
             )
             return
         if not items and crawl_count == 0 and crawl_count < crawl_limit:
-            context["crawl_requested"] = True
-            self.research.update_context(task_id, context, step="submit_crawl", round_number=round_number)
-            await self._execute_tool(
+            await self._submit_research_crawl(
                 task,
-                "submit_crawl",
-                {
-                    "platform": str((task.get("platforms") or ["bili"])[0]),
-                    "keywords": query[:200],
-                    "requested_count": 5,
-                },
+                context=context,
+                keywords=query[:200],
+                round_number=round_number,
             )
             return
 
@@ -510,6 +496,64 @@ class ResearchRuntime:
                 status="Summarizing",
                 reason="research_round_completed",
                 step="summarizing",
+                round_number=round_number,
+            )
+
+    @staticmethod
+    def _planned_crawl_platform(
+        task: dict[str, object],
+        context: dict[str, object],
+    ) -> tuple[str, int]:
+        raw_platforms = task.get("platforms")
+        platforms = (
+            [
+                str(platform).casefold()
+                for platform in raw_platforms
+                if isinstance(platform, str) and platform
+            ]
+            if isinstance(raw_platforms, list)
+            else []
+        )
+        if not platforms:
+            platforms = ["bili"]
+        raw_index = context.get("next_crawl_platform_index", 0)
+        index = raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0
+        return platforms[index % len(platforms)], index
+
+    async def _submit_research_crawl(
+        self,
+        task: dict[str, object],
+        *,
+        context: dict[str, object],
+        keywords: str,
+        round_number: int,
+    ) -> None:
+        """Submit one bounded crawl and rotate selected platforms fairly."""
+
+        task_id = str(task["id"])
+        platform, platform_index = self._planned_crawl_platform(task, context)
+        context["crawl_requested"] = True
+        self.research.update_context(
+            task_id,
+            context,
+            step="submit_crawl",
+            round_number=round_number,
+        )
+        result = await self._execute_tool(
+            task,
+            "submit_crawl",
+            {
+                "platform": platform,
+                "keywords": keywords,
+                "requested_count": 5,
+            },
+        )
+        if result.get("status") == "waiting_crawl":
+            context["next_crawl_platform_index"] = platform_index + 1
+            self.research.update_context(
+                task_id,
+                context,
+                step="waiting_crawl",
                 round_number=round_number,
             )
 
@@ -1031,8 +1075,13 @@ class ResearchRuntime:
             route_role=route_role,
             model_record_id=str(target["model_record_id"]),
         )
+        summary_markdown = (response.response.content or "").strip()
         result = {
-            "summary": (response.response.content or "").strip(),
+            # Keep the historical key for existing consumers while exposing
+            # explicit formats for the Research Center and future exporters.
+            "summary": summary_markdown,
+            "summary_markdown": summary_markdown,
+            "summary_html": render_research_markdown(summary_markdown),
             "facts": [item for item in findings if isinstance(item, dict) and item.get("kind") == "fact"],
             "inferences": [item for item in findings if isinstance(item, dict) and item.get("kind") == "inference"],
             "evidence_count": sum(len(item.get("evidence", [])) for item in findings if isinstance(item, dict)),

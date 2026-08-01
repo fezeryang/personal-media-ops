@@ -37,7 +37,7 @@ class ResearchTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     objective: str = Field(min_length=5, max_length=10_000)
-    platforms: list[str] = Field(default_factory=lambda: ["bili"], min_length=1, max_length=2)
+    platforms: list[str] | None = Field(default=None, min_length=1, max_length=7)
     budget: ResearchBudget = Field(default_factory=ResearchBudget)
 
     @field_validator("objective")
@@ -50,7 +50,9 @@ class ResearchTaskCreate(BaseModel):
 
     @field_validator("platforms")
     @classmethod
-    def normalize_platforms(cls, values: list[str]) -> list[str]:
+    def normalize_platforms(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
         normalized = [value.strip().casefold() for value in values]
         if any(not value or not value.isprintable() for value in normalized):
             raise ValueError("platforms must be printable and non-blank")

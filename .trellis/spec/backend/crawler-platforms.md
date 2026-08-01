@@ -363,3 +363,77 @@ if process.returncode == 0:
     batch = parse_task_entities(...)
     library_repository.ingest_task(task_id=task_id, batch=batch)
 ```
+
+## Scenario: Research platform scope
+
+### 1. Scope / Trigger
+
+Apply when the Research Center creates a task that may use more than one
+platform. The UI and API must consume the same registry facts; they must not
+invent a second platform allow-list.
+
+### 2. Signatures
+
+```text
+CrawlerPlatformRegistry.enabled_platforms_for_mode(mode, enabled_platforms)
+  -> list[str]
+POST /api/research/tasks { platforms?: string[] }
+```
+
+### 3. Contracts
+
+- The capabilities response lists all seven registered platforms and every
+  mode's independent status.
+- A research task may contain up to seven platform keys. When `platforms` is
+  omitted, the API selects every configured platform whose selected mode is
+  actually enabled; it does not default to a literal platform key.
+- Research currently submits `search` crawls, so only `search.enabled=true`
+  platforms can be selected. Deferred, disabled, and unverified platforms stay
+  visible with their reason but are rejected before a crawler row is created.
+- The selected platform list is persisted in the task snapshot. Multiple
+  selected platforms are scheduled round-robin by bounded crawl submissions;
+  the Worker remains globally single-concurrency.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Omitted platform list and configured search platforms exist | Use all configured enabled search platforms |
+| Unknown platform key | `409` research conflict; no task/crawl row |
+| Platform disabled or search mode deferred | `409` research conflict; no crawler row |
+| No configured enabled search platform | `409` explicit no-search-platform error |
+| Multiple selected platforms | Persist snapshot and rotate only among selected keys |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the page shows all registry entries, selects every currently enabled
+  search platform by default, and displays a deferred Kuaishou reason.
+- Base: a task with one platform behaves exactly as before.
+- Bad: the frontend hard-codes `bili`, enables every registered key regardless
+  of mode status, or silently falls back to Bilibili after a selected platform
+  fails validation.
+
+### 6. Tests Required
+
+- Registry tests assert enabled-platform filtering by mode.
+- API tests assert omitted defaults, seven-key bounds, disabled/deferred
+  rejection, and persisted multi-platform snapshots.
+- Runtime tests assert the first and second bounded crawl rotate across the
+  selected platform list without introducing parallel Worker execution.
+- Frontend tests assert all capability entries render, disabled entries cannot
+  be checked, and the request body contains the selected enabled keys.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+platform = str((task.get("platforms") or ["bili"])[0])
+```
+
+Correct:
+
+```python
+platform, index = self._planned_crawl_platform(task, context)
+# Persist index + 1 only after the async crawler row enters WaitingCrawl.
+```

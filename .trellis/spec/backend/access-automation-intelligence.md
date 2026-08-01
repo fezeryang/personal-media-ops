@@ -247,3 +247,76 @@ Correct:
 await repair_findings(max_turns=3)
 await repair_action_only(max_turns=2, tools={"propose_action"})
 ```
+
+## Scenario: Research result Markdown and HTML
+
+### 1. Scope / Trigger
+
+Apply when the Research Runtime stores or serves a model-generated report.
+Markdown is the audit/source format; HTML is a derived display/export format.
+
+### 2. Signatures
+
+```text
+render_research_markdown(markdown: str) -> str
+result.summary_markdown: string
+result.summary_html: string
+```
+
+### 3. Contracts
+
+- The Runtime preserves the exact bounded Markdown summary and derives
+  `summary_html` with the server-side Markdown renderer and an explicit HTML
+  allow-list.
+- The API keeps the historical `summary` alias for old consumers and, for old
+  rows missing the new fields, derives both formats during detail serialization
+  without changing the stored Markdown.
+- Allowed HTML is limited to report structure (headings, paragraphs, lists,
+  emphasis, code, blockquotes, tables, and links). Only `http` and `https`
+  links survive sanitization; scripts, event attributes, styles, iframes, and
+  unsafe URL schemes do not.
+- The frontend sanitizes the API HTML once more before DOM insertion and keeps a
+  Markdown view/copy path. Findings and provenance remain separate structured
+  evidence; HTML is never treated as evidence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Empty model summary | Empty Markdown and HTML fields; honest empty state |
+| Legacy result with only `summary` | API derives both explicit format fields |
+| Raw script/event/iframe/unsafe URL | Escaped or stripped; no executable DOM node |
+| HTML conversion failure | Preserve Markdown and show a readable fallback; do not fake HTML |
+| Result API field is not a string | Zod/Pydantic boundary rejects or uses the plain-text fallback |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a report heading/list/link renders in the Research Center and the
+  original Markdown remains viewable.
+- Base: a historical task with only `summary` renders after API compatibility
+  derivation.
+- Bad: pass model output directly to `dangerouslySetInnerHTML`, allow
+  `javascript:` links, or discard Markdown after generating HTML.
+
+### 6. Tests Required
+
+- Renderer tests cover headings, lists, links, code, empty content and XSS
+  payloads.
+- API tests assert `summary_markdown`, `summary_html`, and legacy compatibility.
+- Frontend tests assert rendered HTML, second-pass sanitization, Markdown toggle,
+  empty result, and 390px layout.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```tsx
+<div dangerouslySetInnerHTML={{ __html: result.summary }} />
+```
+
+Correct:
+
+```tsx
+const safe = DOMPurify.sanitize(result.summary_html, allowListOptions)
+<div dangerouslySetInnerHTML={{ __html: safe }} />
+```

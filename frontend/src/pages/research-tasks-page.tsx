@@ -10,9 +10,11 @@ import {
   ShieldAlert,
   Square,
 } from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import DOMPurify from "dompurify";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
+import type { CrawlerPlatformCapability } from "../api/crawler";
 import type {
   ResearchTaskDetail,
   ResearchTaskInput,
@@ -24,6 +26,8 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { useCrawlerCapabilitiesQuery } from "../features/crawler/hooks/use-crawler-queries";
+import { modeCapabilityStatusLabel } from "../features/crawler/lib/task";
 import {
   useCancelResearchTaskMutation,
   useCompleteResearchTaskMutation,
@@ -65,18 +69,22 @@ const statusVariant: Record<ResearchTaskSummary["status"], "neutral" | "info" | 
   Cancelled: "neutral",
 };
 
-const initialForm: ResearchTaskInput = {
-  objective: "",
-  platforms: ["bili"],
-  budget: {
+const defaultBudget: ResearchTaskInput["budget"] = {
     crawl_limit: 2,
     content_limit: 100,
     duration_seconds: 3_600,
     token_limit: 50_000,
     cost_limit: null,
     cost_currency: null,
-  },
 };
+
+function createInitialForm(platforms: string[]): ResearchTaskInput {
+  return {
+    objective: "",
+    platforms,
+    budget: { ...defaultBudget },
+  };
+}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds} 秒`;
@@ -89,8 +97,56 @@ function formatCost(cost: string | null, currency: string | null): string {
   return cost === null ? "未配置" : `${cost} ${currency ?? ""}`.trim();
 }
 
+function searchMode(capability: CrawlerPlatformCapability) {
+  return capability.modes.find((mode) => mode.mode === "search");
+}
+
+const SAFE_RESEARCH_HTML_TAGS = [
+  "a",
+  "blockquote",
+  "br",
+  "code",
+  "del",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "strong",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+];
+
+const SAFE_RESEARCH_HTML_ATTRIBUTES = ["href", "title"];
+
+function sanitizeResearchHtml(value: string): string {
+  return DOMPurify.sanitize(value, {
+    ALLOWED_TAGS: SAFE_RESEARCH_HTML_TAGS,
+    ALLOWED_ATTR: SAFE_RESEARCH_HTML_ATTRIBUTES,
+    ALLOWED_URI_REGEXP: /^(?:https?:\/\/|#)/i,
+  });
+}
+
+function resultString(result: ResearchTaskDetail["result"], key: string): string | null {
+  const value = result?.[key];
+  return typeof value === "string" ? value : null;
+}
+
 export function ResearchTasksPage() {
   const tasks = useResearchTasksQuery();
+  const capabilities = useCrawlerCapabilitiesQuery();
   const [selectedId, setSelectedId] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const effectiveSelectedId = selectedId && tasks.data?.some((task) => task.id === selectedId)
@@ -121,7 +177,17 @@ export function ResearchTasksPage() {
         }
       />
 
-      {showCreate ? <ResearchCreateForm pending={create.isPending} error={create.error} onSubmit={submit} onCancel={() => setShowCreate(false)} /> : null}
+      {showCreate ? (
+        <ResearchCreateForm
+          capabilities={capabilities.data?.platforms ?? []}
+          capabilitiesPending={capabilities.isPending}
+          capabilitiesError={capabilities.error}
+          pending={create.isPending}
+          error={create.error}
+          onSubmit={submit}
+          onCancel={() => setShowCreate(false)}
+        />
+      ) : null}
 
       {tasks.isError ? <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} /> : null}
       {!tasks.isError ? (
@@ -135,19 +201,41 @@ export function ResearchTasksPage() {
 }
 
 function ResearchCreateForm({
+  capabilities,
+  capabilitiesPending,
+  capabilitiesError,
   pending,
   error,
   onSubmit,
   onCancel,
 }: {
+  capabilities: CrawlerPlatformCapability[];
+  capabilitiesPending: boolean;
+  capabilitiesError: unknown;
   pending: boolean;
   error: unknown;
   onSubmit: (input: ResearchTaskInput) => void;
   onCancel: () => void;
 }) {
-  const [form, setForm] = useState<ResearchTaskInput>(initialForm);
+  const selectablePlatforms = useMemo(
+    () => capabilities.filter((capability) => searchMode(capability)?.enabled),
+    [capabilities],
+  );
+  const [form, setForm] = useState<ResearchTaskInput>(() => createInitialForm([]));
+  const initializedPlatforms = useRef(false);
+
+  useEffect(() => {
+    if (initializedPlatforms.current || selectablePlatforms.length === 0) return;
+    initializedPlatforms.current = true;
+    setForm((current) => ({
+      ...current,
+      platforms: selectablePlatforms.map((capability) => capability.platform),
+    }));
+  }, [selectablePlatforms]);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (form.platforms.length === 0 || capabilitiesPending || capabilitiesError) return;
     onSubmit({ ...form, objective: form.objective.trim() });
   }
   function setBudget(key: keyof ResearchTaskInput["budget"], value: string) {
@@ -186,15 +274,64 @@ function ResearchCreateForm({
             <BudgetField label="运行时长（秒）" value={form.budget.duration_seconds} onChange={(value) => setBudget("duration_seconds", value)} />
             <BudgetField label="Token 上限" value={form.budget.token_limit} onChange={(value) => setBudget("token_limit", value)} />
           </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-semibold">研究平台范围</legend>
+            <p className="text-xs leading-5 text-muted">
+              展示全部已注册平台；只有搜索模式已启用的平台可以执行研究采集。
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {capabilities.map((capability) => {
+                const mode = searchMode(capability);
+                const selectable = mode?.enabled === true;
+                return (
+                  <label
+                    key={capability.platform}
+                    className={`rounded-xl border p-3 text-sm ${selectable ? "border-line" : "border-line/60 bg-paper/60 text-muted"}`}
+                  >
+                    <span className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-signal"
+                        checked={form.platforms.includes(capability.platform)}
+                        disabled={!selectable || pending || capabilitiesPending}
+                        onChange={(event) => {
+                          const checked = event.currentTarget.checked;
+                          setForm((current) => ({
+                            ...current,
+                            platforms: checked
+                              ? [...current.platforms, capability.platform]
+                              : current.platforms.filter((item) => item !== capability.platform),
+                          }));
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold">
+                          {capability.display_name} <span className="font-mono text-xs text-muted">{capability.platform}</span>
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-muted">
+                          {mode ? modeCapabilityStatusLabel(mode) : "（没有搜索模式）"}
+                          {mode?.reason ? ` · ${mode.reason}` : null}
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {capabilitiesPending ? <p className="text-xs text-muted">正在加载平台能力…</p> : null}
+            {capabilitiesError ? <p className="text-sm text-danger" role="alert">平台能力加载失败，无法创建研究任务。</p> : null}
+            {!capabilitiesPending && !capabilitiesError && capabilities.length === 0 ? <p className="text-sm text-danger" role="alert">没有可用的平台能力。</p> : null}
+            {!capabilitiesPending && !capabilitiesError && capabilities.length > 0 && form.platforms.length === 0 ? <p className="text-sm text-danger" role="alert">至少选择一个已启用搜索模式的平台。</p> : null}
+          </fieldset>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="text-sm font-semibold">金额上限（可选）<Input className="mt-2" value={form.budget.cost_limit ?? ""} onChange={(event) => setBudget("cost_limit", event.currentTarget.value)} placeholder="价格未配置时不会生效" /></label>
             <label className="text-sm font-semibold">币种（可选）<Input className="mt-2" value={form.budget.cost_currency ?? ""} onChange={(event) => setBudget("cost_currency", event.currentTarget.value)} placeholder="例如 USD" /></label>
           </div>
-          <p className="text-xs leading-5 text-muted">当前平台范围：Bilibili（bili）。每轮会先查已有资料，采集由单 Worker 串行执行。</p>
+          <p className="text-xs leading-5 text-muted">每轮会先查已有资料；跨平台采集仍由单 Worker 串行执行。</p>
           {error ? <p className="text-sm text-danger">{errorMessage(error)}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
-            <Button disabled={pending || form.objective.trim().length < 5}><Send className="size-4" />{pending ? "创建中…" : "创建并开始"}</Button>
+            <Button disabled={pending || capabilitiesPending || Boolean(capabilitiesError) || form.platforms.length === 0 || form.objective.trim().length < 5}><Send className="size-4" />{pending ? "创建中…" : "创建并开始"}</Button>
           </div>
         </form>
       </CardContent>
@@ -240,12 +377,56 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
       </Card>
 
       {task.failure_reason ? <div className="flex gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger"><ShieldAlert className="size-5 shrink-0" /><span>{task.failure_reason}</span></div> : null}
-      {task.result ? <Card><CardHeader><p className="section-kicker">Result</p><h3 className="mt-1 font-display text-xl font-semibold">研究结果</h3></CardHeader><CardContent><p className="whitespace-pre-wrap text-sm leading-7">{typeof task.result.summary === "string" ? task.result.summary : "暂无摘要"}</p><div className="mt-4 flex gap-2 text-xs text-muted"><span>{task.findings.length} 条结论</span><span>·</span><span>{Number(task.result.evidence_count ?? 0)} 条证据引用</span></div></CardContent></Card> : null}
+      {task.result ? <ResearchResultCard task={task} /> : null}
 
       <div className="grid gap-5 lg:grid-cols-2"><FindingsCard task={task} /><ActionsCard taskId={task.id} actions={task.actions} busy={busy} onDecide={(actionId, decision) => decide.mutate({ taskId: task.id, actionId, decision })} /></div>
       <TraceCard trace={task.trace} />
       <Card><CardHeader><p className="section-kicker">Plan & context</p><h3 className="mt-1 font-display text-xl font-semibold">执行上下文</h3></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.plan, null, 2)}</pre><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.context, null, 2)}</pre></CardContent></Card>
     </div>
+  );
+}
+
+function ResearchResultCard({ task }: { task: ResearchTaskDetail }) {
+  const [showMarkdown, setShowMarkdown] = useState(false);
+  const summaryMarkdown = resultString(task.result, "summary_markdown") ?? resultString(task.result, "summary");
+  const summaryHtml = resultString(task.result, "summary_html");
+  const safeHtml = summaryHtml ? sanitizeResearchHtml(summaryHtml) : null;
+  const evidenceCount = task.result?.evidence_count;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="section-kicker">Result · HTML</p>
+            <h3 className="mt-1 font-display text-xl font-semibold">研究结果</h3>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setShowMarkdown((current) => !current)}>
+            {showMarkdown ? "查看渲染结果" : "查看 Markdown"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {showMarkdown ? (
+          <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-4 text-sm leading-7 text-slate-100">
+            {summaryMarkdown ?? "暂无摘要"}
+          </pre>
+        ) : safeHtml ? (
+          <div
+            className="research-result space-y-3 text-sm leading-7 [&_a]:text-signal [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-line [&_blockquote]:pl-4 [&_code]:rounded [&_code]:bg-paper [&_code]:px-1 [&_h1]:font-display [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:font-display [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:font-display [&_h3]:text-lg [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_pre]:overflow-auto [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:p-2 [&_th]:border [&_th]:border-line [&_th]:bg-paper [&_th]:p-2"
+            // The API sanitizes this model-controlled HTML; DOMPurify is a second browser-boundary check.
+            dangerouslySetInnerHTML={{ __html: safeHtml }}
+          />
+        ) : (
+          <p className="whitespace-pre-wrap text-sm leading-7">{summaryMarkdown ?? "暂无摘要"}</p>
+        )}
+        <div className="mt-4 flex gap-2 text-xs text-muted">
+          <span>{task.findings.length} 条结论</span>
+          <span>·</span>
+          <span>{typeof evidenceCount === "number" ? evidenceCount : 0} 条证据引用</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

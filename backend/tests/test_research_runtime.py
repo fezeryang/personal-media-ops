@@ -1166,6 +1166,15 @@ def test_runtime_plan_keywords_are_bounded_and_non_verbatim() -> None:
     ]
 
 
+def test_runtime_rotates_selected_platforms_for_bounded_crawls() -> None:
+    task = {"platforms": ["bili", "xhs"]}
+    context: dict[str, object] = {}
+
+    assert ResearchRuntime._planned_crawl_platform(task, context) == ("bili", 0)
+    context["next_crawl_platform_index"] = 1
+    assert ResearchRuntime._planned_crawl_platform(task, context) == ("xhs", 1)
+
+
 def test_research_api_requires_owner_session_csrf_and_returns_task(
     client: TestClient,
 ) -> None:
@@ -1186,6 +1195,39 @@ def test_research_api_requires_owner_session_csrf_and_returns_task(
         headers={"Origin": "http://testserver"},
     )
     assert denied.status_code == 403
+
+
+def test_research_api_defaults_to_all_enabled_search_platforms(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/research/tasks",
+        json={"objective": "Find AI workbench products"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["platforms"] == ["bili", "xhs"]
+    explicit_null = client.post(
+        "/api/research/tasks",
+        json={"objective": "Find AI workbench products", "platforms": None},
+    )
+    assert explicit_null.status_code == 201
+    assert explicit_null.json()["platforms"] == ["bili", "xhs"]
+
+
+def test_research_api_rejects_platform_without_enabled_search_mode(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/research/tasks",
+        json={
+            "objective": "Find AI workbench products",
+            "platforms": ["ks"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert "not enabled" in response.json()["detail"] or "deferred" in response.json()["detail"]
 
 
 def test_research_api_detail_controls_actions_and_sse(
@@ -1210,6 +1252,11 @@ def test_research_api_detail_controls_actions_and_sse(
     assert client.get("/api/research/tasks").status_code == 200
     assert client.post(f"/api/research/tasks/{task_id}/pause", json={}).status_code == 200
     assert client.post(f"/api/research/tasks/{task_id}/resume", json={}).status_code == 200
+    repository.update_result(task_id, {"summary": "# Legacy result"})
+    formatted = client.get(f"/api/research/tasks/{task_id}")
+    assert formatted.status_code == 200
+    assert formatted.json()["result"]["summary_markdown"] == "# Legacy result"
+    assert "<h1>Legacy result</h1>" in formatted.json()["result"]["summary_html"]
 
     review = repository.create(
         user_id=owner_id,

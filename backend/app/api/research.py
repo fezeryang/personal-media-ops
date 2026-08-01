@@ -8,6 +8,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.config import Settings
+from app.crawler.registry import (
+    ModeDisabledError,
+    PlatformDisabledError,
+    UnsupportedPlatformError,
+    platform_registry,
+)
 from app.models.research import (
     ResearchAction,
     ResearchTaskControl,
@@ -21,6 +28,7 @@ from app.repositories.research import (
     ResearchTaskRepository,
 )
 from app.security.dependencies import AuthContext, require_owner_session
+from app.services.ai.research_rendering import render_research_markdown
 
 router = APIRouter(prefix="/research", tags=["research-runtime"])
 OwnerSession = Annotated[AuthContext, Depends(require_owner_session)]
@@ -28,6 +36,48 @@ OwnerSession = Annotated[AuthContext, Depends(require_owner_session)]
 
 def _repository(request: Request) -> ResearchTaskRepository:
     return request.app.state.research_repository
+
+
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+def _result_with_formats(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    markdown = value.get("summary_markdown")
+    if not isinstance(markdown, str):
+        legacy_summary = value.get("summary")
+        if not isinstance(legacy_summary, str):
+            return value
+        markdown = legacy_summary
+    normalized = dict(value)
+    normalized["summary"] = markdown
+    normalized["summary_markdown"] = markdown
+    normalized["summary_html"] = render_research_markdown(markdown)
+    return normalized
+
+
+def _validated_platforms(
+    requested: list[str] | None,
+    settings: Settings,
+) -> list[str]:
+    platforms = requested or platform_registry.enabled_platforms_for_mode(
+        "search",
+        settings.enabled_platforms,
+    )
+    if not platforms:
+        raise ResearchTaskConflict("no enabled crawler platform supports search")
+    for platform in platforms:
+        try:
+            platform_registry.require_mode_enabled(
+                platform,
+                "search",
+                settings.enabled_platforms,
+            )
+        except (ModeDisabledError, PlatformDisabledError, UnsupportedPlatformError) as error:
+            raise ResearchTaskConflict(str(error)) from error
+    return platforms
 
 
 def _consumption(task: dict[str, object]) -> dict[str, object]:
@@ -78,7 +128,7 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         **_summary(task),
         "plan": task.get("plan", {}),
         "context": task.get("context", {}),
-        "result": task.get("result"),
+        "result": _result_with_formats(task.get("result")),
         "route_snapshot": task.get("route_snapshot", {}),
         "budget": budget,
         "trace": task.get("execution_trace", []),
@@ -114,10 +164,11 @@ def create_task(
     auth: OwnerSession,
 ) -> dict[str, object]:
     try:
+        platforms = _validated_platforms(payload.platforms, _settings(request))
         task = _repository(request).create(
             user_id=auth.user_id,
             objective=payload.objective,
-            platforms=payload.platforms,
+            platforms=platforms,
             crawl_limit=payload.budget.crawl_limit,
             content_limit=payload.budget.content_limit,
             duration_seconds=payload.budget.duration_seconds,

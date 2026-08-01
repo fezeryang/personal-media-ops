@@ -102,6 +102,15 @@ const budgetSchema = z.object({
   cost_currency: z.string().nullable(),
 });
 
+const researchResultSchema = z
+  .object({
+    summary: z.string().optional(),
+    summary_markdown: z.string().optional(),
+    summary_html: z.string().optional(),
+    evidence_count: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
+
 export const researchTaskSummarySchema = z.object({
   id: z.string(),
   task_type: z.string(),
@@ -124,7 +133,7 @@ export const researchTaskSummarySchema = z.object({
 export const researchTaskDetailSchema = researchTaskSummarySchema.extend({
   plan: z.record(z.string(), z.unknown()),
   context: z.record(z.string(), z.unknown()),
-  result: z.record(z.string(), z.unknown()).nullable(),
+  result: researchResultSchema.nullable(),
   route_snapshot: z.record(z.string(), z.unknown()),
   budget: budgetSchema,
   trace: z.array(traceSchema),

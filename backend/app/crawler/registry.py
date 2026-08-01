@@ -81,6 +81,21 @@ class CrawlerPlatformRegistry:
             adapter.capability(adapter.platform in enabled) for adapter in self._ordered
         ]
 
+    def enabled_platforms_for_mode(
+        self,
+        mode: TaskMode,
+        enabled_platforms: Iterable[str],
+    ) -> list[str]:
+        """Return configured platforms that can submit the requested mode."""
+
+        enabled = frozenset(enabled_platforms)
+        self._validate_enabled(enabled)
+        return [
+            adapter.platform
+            for adapter in self._ordered
+            if adapter.mode_status(mode, adapter.platform in enabled)[1]
+        ]
+
     def _validate_enabled(self, enabled: frozenset[str]) -> None:
         unknown = sorted(enabled.difference(self._by_platform))
         if unknown:

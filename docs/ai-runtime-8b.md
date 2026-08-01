@@ -73,6 +73,19 @@ Downgrade 只在五张新表和两条关联列为空时允许；存在研究任�
 MiniMax。GLM 的多轮回传未通过，其余检查通过，因此写入 `supports_tools=0`、
 `supports_streaming=1`、`capabilities_source=tested`，不会成为研究员工具路由。
 
+## 研究中心平台范围与结果格式
+
+研究中心创建页消费 `GET /api/crawler/capabilities`，展示注册表中的全部七个平台
+以及 `search` 模式的真实状态。只有 `search.enabled=true` 的平台可以勾选；延期、
+未启用或上游异常的平台仍可见，但会显示原因并在创建前禁用。未显式传入平台时，
+后端默认使用当前配置中所有可提交搜索的平台，而不是硬编码某个平台。跨平台任务
+仍由唯一的 Worker 串行执行，任务会保存平台快照。
+
+研究结果同时提供 `summary_markdown` 原文和 `summary_html` 安全 HTML；历史只有
+`summary` 的任务在 API 读取时兼容生成这两个字段。服务端使用受限 Markdown 转换
+和 HTML allow-list 清洗，前端再用 DOMPurify 做浏览器边界清洗后渲染，原文仍可
+查看/复制。HTML 只用于展示和后续导出，不替代 Finding 的证据关联。
+
 ## 当前限制
 
 本阶段只有一个 Research Agent 和一套白名单工具；没有多 Agent、Discovery Engine、

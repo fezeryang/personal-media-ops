@@ -83,6 +83,12 @@ def test_registry_rejects_unknown_or_disabled_platform() -> None:
         platform_registry.require_enabled("xhs", ("bili",))
 
 
+def test_registry_filters_platforms_by_enabled_mode() -> None:
+    assert platform_registry.enabled_platforms_for_mode(
+        "search", ("bili", "xhs", "tieba", "ks")
+    ) == ["bili", "xhs", "tieba"]
+
+
 @pytest.mark.parametrize(
     "platform", ["bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks"]
 )
