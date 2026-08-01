@@ -152,6 +152,7 @@ class ResearchRuntime:
             return
         self.research.record_duration(task_id)
         task = self.research.get_for_runtime(task_id) or task
+        task = self._clear_stale_completed_crawl_marker(task)
         budget_reason = self._budget_reason(task)
         if budget_reason is not None and str(task["status"]) not in {
             "BudgetExceeded",
@@ -191,6 +192,37 @@ class ResearchRuntime:
             return
         if status == "Summarizing":
             await self._summarize(task)
+
+    def _clear_stale_completed_crawl_marker(
+        self,
+        task: dict[str, object],
+    ) -> dict[str, object]:
+        """Repair a pre-fix task that finished its final crawl before the
+        completion marker was cleared.
+
+        The marker is only stale when no crawler is currently attached and the
+        crawl budget is already exhausted.  Clearing it is idempotent and
+        allows an owner-requested rerun to inspect the durable evidence rather
+        than immediately re-entering the budget gate.
+        """
+        if (
+            task.get("waiting_crawl_task_id") is not None
+            or not task.get("context", {}).get("crawl_requested", False)
+            if isinstance(task.get("context"), dict)
+            else True
+        ):
+            return task
+        if int(task.get("consumed_crawl_count", 0)) < int(task.get("budget_crawl_limit", 0)):
+            return task
+        context = dict(task["context"])
+        context["crawl_requested"] = False
+        self.research.update_context(
+            str(task["id"]),
+            context,
+            step=str(task.get("current_step") or "research_round"),
+            round_number=int(task.get("current_round", 0)),
+        )
+        return self.research.get_for_runtime(str(task["id"])) or task
 
     def _budget_reason(self, task: dict[str, object]) -> str | None:
         crawl_limit = int(task["budget_crawl_limit"])

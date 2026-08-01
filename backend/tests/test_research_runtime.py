@@ -696,6 +696,12 @@ def test_runtime_budget_reasons_and_lifecycle_guards(tmp_path: Path) -> None:
     current["budget_cost_enabled"] = True
     current["estimated_cost"] = "1.00"
     assert runtime._budget_reason(current) == "configured cost budget reached"
+    current["status"] = "Researching"
+    current["waiting_crawl_task_id"] = None
+    current["context"] = {"crawl_requested": True}
+    current["consumed_crawl_count"] = 2
+    normalized = runtime._clear_stale_completed_crawl_marker(current)
+    assert normalized["context"]["crawl_requested"] is False
     assert runtime._safe_failure(ProviderError(code="unreachable", safe_summary="safe", retryable=False)) == "safe"
     assert runtime._safe_failure(ResearchTaskConflict("conflict")) == "conflict"
     assert runtime._safe_failure(ValueError("secret-looking detail")) == "Research runtime failed while executing a bounded step"
