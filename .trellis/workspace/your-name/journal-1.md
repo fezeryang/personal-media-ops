@@ -397,3 +397,36 @@ Delivered durable AI Runtime and controlled Research Agent on the existing Model
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Research Center platform selector and HTML rendering
+
+**Date**: 2026-08-01
+**Task**: Research Center platform selector and HTML rendering
+**Branch**: `main`
+
+### Summary
+
+研究中心改为能力矩阵驱动的多平台选择；任务默认使用当前可用 search 平台并按单 Worker 轮转；研究结果保留 Markdown 并新增服务端安全 summary_html，前端 DOMPurify 后默认渲染。后端 369 passed，前端 lint/test/build 通过，已部署到生产并通过 helper/SNI 验证；外部观察端 TLS reset 按既定例外记录。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2ca748b24db08681da6a5ddb9d8c7c15e800f60c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

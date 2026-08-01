@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-08-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~399 | Active |
+| `journal-1.md` | ~432 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-01 | Research Center platform selector and HTML rendering | `2ca748b24db08681da6a5ddb9d8c7c15e800f60c` | `main` |
 | 11 | 2026-08-01 | Phase 8B research runtime production validation | `2a5bdb1`, `f22a02c`, `6a2ab9c`, `c84866c`, `077f1af`, `7106a5e`, `432977e`, `a345914`, `5d275c8`, `dbdcfe4` | `main` |
 | 10 | 2026-08-01 | AI model gateway foundation and production validation | `334995f3f4995e1e9664c8f2c76770c1b7867039` | `main` |
 | 9 | 2026-07-28 | Stage seven intelligence library production rollout | `df794c4`, `58c594e`, `ea2b2ae`, `dabda9d`, `92ee0a6`, `056e31f`, `ec7e2a3`, `5258eb5`, `7e0e458`, `cd7a430` | `main` |
