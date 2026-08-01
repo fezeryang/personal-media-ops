@@ -17,6 +17,7 @@ from app.services.ai.research_tools import ResearchToolService, extract_entities
 
 MAX_TOOL_ROUNDS = 8
 MAX_ARTIFACT_ROUNDS = 3
+MAX_ACTION_ARTIFACT_ROUNDS = 2
 MAX_TOOL_RESULT_CHARS = 24_000
 RECOVERY_INTERVAL_SECONDS = 2.0
 
@@ -659,7 +660,7 @@ class ResearchRuntime:
                 return
             model_response = response.response
             if not model_response.tool_calls:
-                return
+                break
             messages.append(
                 ModelMessage(
                     role="assistant",
@@ -692,6 +693,156 @@ class ResearchRuntime:
                         },
                     )
                 )
+        await self._ensure_action_artifact(task, query, round_number, primary)
+
+    async def _ensure_action_artifact(
+        self,
+        task: dict[str, object],
+        query: str,
+        round_number: int,
+        primary: dict[str, object],
+    ) -> None:
+        """Run an action-only repair pass after inference repair.
+
+        Models can keep selecting ``save_finding`` when both repair tools are
+        exposed.  Once the evidence distinction is present, isolate the
+        approval boundary by exposing only ``propose_action`` and by bounding
+        the pass separately from the inference repair loop.
+        """
+        task_id = str(task["id"])
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        if detail is None:
+            return
+        actions = detail.get("proposed_actions")
+        if isinstance(actions, list) and actions:
+            return
+        findings = detail.get("findings")
+        if not isinstance(findings, list) or not findings:
+            return
+        budget_reason = self._budget_reason(detail)
+        if budget_reason is not None:
+            self.research.append_trace(
+                task_id,
+                event="artifact_gate",
+                status="Researching",
+                reason=f"{budget_reason}; missing_action",
+                round_number=round_number,
+                step="research_action",
+            )
+            return
+        self.research.append_trace(
+            task_id,
+            event="artifact_gate",
+            status="Researching",
+            reason="missing_action",
+            round_number=round_number,
+            step="research_action",
+        )
+        evidence_ids = list(
+            dict.fromkeys(
+                str(evidence.get("content_id"))
+                for item in findings
+                if isinstance(item, dict)
+                for evidence in item.get("evidence", [])
+                if isinstance(evidence, dict) and evidence.get("content_id")
+            )
+        )[:12]
+        definitions = [
+            definition
+            for definition in self.tools.definitions()
+            if definition.name == "propose_action"
+        ]
+        messages = [
+            ModelMessage(
+                role="user",
+                content=(
+                    f"Research objective: {task['objective']}\n"
+                    f"Current query: {query}\n"
+                    f"Known evidence content_ids: {json.dumps(evidence_ids, ensure_ascii=False)}\n"
+                    "The evidence and inference artifacts are already saved. "
+                    "Call propose_action exactly once with one safe, bounded action for owner approval. "
+                    "Use an existing content_id in payload when useful. Do not call save_finding, crawl, "
+                    "or any other tool."
+                ),
+            )
+        ]
+        for _ in range(MAX_ACTION_ARTIFACT_ROUNDS):
+            request = ModelRequest(
+                system=(
+                    "You are completing the approval boundary of a bounded research task. "
+                    "Only propose_action is available. Never invent evidence or execute the action."
+                ),
+                messages=messages,
+                max_tokens=300,
+                tools=definitions,
+                tool_choice="auto",
+                metadata={"runtime_step": "research_action", "round": str(round_number)},
+                timeout=45,
+            )
+            try:
+                response = await self._generate(
+                    task_id=task_id,
+                    request=request,
+                    route_role="tool_calling",
+                    model_record_id=str(primary["model_record_id"]),
+                )
+            except ProviderError as error:
+                self.research.append_trace(
+                    task_id,
+                    event="artifact_gate",
+                    status="Researching",
+                    reason=f"action_repair_failed: {error.safe_summary}",
+                    round_number=round_number,
+                    step="research_action",
+                )
+                return
+            model_response = response.response
+            if not model_response.tool_calls:
+                break
+            messages.append(
+                ModelMessage(
+                    role="assistant",
+                    content=model_response.content,
+                    tool_calls=model_response.tool_calls,
+                )
+            )
+            for call in model_response.tool_calls:
+                if call.name != "propose_action":
+                    result: dict[str, object] = {
+                        "status": "tool_error",
+                        "tool_name": call.name,
+                        "error": "action repair only permits propose_action",
+                    }
+                else:
+                    try:
+                        result = await self._execute_tool(task, call.name, call.arguments)
+                    except ResearchTaskConflict as error:
+                        result = {
+                            "status": "tool_error",
+                            "tool_name": call.name,
+                            "error": str(error)[:500],
+                        }
+                messages.append(
+                    ModelMessage(
+                        role="tool",
+                        tool_result={
+                            "tool_call_id": call.id or f"action-{round_number}",
+                            "content": json.dumps(result, ensure_ascii=False)[:MAX_TOOL_RESULT_CHARS],
+                        },
+                    )
+                )
+            latest = self.research.get_for_runtime(task_id, detail=True)
+            latest_actions = latest.get("proposed_actions") if latest else None
+            if isinstance(latest_actions, list) and latest_actions:
+                return
+        self.research.append_trace(
+            task_id,
+            event="artifact_gate",
+            status="Researching",
+            reason="action_repair_incomplete",
+            round_number=round_number,
+            step="research_action",
+        )
 
     async def _model_tool_loop(
         self,

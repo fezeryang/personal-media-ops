@@ -788,6 +788,20 @@ def test_runtime_repairs_missing_inference_and_action_artifacts(tmp_path: Path) 
                             "content_ids": [content_id],
                         },
                     ),
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="The inference artifact is saved.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
                     ModelToolCall(
                         id="action-call",
                         name="propose_action",
@@ -796,12 +810,12 @@ def test_runtime_repairs_missing_inference_and_action_artifacts(tmp_path: Path) 
                             "reason": "Validate the opportunity with a second source.",
                             "payload": {"content_id": content_id},
                         },
-                    ),
+                    )
                 ],
-                usage=ModelUsage(input_tokens=20, output_tokens=8),
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
             ),
             ModelResponse(
-                content="The required artifacts are saved.",
+                content="The action artifact is saved.",
                 provider="MiniMax",
                 model="MiniMax-M3",
                 usage=ModelUsage(input_tokens=20, output_tokens=5),
