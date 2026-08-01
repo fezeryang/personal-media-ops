@@ -355,3 +355,45 @@ Implemented the unified AI Model Gateway with Anthropic/OpenAI compatible adapte
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Phase 8B research runtime production validation
+
+**Date**: 2026-08-01
+**Task**: Phase 8B research runtime production validation
+**Branch**: `main`
+
+### Summary
+
+Delivered durable AI Runtime and controlled Research Agent on the existing Model Gateway. Production task f496000c-742e-42c2-91c2-e7218e6961b2 completed two real crawl rounds, produced 5 evidence-bound facts and 3 labeled inferences, and reached owner-confirmed Done with one pending approval action. Added bounded artifact repair contracts, deployed 5d275c8, verified backend/frontend gates and production services, and preserved the untracked CLAUDE.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a5bdb1` | (see git log) |
+| `f22a02c` | (see git log) |
+| `6a2ab9c` | (see git log) |
+| `c84866c` | (see git log) |
+| `077f1af` | (see git log) |
+| `7106a5e` | (see git log) |
+| `432977e` | (see git log) |
+| `a345914` | (see git log) |
+| `5d275c8` | (see git log) |
+| `dbdcfe4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
