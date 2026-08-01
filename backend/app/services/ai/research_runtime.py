@@ -568,7 +568,19 @@ class ResearchRuntime:
             )
             messages.append(assistant)
             for call in model_response.tool_calls:
-                result = await self._execute_tool(task, call.name, call.arguments)
+                try:
+                    result = await self._execute_tool(task, call.name, call.arguments)
+                except ResearchTaskConflict as error:
+                    # Scope and capability violations are tool-level failures,
+                    # not runtime failures.  Return a safe, bounded error to
+                    # the model so it can continue with evidence already in
+                    # context (for example, after attempting an out-of-scope
+                    # platform crawl).
+                    result = {
+                        "status": "tool_error",
+                        "tool_name": call.name,
+                        "error": str(error)[:500],
+                    }
                 if result.get("status") == "waiting_crawl":
                     context = self.research.get_for_runtime(task_id)
                     if context is not None:

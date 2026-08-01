@@ -531,6 +531,13 @@ class FakeResearchTools:
         return {"status": "ok"}
 
 
+class ScopeRejectingResearchTools(FakeResearchTools):
+    async def execute(self, *, task, tool_name: str, arguments: dict[str, object]):
+        if tool_name == "submit_crawl":
+            raise ResearchTaskConflict("crawl platform is outside this research task scope")
+        return await super().execute(task=task, tool_name=tool_name, arguments=arguments)
+
+
 def _seed_content(database: Path, tmp_path: Path) -> str:
     crawler = CrawlerTaskRepository(database)
     task = crawler.create(
@@ -666,6 +673,118 @@ def test_runtime_plans_researches_with_tools_and_summarizes(tmp_path: Path) -> N
     assert detail is not None
     assert detail["result"]["summary"] == "Final report with evidence IDs."
     assert detail["findings"][0]["evidence"][0]["content_id"] == content_id
+
+
+def test_runtime_returns_scope_tool_error_to_model_and_keeps_researching(
+    tmp_path: Path,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id)
+    task_id = str(task["id"])
+    content_id = _seed_content(database, tmp_path)
+    with repository_connection(database) as connection:
+        connection.execute(
+            "UPDATE research_tasks SET consumed_crawl_count = 2 WHERE id = ?",
+            (task_id,),
+        )
+    ai_repository = Mock()
+    ai_repository.list_routes.return_value = [
+        {
+            "role": "tool_calling",
+            "model_record_id": "model-1",
+            "provider_name": "MiniMax",
+            "model_id": "MiniMax-M3",
+            "model_enabled": True,
+            "provider_enabled": True,
+        }
+    ]
+    ai_repository.get_model.return_value = {
+        "id": "model-1",
+        "supports_tools": True,
+        "supports_streaming": True,
+        "input_price_per_million": None,
+        "output_price_per_million": None,
+        "price_currency": None,
+        "price_effective_at": None,
+    }
+    ai_repository.invocation_cost.return_value = None
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"search_terms":["local-first workspace","agent memory","evidence graph"]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=10, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="scope-call",
+                        name="submit_crawl",
+                        arguments={"platform": "zhihu", "keywords": "out of scope"},
+                    )
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="finding-call",
+                        name="save_finding",
+                        arguments={
+                            "kind": "fact",
+                            "statement": "A real evidence-bound finding.",
+                            "content_ids": [content_id],
+                        },
+                    )
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="Research complete",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="Final report with evidence IDs.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=10),
+            ),
+        ]
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=ScopeRejectingResearchTools(repository, content_id),
+    )
+
+    async def run() -> None:
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert (repository.get_for_runtime(task_id) or {})["status"] == "Summarizing"
+        assert await runtime.run_once() is True
+
+    asyncio.run(run())
+    detail = repository.get(user_id=owner_id, task_id=task_id, detail=True)
+    assert detail is not None
+    assert detail["status"] == "AwaitingReview"
+    assert detail["findings"][0]["evidence"][0]["content_id"] == content_id
+    assert any(
+        entry["event"] == "tool_error"
+        and entry["reason"] == "crawl platform is outside this research task scope"
+        for entry in detail["execution_trace"]
+    )
 
 
 def test_runtime_budget_reasons_and_lifecycle_guards(tmp_path: Path) -> None:
