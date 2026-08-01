@@ -156,3 +156,94 @@ Correct:
 full_key, record = auth_service.create_api_key(...)
 # Persist only record.key_hash; return full_key once.
 ```
+
+## Scenario: Bounded Research Runtime artifacts
+
+### 1. Scope / Trigger
+
+Apply when changing the persisted Research Agent state machine, evidence-bound
+findings, or owner approval actions. Research execution remains inside the API
+process and uses the existing single-concurrency crawler Worker.
+
+### 2. Signatures
+
+```text
+ResearchRuntime.run_once() -> bool
+ResearchTaskRepository.save_finding(..., content_ids: list[str])
+ResearchTaskRepository.add_action(...)
+```
+
+The runtime may dispatch only the eight registered research tools. A crawl tool
+returns immediately after persisting `WaitingCrawl`; the crawler completion
+reconciliation wakes the task and never holds a browser lock or execution
+thread open.
+
+### 3. Contracts
+
+- Every fact and inference is stored as a Finding that references one or more
+  existing `content_id` values. An inference also requires a non-empty
+  derivation.
+- A research round checks the library before submitting a crawl and persists
+  the plan, context, trace, route snapshot, and usage counters after each
+  bounded step.
+- If findings exist but an inference or owner action is missing, the runtime
+  performs at most three artifact-repair turns. The follow-up action repair
+  exposes only `propose_action` and runs for at most two turns; it cannot crawl
+  or save another Finding.
+- The artifact repair is skipped on provider-error convergence and is not
+  allowed to exceed the task token/duration/crawl gates. A reached gate enters
+  `BudgetExceeded` and then `Summarizing`; it must not silently spend more
+  tokens to manufacture an action.
+- `proposed_actions` are pending owner approvals. Runtime never executes the
+  action itself.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Finding has no content evidence | Reject with a research conflict; write no Finding |
+| Inference has no derivation | Reject with a research conflict; write no Finding |
+| Repair model calls an unexposed tool | Record a bounded tool error; do not execute it |
+| Action repair receives `save_finding` | Record a bounded tool error; keep the action pass isolated |
+| Provider error after durable findings | Record safe error and converge to summary |
+| Token/duration/crawl gate reached | `BudgetExceeded` → `Summarizing`; no hidden retry |
+| Valid action proposal | Persist `pending` action and require owner decision |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a real task completes two asynchronous crawls, stores evidence-bound
+  facts and inferences, then creates one pending action for owner review.
+- Base: a task with only facts uses the bounded inference repair and then the
+  action-only repair before summary generation.
+- Bad: keep exposing both repair tools while the model repeatedly saves facts,
+  bypass the token gate to force an action, or execute a proposed action in the
+  Runtime process.
+
+### 6. Tests Required
+
+- Runtime tests assert the inference/action artifact repair sequence, tool
+  isolation, provider-error convergence, and budget short-circuit.
+- Repository tests assert evidence-required Findings, inference derivation,
+  pending action persistence, owner approval/rejection, and trace events.
+- Real acceptance records two successful crawls, at least one inference with
+  provenance, one pending action, route/model invocation totals, and `null`
+  cost when pricing is not configured.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+# One unrestricted repair loop can keep saving facts forever.
+tools = all_research_tools
+while not action:
+    await model.generate(tools=tools)
+```
+
+Correct:
+
+```python
+# Repair evidence first, then isolate the approval boundary.
+await repair_findings(max_turns=3)
+await repair_action_only(max_turns=2, tools={"propose_action"})
+```
