@@ -16,6 +16,7 @@ from app.services.ai.providers import ProviderError
 from app.services.ai.research_tools import ResearchToolService, extract_entities
 
 MAX_TOOL_ROUNDS = 8
+MAX_ARTIFACT_ROUNDS = 3
 MAX_TOOL_RESULT_CHARS = 24_000
 RECOVERY_INTERVAL_SECONDS = 2.0
 
@@ -500,6 +501,9 @@ class ResearchRuntime:
         await self._model_tool_loop(task, items, query, round_number)
         latest = self.research.get_for_runtime(task_id)
         if latest is not None and str(latest["status"]) == "Researching":
+            await self._ensure_research_artifacts(latest, query, round_number)
+            latest = self.research.get_for_runtime(task_id)
+        if latest is not None and str(latest["status"]) == "Researching":
             self.research.transition(
                 task_id,
                 status="Summarizing",
@@ -507,6 +511,187 @@ class ResearchRuntime:
                 step="summarizing",
                 round_number=round_number,
             )
+
+    async def _ensure_research_artifacts(
+        self,
+        task: dict[str, object],
+        query: str,
+        round_number: int,
+    ) -> None:
+        """Give the agent one bounded repair pass for required artifacts.
+
+        The main tool loop can spend its bounded turns reading evidence and
+        saving facts, then stop before it records an inference or an owner
+        action.  The report would still be technically renderable, but it
+        would lose the structured distinction and approval boundary that make
+        the runtime auditable.  A short follow-up pass is therefore allowed to
+        call only ``save_finding`` and ``propose_action``.  It never crawls or
+        mutates anything else, and it is skipped when a provider error already
+        forced evidence-preserving convergence.
+        """
+        task_id = str(task["id"])
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        if detail is None:
+            return
+        findings = detail.get("findings")
+        if not isinstance(findings, list) or not findings:
+            return
+        facts = [item for item in findings if isinstance(item, dict) and item.get("kind") == "fact"]
+        inferences = [
+            item for item in findings if isinstance(item, dict) and item.get("kind") == "inference"
+        ]
+        actions = detail.get("proposed_actions")
+        has_action = isinstance(actions, list) and bool(actions)
+        missing: list[str] = []
+        if not facts:
+            missing.append("fact")
+        if not inferences:
+            missing.append("inference")
+        if not has_action:
+            missing.append("action")
+        if not missing:
+            return
+
+        trace = detail.get("execution_trace")
+        if isinstance(trace, list) and any(
+            isinstance(entry, dict)
+            and entry.get("event") == "model_error"
+            and int(entry.get("round_number") or 0) == round_number
+            for entry in trace
+        ):
+            self.research.append_trace(
+                task_id,
+                event="artifact_gate",
+                status="Researching",
+                reason="provider_error_convergence",
+                round_number=round_number,
+                step="research_artifacts",
+            )
+            return
+        budget_reason = self._budget_reason(detail)
+        if budget_reason is not None:
+            self.research.append_trace(
+                task_id,
+                event="artifact_gate",
+                status="Researching",
+                reason=f"{budget_reason}; missing_{'_and_'.join(missing)}",
+                round_number=round_number,
+                step="research_artifacts",
+            )
+            return
+
+        self.research.append_trace(
+            task_id,
+            event="artifact_gate",
+            status="Researching",
+            reason=f"missing_{'_and_'.join(missing)}",
+            round_number=round_number,
+            step="research_artifacts",
+        )
+        snapshot = task.get("route_snapshot")
+        primary = snapshot.get("primary") if isinstance(snapshot, dict) else None
+        if not isinstance(primary, dict):
+            return
+        evidence = [
+            {
+                "id": item.get("id"),
+                "kind": item.get("kind"),
+                "statement": str(item.get("statement") or "")[:1_000],
+                "derivation": str(item.get("derivation") or "")[:1_000],
+                "content_ids": [
+                    str(evidence_item.get("content_id"))
+                    for evidence_item in item.get("evidence", [])
+                    if isinstance(evidence_item, dict) and evidence_item.get("content_id")
+                ][:8],
+            }
+            for item in findings
+            if isinstance(item, dict)
+        ]
+        allowed_names = {"save_finding", "propose_action"}
+        definitions = [
+            definition
+            for definition in self.tools.definitions()
+            if definition.name in allowed_names
+        ]
+        messages = [
+            ModelMessage(
+                role="user",
+                content=(
+                    f"Research objective: {task['objective']}\n"
+                    f"Current query: {query}\n"
+                    f"Durable evidence-bound findings: {json.dumps(evidence, ensure_ascii=False)[:12_000]}\n"
+                    f"Missing required artifacts: {', '.join(missing)}\n"
+                    "Use only the supplied repair tools. Save at least one evidence-bound inference "
+                    "with a non-empty derivation and content_ids when evidence supports it. "
+                    "Then propose exactly one safe, owner-approval action. Do not crawl."
+                ),
+            )
+        ]
+        for _ in range(MAX_ARTIFACT_ROUNDS):
+            request = ModelRequest(
+                system=(
+                    "You are repairing the structured artifacts of a bounded research task. "
+                    "Never invent evidence. Only call save_finding and propose_action."
+                ),
+                messages=messages,
+                max_tokens=500,
+                tools=definitions,
+                tool_choice="auto",
+                metadata={"runtime_step": "research_artifacts", "round": str(round_number)},
+                timeout=60,
+            )
+            try:
+                response = await self._generate(
+                    task_id=task_id,
+                    request=request,
+                    route_role="tool_calling",
+                    model_record_id=str(primary["model_record_id"]),
+                )
+            except ProviderError as error:
+                self.research.append_trace(
+                    task_id,
+                    event="artifact_gate",
+                    status="Researching",
+                    reason=f"repair_failed: {error.safe_summary}",
+                    round_number=round_number,
+                    step="research_artifacts",
+                )
+                return
+            model_response = response.response
+            if not model_response.tool_calls:
+                return
+            messages.append(
+                ModelMessage(
+                    role="assistant",
+                    content=model_response.content,
+                    tool_calls=model_response.tool_calls,
+                )
+            )
+            for call in model_response.tool_calls:
+                if call.name not in allowed_names:
+                    result: dict[str, object] = {
+                        "status": "tool_error",
+                        "tool_name": call.name,
+                        "error": "artifact repair tool is not allowed",
+                    }
+                else:
+                    try:
+                        result = await self._execute_tool(task, call.name, call.arguments)
+                    except ResearchTaskConflict as error:
+                        result = {
+                            "status": "tool_error",
+                            "tool_name": call.name,
+                            "error": str(error)[:500],
+                        }
+                messages.append(
+                    ModelMessage(
+                        role="tool",
+                        tool_result={
+                            "tool_call_id": call.id or f"artifact-{round_number}",
+                            "content": json.dumps(result, ensure_ascii=False)[:MAX_TOOL_RESULT_CHARS],
+                        },
+                    )
+                )
 
     async def _model_tool_loop(
         self,

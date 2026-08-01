@@ -508,10 +508,14 @@ class FakeResearchTools:
             return self.repository.save_finding(
                 task_id=str(task["id"]),
                 round_number=int(task["current_round"]),
-                kind="fact",
-                statement="A real evidence-bound finding.",
-                derivation=None,
-                content_ids=[self.content_id],
+                kind=str(arguments.get("kind") or "fact"),
+                statement=str(arguments.get("statement") or "A real evidence-bound finding."),
+                derivation=(
+                    str(arguments["derivation"])
+                    if arguments.get("derivation") is not None
+                    else None
+                ),
+                content_ids=[str(item) for item in arguments.get("content_ids", [self.content_id])],
             )
         if tool_name == "search_library":
             return {
@@ -526,9 +530,9 @@ class FakeResearchTools:
         if tool_name == "propose_action":
             return self.repository.add_action(
                 task_id=str(task["id"]),
-                action="review",
-                reason="owner review",
-                payload={},
+                action=str(arguments.get("action") or "review"),
+                reason=str(arguments.get("reason") or "owner review"),
+                payload=(arguments.get("payload") if isinstance(arguments.get("payload"), dict) else {}),
             )
         return {"status": "ok"}
 
@@ -646,6 +650,35 @@ def test_runtime_plans_researches_with_tools_and_summarizes(tmp_path: Path) -> N
                 usage=ModelUsage(input_tokens=20, output_tokens=5),
             ),
             ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="artifact-inference",
+                        name="save_finding",
+                        arguments={
+                            "kind": "inference",
+                            "statement": "An evidence-backed inference.",
+                            "derivation": "Derived from the saved fact.",
+                            "content_ids": [content_id],
+                        },
+                    ),
+                    ModelToolCall(
+                        id="artifact-action",
+                        name="propose_action",
+                        arguments={"action": "review", "reason": "Owner review", "payload": {}},
+                    ),
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="required artifacts saved",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
                 content="Final report with evidence IDs.",
                 provider="MiniMax",
                 model="MiniMax-M3",
@@ -675,6 +708,137 @@ def test_runtime_plans_researches_with_tools_and_summarizes(tmp_path: Path) -> N
     assert detail is not None
     assert detail["result"]["summary"] == "Final report with evidence IDs."
     assert detail["findings"][0]["evidence"][0]["content_id"] == content_id
+
+
+def test_runtime_repairs_missing_inference_and_action_artifacts(tmp_path: Path) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id)
+    task_id = str(task["id"])
+    content_id = _seed_content(database, tmp_path)
+    with repository_connection(database) as connection:
+        connection.execute(
+            "UPDATE research_tasks SET consumed_crawl_count = 2 WHERE id = ?",
+            (task_id,),
+        )
+    ai_repository = Mock()
+    ai_repository.list_routes.return_value = [
+        {
+            "role": "tool_calling",
+            "model_record_id": "model-1",
+            "provider_name": "MiniMax",
+            "model_id": "MiniMax-M3",
+            "model_enabled": True,
+            "provider_enabled": True,
+        }
+    ]
+    ai_repository.get_model.return_value = {
+        "id": "model-1",
+        "supports_tools": True,
+        "supports_streaming": True,
+        "input_price_per_million": None,
+        "output_price_per_million": None,
+        "price_currency": None,
+        "price_effective_at": None,
+    }
+    ai_repository.invocation_cost.return_value = None
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"search_terms":["local-first workspace","agent memory","evidence graph"]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=10, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="fact-call",
+                        name="save_finding",
+                        arguments={
+                            "kind": "fact",
+                            "statement": "A durable fact.",
+                            "content_ids": [content_id],
+                        },
+                    )
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="The evidence pass is complete.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="inference-call",
+                        name="save_finding",
+                        arguments={
+                            "kind": "inference",
+                            "statement": "The evidence suggests a workflow opportunity.",
+                            "derivation": "Derived from the durable fact.",
+                            "content_ids": [content_id],
+                        },
+                    ),
+                    ModelToolCall(
+                        id="action-call",
+                        name="propose_action",
+                        arguments={
+                            "action": "collect_more_evidence",
+                            "reason": "Validate the opportunity with a second source.",
+                            "payload": {"content_id": content_id},
+                        },
+                    ),
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=8),
+            ),
+            ModelResponse(
+                content="The required artifacts are saved.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="Final report with facts, inference and action.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=10),
+            ),
+        ]
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=FakeResearchTools(repository, content_id),
+    )
+
+    async def run() -> None:
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert (repository.get_for_runtime(task_id) or {})["status"] == "Summarizing"
+        assert await runtime.run_once() is True
+
+    asyncio.run(run())
+    detail = repository.get(user_id=owner_id, task_id=task_id, detail=True)
+    assert detail is not None
+    assert detail["status"] == "AwaitingReview"
+    assert {finding["kind"] for finding in detail["findings"]} == {"fact", "inference"}
+    assert detail["proposed_actions"][0]["action"] == "collect_more_evidence"
+    assert any(
+        entry["event"] == "artifact_gate"
+        and entry["reason"] == "missing_inference_and_action"
+        for entry in detail["execution_trace"]
+    )
 
 
 def test_runtime_returns_scope_tool_error_to_model_and_keeps_researching(
@@ -751,6 +915,35 @@ def test_runtime_returns_scope_tool_error_to_model_and_keeps_researching(
             ),
             ModelResponse(
                 content="Research complete",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="artifact-inference",
+                        name="save_finding",
+                        arguments={
+                            "kind": "inference",
+                            "statement": "An evidence-backed inference.",
+                            "derivation": "Derived from the saved fact.",
+                            "content_ids": [content_id],
+                        },
+                    ),
+                    ModelToolCall(
+                        id="artifact-action",
+                        name="propose_action",
+                        arguments={"action": "review", "reason": "Owner review", "payload": {}},
+                    ),
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ModelResponse(
+                content="required artifacts saved",
                 provider="MiniMax",
                 model="MiniMax-M3",
                 usage=ModelUsage(input_tokens=20, output_tokens=5),
