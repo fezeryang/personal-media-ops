@@ -402,6 +402,12 @@ class ResearchTaskRepository:
     ) -> None:
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM research_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ResearchTaskNotFound(task_id)
             connection.execute(
                 "UPDATE research_tasks SET plan = ?, route_snapshot = ?, current_round = ?, updated_at = ? WHERE id = ?",
                 (_dump(plan), _dump(route_snapshot), round_number, utc_now(), task_id),
@@ -410,7 +416,7 @@ class ResearchTaskRepository:
                 connection,
                 task_id,
                 event="plan_saved",
-                status="Planning",
+                status=str(row["status"]),
                 reason="model_plan_persisted",
                 round_number=round_number,
                 step="plan",
@@ -598,7 +604,7 @@ class ResearchTaskRepository:
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT id, status FROM research_tasks WHERE waiting_crawl_task_id = ?",
+                "SELECT id, status, context FROM research_tasks WHERE waiting_crawl_task_id = ?",
                 (crawler_task_id,),
             ).fetchone()
             if row is None:
@@ -610,16 +616,26 @@ class ResearchTaskRepository:
                 return
             status = "Researching" if succeeded else "Failed"
             now = utc_now()
+            context = _json(row["context"], {})
+            if not isinstance(context, dict):
+                context = {}
+            # The completion is now durably observed. Clearing this marker
+            # prevents the budget gate from treating the just-finished crawl
+            # as another pending request, while allowing the next Researching
+            # tick to inspect collected evidence and save findings.
+            context["crawl_requested"] = False
             connection.execute(
                 """
                 UPDATE research_tasks SET status = ?, waiting_crawl_task_id = NULL,
                     consumed_content_count = consumed_content_count + ?,
+                    context = ?,
                     failure_reason = ?, finished_at = CASE WHEN ? THEN finished_at ELSE ? END,
                     current_step = ?, updated_at = ? WHERE id = ?
                 """,
                 (
                     status,
                     max(0, new_content_count),
+                    _dump(context),
                     None if succeeded else (error or "Crawler task failed"),
                     int(succeeded),
                     now,

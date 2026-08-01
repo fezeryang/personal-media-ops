@@ -391,6 +391,7 @@ def test_orphan_crawl_is_reconciled_after_runtime_restart(tmp_path: Path) -> Non
     current = repository.get_for_runtime(task_id)
     assert current is not None
     assert current["consumed_crawl_count"] == 1
+    assert current["context"]["crawl_requested"] is False
 
 
 def test_repository_controls_usage_events_and_terminal_guards(tmp_path: Path) -> None:
