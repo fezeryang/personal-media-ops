@@ -473,13 +473,15 @@ def test_repository_controls_usage_events_and_terminal_guards(tmp_path: Path) ->
 
 
 class FakeResearchGateway:
-    def __init__(self, responses: list[ModelResponse]) -> None:
+    def __init__(self, responses: list[ModelResponse | Exception]) -> None:
         self.responses = responses
         self.requests: list[object] = []
 
     async def generate(self, request, **_kwargs) -> GatewayResponse:
         self.requests.append(request)
         response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
         return GatewayResponse(
             response=response,
             route_role="tool_calling",
@@ -783,6 +785,102 @@ def test_runtime_returns_scope_tool_error_to_model_and_keeps_researching(
     assert any(
         entry["event"] == "tool_error"
         and entry["reason"] == "crawl platform is outside this research task scope"
+        for entry in detail["execution_trace"]
+    )
+
+
+def test_runtime_converges_after_protocol_error_when_findings_exist(tmp_path: Path) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id)
+    task_id = str(task["id"])
+    content_id = _seed_content(database, tmp_path)
+    with repository_connection(database) as connection:
+        connection.execute(
+            "UPDATE research_tasks SET consumed_crawl_count = 2 WHERE id = ?",
+            (task_id,),
+        )
+    ai_repository = Mock()
+    ai_repository.list_routes.return_value = [
+        {
+            "role": "tool_calling",
+            "model_record_id": "model-1",
+            "provider_name": "MiniMax",
+            "model_id": "MiniMax-M3",
+            "model_enabled": True,
+            "provider_enabled": True,
+        }
+    ]
+    ai_repository.get_model.return_value = {
+        "id": "model-1",
+        "supports_tools": True,
+        "supports_streaming": True,
+        "input_price_per_million": None,
+        "output_price_per_million": None,
+        "price_currency": None,
+        "price_effective_at": None,
+    }
+    ai_repository.invocation_cost.return_value = None
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"search_terms":["local-first workspace","agent memory","evidence graph"]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=10, output_tokens=5),
+            ),
+            ModelResponse(
+                content=None,
+                provider="MiniMax",
+                model="MiniMax-M3",
+                tool_calls=[
+                    ModelToolCall(
+                        id="finding-call",
+                        name="save_finding",
+                        arguments={
+                            "kind": "fact",
+                            "statement": "A durable evidence-bound finding.",
+                            "content_ids": [content_id],
+                        },
+                    )
+                ],
+                usage=ModelUsage(input_tokens=20, output_tokens=5),
+            ),
+            ProviderError(
+                code="protocol_error",
+                safe_summary="Provider returned an invalid message",
+                retryable=False,
+            ),
+            ModelResponse(
+                content="Final report with the durable finding.",
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=20, output_tokens=10),
+            ),
+        ]
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=FakeResearchTools(repository, content_id),
+    )
+
+    async def run() -> None:
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert await runtime.run_once() is True
+        assert (repository.get_for_runtime(task_id) or {})["status"] == "Summarizing"
+        assert await runtime.run_once() is True
+
+    asyncio.run(run())
+    detail = repository.get(user_id=owner_id, task_id=task_id, detail=True)
+    assert detail is not None
+    assert detail["status"] == "AwaitingReview"
+    assert detail["result"]["summary"] == "Final report with the durable finding."
+    assert any(
+        entry["event"] == "model_error"
+        and entry["reason"] == "Provider returned an invalid message"
         for entry in detail["execution_trace"]
     )
 

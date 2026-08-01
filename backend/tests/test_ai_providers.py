@@ -246,6 +246,48 @@ def test_anthropic_request_and_response_are_normalized() -> None:
     assert body["messages"][-1]["content"][0]["type"] == "tool_result"
 
 
+def test_anthropic_normalizes_string_content_and_base_response_errors() -> None:
+    responses = [
+        httpx.Response(
+            200,
+            json={
+                "model": "model-a",
+                "content": "done",
+                "stop_reason": "end_turn",
+                "base_resp": {"status_code": 0},
+            },
+        ),
+        httpx.Response(
+            200,
+            json={
+                "base_resp": {"status_code": 1039, "status_msg": "too large"},
+            },
+        ),
+    ]
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return responses.pop(0)
+
+    async def run() -> None:
+        async with _client(handler) as client:
+            provider = AnthropicCompatibleProvider(
+                provider_id="provider-anthropic",
+                provider_name="Compatible Anthropic",
+                base_url="https://example.test",
+                api_key=SYNTHETIC_API_KEY,
+                client=client,
+            )
+            response = await provider.generate(_request())
+            assert response.content == "done"
+            with pytest.raises(ProviderError) as captured:
+                await provider.generate(_request())
+        assert captured.value.code == "protocol_error"
+        assert captured.value.retryable is False
+        assert captured.value.safe_summary == "Provider returned error code 1039"
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     ("provider_type", "content_type", "body", "expected"),
     [

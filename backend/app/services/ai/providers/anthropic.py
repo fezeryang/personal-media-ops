@@ -137,9 +137,22 @@ class AnthropicCompatibleProvider(ModelProvider):
     def _parse_response(self, response: httpx.Response, started: float) -> ModelResponse:
         try:
             payload = json_object(response.json(), context="JSON response")
+            base_response = payload.get("base_resp")
+            if isinstance(base_response, dict):
+                status_code = base_response.get("status_code")
+                if isinstance(status_code, int) and status_code != 0:
+                    raise ProviderError(
+                        code=_base_response_error_code(status_code),
+                        safe_summary=f"Provider returned error code {status_code}",
+                        retryable=status_code in {1000, 1001, 1002, 1013},
+                    )
             blocks = payload.get("content")
+            if isinstance(blocks, str):
+                blocks = [{"type": "text", "text": blocks}]
             if not isinstance(blocks, list):
                 raise TypeError
+        except ProviderError:
+            raise
         except (ValueError, TypeError) as error:
             raise ProviderError(
                 code="protocol_error",
@@ -427,6 +440,16 @@ class AnthropicCompatibleProvider(ModelProvider):
 
 def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) and value >= 0 else None
+
+
+def _base_response_error_code(status_code: int) -> str:
+    return {
+        1002: "rate_limited",
+        1004: "authentication_failed",
+        1001: "unreachable",
+        1000: "provider_error",
+        1013: "provider_error",
+    }.get(status_code, "protocol_error")
 
 
 def _merge_usage(target: dict[str, int], value: object) -> None:

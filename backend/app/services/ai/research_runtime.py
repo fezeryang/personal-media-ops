@@ -546,12 +546,30 @@ class ResearchRuntime:
                 metadata={"runtime_step": "research_round", "round": str(round_number)},
                 timeout=60,
             )
-            response = await self._generate(
-                task_id=task_id,
-                request=request,
-                route_role="tool_calling",
-                model_record_id=str(primary["model_record_id"]),
-            )
+            try:
+                response = await self._generate(
+                    task_id=task_id,
+                    request=request,
+                    route_role="tool_calling",
+                    model_record_id=str(primary["model_record_id"]),
+                )
+            except ProviderError as error:
+                detail = self.research.get_for_runtime(task_id, detail=True)
+                findings = detail.get("findings", []) if detail is not None else []
+                if error.code != "protocol_error" or not isinstance(findings, list) or not findings:
+                    raise
+                self.research.append_trace(
+                    task_id,
+                    event="model_error",
+                    status="Researching",
+                    reason=error.safe_summary,
+                    round_number=round_number,
+                    step="research_round",
+                )
+                # Evidence is already durable.  Converge to the report instead
+                # of discarding the completed findings because one provider
+                # response could not be normalized.
+                return
             model_response = response.response
             if not model_response.tool_calls:
                 context = self.research.get_for_runtime(task_id)
