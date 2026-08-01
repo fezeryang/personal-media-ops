@@ -169,6 +169,7 @@ class ModelGateway:
         correlation_id: str,
         attempt_offset: int,
         is_fallback: bool,
+        research_task_id: str | None = None,
         fallback_from_provider_id: str | None = None,
         fallback_from_model_id: str | None = None,
         fallback_reason: str | None = None,
@@ -187,6 +188,7 @@ class ModelGateway:
                 request_correlation_id=correlation_id,
                 attempt_number=attempt_number,
                 is_fallback=is_fallback,
+                research_task_id=research_task_id,
                 fallback_from_provider_id=fallback_from_provider_id,
                 fallback_from_model_id=fallback_from_model_id,
                 fallback_reason=fallback_reason,
@@ -238,6 +240,7 @@ class ModelGateway:
         *,
         route_role: ModelRouteRole | None = "default",
         model_record_id: str | None = None,
+        research_task_id: str | None = None,
     ) -> GatewayResponse:
         provider, model = self._target(
             route_role=route_role,
@@ -252,6 +255,7 @@ class ModelGateway:
             correlation_id=correlation_id,
             attempt_offset=0,
             is_fallback=False,
+            research_task_id=research_task_id,
         )
         if response is not None:
             return GatewayResponse(
@@ -283,6 +287,7 @@ class ModelGateway:
             correlation_id=correlation_id,
             attempt_offset=attempts,
             is_fallback=True,
+            research_task_id=research_task_id,
             fallback_from_provider_id=str(provider["id"]),
             fallback_from_model_id=str(model["model_id"]),
             fallback_reason=error.safe_summary,
@@ -307,6 +312,7 @@ class ModelGateway:
         *,
         route_role: ModelRouteRole | None = "default",
         model_record_id: str | None = None,
+        research_task_id: str | None = None,
     ) -> AsyncIterator[ModelStreamEvent]:
         provider, model = self._target(
             route_role=route_role,
@@ -335,6 +341,7 @@ class ModelGateway:
                     request_correlation_id=correlation_id,
                     attempt_number=attempt_number,
                     is_fallback=is_fallback,
+                    research_task_id=research_task_id,
                     fallback_from_provider_id=(
                         str(provider["id"]) if is_fallback else None
                     ),

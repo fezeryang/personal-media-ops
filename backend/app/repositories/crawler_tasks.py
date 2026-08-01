@@ -66,6 +66,7 @@ class CrawlerTaskRepository:
         parent_comment_id: str | None = None,
         requested_comment_count: int = 0,
         requested_sub_comment_count: int = 0,
+        research_task_id: str | None = None,
         output_dir: str,
         log_path: str,
         qrcode_path: str,
@@ -83,10 +84,10 @@ class CrawlerTaskRepository:
                     finished_at, cancel_requested, target_ids, target_urls,
                     creator_ids, creator_urls, parent_content_id,
                     parent_comment_id, requested_comment_count,
-                    requested_sub_comment_count
+                    requested_sub_comment_count, research_task_id
                 )
                 VALUES (?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, NULL, NULL,
-                        ?, NULL, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, NULL, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -107,6 +108,7 @@ class CrawlerTaskRepository:
                     parent_comment_id,
                     requested_comment_count,
                     requested_sub_comment_count,
+                    research_task_id,
                 ),
             )
         task = self.get(identifier)

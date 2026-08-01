@@ -580,6 +580,7 @@ class AIRepository:
         request_correlation_id: str,
         attempt_number: int,
         is_fallback: bool,
+        research_task_id: str | None = None,
         fallback_from_provider_id: str | None = None,
         fallback_from_model_id: str | None = None,
         fallback_reason: str | None = None,
@@ -591,9 +592,9 @@ class AIRepository:
                 INSERT INTO ai_model_invocations (
                     id, provider_id, model_record_id, model_id, route_role,
                     status, started_at, request_correlation_id, attempt_number,
-                    is_fallback, fallback_from_provider_id,
+                    is_fallback, research_task_id, fallback_from_provider_id,
                     fallback_from_model_id, fallback_reason
-                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -605,6 +606,7 @@ class AIRepository:
                     request_correlation_id,
                     attempt_number,
                     int(is_fallback),
+                    research_task_id,
                     fallback_from_provider_id,
                     fallback_from_model_id,
                     fallback_reason,
@@ -654,6 +656,33 @@ class AIRepository:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Invocation was not running")
+
+    def invocation_cost(
+        self,
+        *,
+        request_correlation_id: str,
+        research_task_id: str,
+    ) -> Decimal | None:
+        """Return the chargeable cost for one gateway request correlation.
+
+        A fallback may create more than one invocation. Summing the recorded
+        attempts preserves the actual amount spent while keeping a missing
+        price as ``None`` rather than manufacturing a zero.
+        """
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT SUM(estimated_cost) AS total_cost
+                FROM ai_model_invocations
+                WHERE request_correlation_id = ?
+                  AND research_task_id = ?
+                  AND estimated_cost IS NOT NULL
+                """,
+                (request_correlation_id, research_task_id),
+            ).fetchone()
+        if row is None or row["total_cost"] is None:
+            return None
+        return Decimal(str(row["total_cost"]))
 
     def list_invocations(self, limit: int = 100) -> list[dict[str, object]]:
         with connect_database(self.database_path) as connection:

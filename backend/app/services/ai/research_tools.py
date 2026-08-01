@@ -1,0 +1,395 @@
+from __future__ import annotations
+
+import hashlib
+import re
+
+from pydantic import JsonValue
+
+from app.core.config import Settings
+from app.crawler.registry import (
+    ModeDisabledError,
+    PlatformDisabledError,
+    UnsupportedPlatformError,
+    platform_registry,
+)
+from app.models.ai import ModelToolDefinition
+from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.research import ResearchTaskConflict, ResearchTaskRepository
+from app.services.agent_tools import AgentToolService
+
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,8}")
+STOPWORDS = {
+    "这个",
+    "我们",
+    "他们",
+    "可以",
+    "一个",
+    "以及",
+    "相关",
+    "内容",
+    "没有",
+    "进行",
+}
+
+
+class ResearchToolService:
+    """The bounded, in-process Research Agent tool allow-list."""
+
+    TOOL_NAMES = (
+        "search_library",
+        "get_content",
+        "get_provenance",
+        "get_creator_history",
+        "submit_crawl",
+        "dedupe_check",
+        "save_finding",
+        "propose_action",
+    )
+
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        library_tools: AgentToolService,
+        crawler: CrawlerTaskRepository,
+        research: ResearchTaskRepository,
+    ) -> None:
+        self.settings = settings
+        self.library_tools = library_tools
+        self.crawler = crawler
+        self.research = research
+
+    @classmethod
+    def definitions(cls) -> list[ModelToolDefinition]:
+        schemas: dict[str, tuple[str, dict[str, JsonValue]]] = {
+            "search_library": (
+                "Search already collected content before requesting a crawl.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "platform": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            "get_content": (
+                "Read one normalized content record without raw payload.",
+                {
+                    "type": "object",
+                    "properties": {"content_id": {"type": "string"}},
+                    "required": ["content_id"],
+                },
+            ),
+            "get_provenance": (
+                "Return platform, author, publication and crawl provenance.",
+                {
+                    "type": "object",
+                    "properties": {"content_id": {"type": "string"}},
+                    "required": ["content_id"],
+                },
+            ),
+            "get_creator_history": (
+                "Return bounded normalized history for one creator.",
+                {
+                    "type": "object",
+                    "properties": {"creator_id": {"type": "string"}},
+                    "required": ["creator_id"],
+                },
+            ),
+            "submit_crawl": (
+                "Submit one bounded asynchronous search crawl. It never waits.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "platform": {"type": "string"},
+                        "keywords": {"type": "string"},
+                        "requested_count": {"type": "integer"},
+                    },
+                    "required": ["platform", "keywords"],
+                },
+            ),
+            "dedupe_check": (
+                "Fingerprint content and attach it to a research event.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "content_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "title": {"type": "string"},
+                        "summary": {"type": "string"},
+                    },
+                    "required": ["content_ids"],
+                },
+            ),
+            "save_finding": (
+                "Save a fact or inference only when it has content evidence.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["fact", "inference"]},
+                        "statement": {"type": "string"},
+                        "derivation": {"type": "string"},
+                        "content_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["kind", "statement", "content_ids"],
+                },
+            ),
+            "propose_action": (
+                "Place a safe action proposal into the owner approval queue.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "payload": {"type": "object"},
+                    },
+                    "required": ["action", "reason"],
+                },
+            ),
+        }
+        return [
+            ModelToolDefinition(name=name, description=schemas[name][0], input_schema=schemas[name][1])
+            for name in cls.TOOL_NAMES
+        ]
+
+    @staticmethod
+    def _string(arguments: dict[str, object], name: str, *, max_length: int = 2_000) -> str:
+        value = arguments.get(name)
+        if not isinstance(value, str):
+            raise ResearchTaskConflict(f"tool argument {name} must be a string")
+        value = value.strip()
+        if not value or len(value) > max_length or not value.isprintable():
+            raise ResearchTaskConflict(f"tool argument {name} is invalid")
+        return value
+
+    @staticmethod
+    def _strings(arguments: dict[str, object], name: str, *, limit: int = 20) -> list[str]:
+        value = arguments.get(name)
+        if not isinstance(value, list) or not value or len(value) > limit:
+            raise ResearchTaskConflict(f"tool argument {name} must be a bounded list")
+        result: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ResearchTaskConflict(f"tool argument {name} contains an invalid id")
+            result.append(item.strip())
+        if len(set(result)) != len(result):
+            raise ResearchTaskConflict(f"tool argument {name} contains duplicates")
+        return result
+
+    async def execute(
+        self,
+        *,
+        task: dict[str, object],
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> dict[str, object]:
+        if tool_name not in self.TOOL_NAMES:
+            raise ResearchTaskConflict(f"tool '{tool_name}' is not in the allow-list")
+        if tool_name == "search_library":
+            query = self._string(arguments, "query")
+            platform = arguments.get("platform")
+            if platform is not None and not isinstance(platform, str):
+                raise ResearchTaskConflict("platform must be a string")
+            return self.library_tools.search_contents(
+                query=query,
+                platform=platform.strip() if isinstance(platform, str) else None,
+                tag_id=None,
+                is_favorite=None,
+                offset=0,
+                limit=20,
+            )
+        if tool_name == "get_content":
+            content_id = self._string(arguments, "content_id", max_length=200)
+            result = self.library_tools.get_content(content_id)
+            if result is None:
+                raise ResearchTaskConflict("content was not found")
+            return result
+        if tool_name == "get_provenance":
+            content_id = self._string(arguments, "content_id", max_length=200)
+            result = self.library_tools.get_content(content_id)
+            if result is None:
+                raise ResearchTaskConflict("content was not found")
+            source = result.get("source")
+            source_data = source if isinstance(source, dict) else {}
+            return {
+                "content_id": content_id,
+                "platform": source_data.get("platform"),
+                "source_url": source_data.get("url"),
+                "author_name": result.get("author_name"),
+                "published_at": result.get("published_at"),
+                "crawl_tasks": result.get("provenance", []),
+            }
+        if tool_name == "get_creator_history":
+            creator_id = self._string(arguments, "creator_id", max_length=200)
+            result = self.library_tools.get_creator(creator_id)
+            if result is None:
+                raise ResearchTaskConflict("creator was not found")
+            return result
+        if tool_name == "submit_crawl":
+            current = self.research.get_for_runtime(str(task["id"]))
+            current_context = current.get("context") if current else None
+            if not isinstance(current_context, dict) or not current_context.get(
+                "last_search_query"
+            ):
+                raise ResearchTaskConflict(
+                    "search_library must run before submit_crawl"
+                )
+            return self._submit_crawl(task, arguments)
+        if tool_name == "dedupe_check":
+            return self._dedupe(task, arguments)
+        if tool_name == "save_finding":
+            kind = self._string(arguments, "kind", max_length=32)
+            if kind not in {"fact", "inference"}:
+                raise ResearchTaskConflict("finding kind must be fact or inference")
+            statement = self._string(arguments, "statement", max_length=10_000)
+            content_ids = self._strings(arguments, "content_ids")
+            derivation_value = arguments.get("derivation")
+            derivation = (
+                derivation_value.strip()
+                if isinstance(derivation_value, str) and derivation_value.strip()
+                else None
+            )
+            if kind == "inference" and derivation is None:
+                raise ResearchTaskConflict(
+                    "inference findings require a derivation"
+                )
+            return self.research.save_finding(
+                task_id=str(task["id"]),
+                round_number=int(task["current_round"]),
+                kind=kind,
+                statement=statement,
+                derivation=derivation,
+                content_ids=content_ids,
+            )
+        if tool_name == "propose_action":
+            action = self._string(arguments, "action", max_length=500)
+            reason = self._string(arguments, "reason", max_length=2_000)
+            payload = arguments.get("payload")
+            if not isinstance(payload, dict):
+                payload = {}
+            return self.research.add_action(
+                task_id=str(task["id"]),
+                action=action,
+                reason=reason,
+                payload={str(key): value for key, value in payload.items()},
+            )
+        raise ResearchTaskConflict(f"tool '{tool_name}' is not implemented")
+
+    def _submit_crawl(
+        self,
+        task: dict[str, object],
+        arguments: dict[str, object],
+    ) -> dict[str, object]:
+        platform = self._string(arguments, "platform", max_length=32).casefold()
+        keywords = self._string(arguments, "keywords", max_length=200)
+        platforms = task.get("platforms")
+        if not isinstance(platforms, list) or platform not in platforms:
+            raise ResearchTaskConflict("crawl platform is outside this research task scope")
+        try:
+            adapter = platform_registry.require_mode_enabled(
+                platform,
+                "search",
+                self.settings.enabled_platforms,
+            )
+        except (UnsupportedPlatformError, PlatformDisabledError, ModeDisabledError) as error:
+            raise ResearchTaskConflict(str(error)) from error
+        if int(task["consumed_crawl_count"]) >= int(task["budget_crawl_limit"]):
+            raise ResearchTaskConflict("crawl budget is exhausted")
+        identifier = self.crawler.new_id()
+        requested = arguments.get("requested_count", 5)
+        requested_count = int(requested) if isinstance(requested, int) else 5
+        requested_count = max(1, min(requested_count, 20))
+        task_id = str(task["id"])
+        current = self.research.get_for_runtime(task_id)
+        if current is None:
+            raise ResearchTaskConflict("research task no longer exists")
+        if str(current["status"]) != "Researching":
+            raise ResearchTaskConflict(
+                f"cannot submit crawl while task is {current['status']}"
+            )
+        task = current
+        self.crawler.create(
+            task_id=identifier,
+            platform=platform,
+            crawler_type="search",
+            keywords=keywords,
+            login_type="qrcode",
+            requested_count=requested_count,
+            research_task_id=task_id,
+            output_dir=str(self.settings.output_root / "tasks" / identifier),
+            log_path=str(self.settings.log_root / "crawler" / f"{identifier}.log"),
+            qrcode_path=str(self.settings.qrcode_root / f"{identifier}.png"),
+        )
+        try:
+            self.research.add_crawl_submission(task_id, identifier)
+        except Exception:
+            # Do not leave a pending crawler orphaned if the research row
+            # changed between validation and submission.
+            self.crawler.request_cancel(identifier)
+            raise
+        return {
+            "status": "waiting_crawl",
+            "crawler_task_id": identifier,
+            "platform": adapter.display_name,
+            "keywords": keywords,
+        }
+
+    def _dedupe(
+        self,
+        task: dict[str, object],
+        arguments: dict[str, object],
+    ) -> dict[str, object]:
+        content_ids = self._strings(arguments, "content_ids")
+        records = []
+        for content_id in content_ids:
+            content = self.library_tools.get_content(content_id)
+            if content is None:
+                raise ResearchTaskConflict("dedupe content was not found")
+            records.append(content)
+        title = arguments.get("title")
+        summary = arguments.get("summary")
+        normalized_title = (
+            title.strip() if isinstance(title, str) and title.strip() else str(records[0].get("title") or "Untitled event")
+        )
+        normalized_summary = (
+            summary.strip() if isinstance(summary, str) and summary.strip() else str(records[0].get("description") or normalized_title)
+        )
+        fingerprint_source = "|".join(
+            sorted(
+                " ".join(
+                    TOKEN_RE.findall(
+                        f"{record.get('title') or ''} {record.get('description') or ''}"
+                    )
+                ).casefold()
+                for record in records
+            )
+        )
+        fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+        return self.research.dedupe_event(
+            task_id=str(task["id"]),
+            round_number=int(task["current_round"]),
+            fingerprint=fingerprint,
+            title=normalized_title[:500],
+            summary=normalized_summary[:4_000],
+            content_ids=content_ids,
+        )
+
+
+def extract_entities(items: list[dict[str, object]], *, limit: int = 8) -> list[str]:
+    """Extract bounded next-round search terms from actual library results."""
+
+    counts: dict[str, int] = {}
+    for item in items:
+        source = f"{item.get('title') or ''} {item.get('description') or ''}"
+        for token in TOKEN_RE.findall(source):
+            normalized = token.casefold()
+            if normalized in STOPWORDS or len(normalized) < 2:
+                continue
+            counts[normalized] = counts.get(normalized, 0) + 1
+    return [token for token, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:limit]]

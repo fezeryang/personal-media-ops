@@ -11,6 +11,7 @@ import {
   LogOut,
   RadioTower,
   Radar,
+  SearchCheck,
   Sparkles,
 } from "lucide-react";
 import { useState } from "react";
@@ -33,6 +34,7 @@ const navigation = [
   { label: "采集中心", to: "/crawler/tasks", icon: Activity, end: false },
   { label: "Agent 与集成", to: "/integrations", icon: Bot, end: false },
   { label: "AI 模型中心", to: "/ai/models", icon: Sparkles, end: false },
+  { label: "AI 研究任务", to: "/research/tasks", icon: SearchCheck, end: false },
   { label: "系统状态", to: "/system", icon: BookOpen, end: false },
 ];
 

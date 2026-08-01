@@ -17,6 +17,7 @@ from app.repositories.automation import AutomationRepository
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
+from app.repositories.research import ResearchTaskRepository
 from app.services.automation import AutomationCoordinator
 from app.services.intelligence.briefs import DeterministicBriefGenerator
 from app.services.intelligence.coordinator import IntelligenceCoordinator
@@ -102,12 +103,16 @@ class CrawlerWorker:
         library_repository: LibraryRepository | None = None,
         automation_coordinator: AutomationCoordinator | None = None,
         intelligence_coordinator: IntelligenceCoordinator | None = None,
+        research_repository: ResearchTaskRepository | None = None,
     ) -> None:
         self.repository = repository
         self.settings = config
         self.terminate_timeout_seconds = terminate_timeout_seconds
         self.registry = registry
         self.library_repository = library_repository or LibraryRepository(
+            config.database_path
+        )
+        self.research_repository = research_repository or ResearchTaskRepository(
             config.database_path
         )
         self.automation_coordinator = automation_coordinator or AutomationCoordinator(
@@ -130,6 +135,7 @@ class CrawlerWorker:
         self.repository.initialize()
         with WorkerLock(self.settings.database_path):
             self.repository.fail_interrupted_tasks()
+            self._reconcile_research_crawls()
             self.automation_coordinator.reconcile_runs()
             next_automation_poll = 0.0
             while True:
@@ -198,6 +204,11 @@ class CrawlerWorker:
                 raise
             if stream_outcome == "cancelled":
                 self.repository.complete_cancelled(task_id)
+                self.research_repository.record_crawl_completion(
+                    task_id,
+                    succeeded=False,
+                    error="Crawler task was cancelled",
+                )
                 return
             if stream_outcome == "startup_timeout":
                 timeout = self._qrcode_startup_timeout(adapter)
@@ -206,11 +217,21 @@ class CrawlerWorker:
                     f"{adapter.display_name} QR-code startup timed out after "
                     f"{timeout:g} seconds before login became ready",
                 )
+                self.research_repository.record_crawl_completion(
+                    task_id,
+                    succeeded=False,
+                    error="Crawler QR-code startup timed out",
+                )
                 return
             if stream_outcome == "login_failed":
                 self.repository.complete_failure(
                     task_id,
                     stream_detail or "Platform login failed",
+                )
+                self.research_repository.record_crawl_completion(
+                    task_id,
+                    succeeded=False,
+                    error=stream_detail or "Platform login failed",
                 )
                 return
 
@@ -226,7 +247,12 @@ class CrawlerWorker:
                         task["requested_sub_comment_count"]
                     ),
                 )
-                self.library_repository.ingest_task(task_id=task_id, batch=batch)
+                ingestion = self.library_repository.ingest_task(task_id=task_id, batch=batch)
+                self.research_repository.record_crawl_completion(
+                    task_id,
+                    succeeded=True,
+                    new_content_count=ingestion.new_content_count,
+                )
             else:
                 failure = f"MediaCrawler exited with code {return_code}"
                 if stream_detail:
@@ -237,6 +263,11 @@ class CrawlerWorker:
                         redact_sensitive_log_text(failure)
                     ),
                 )
+                self.research_repository.record_crawl_completion(
+                    task_id,
+                    succeeded=False,
+                    error=failure,
+                )
         except Exception as error:  # noqa: BLE001 - persist worker boundary failures
             failure = redact_sensitive_log_text(
                 f"Crawler execution failed: {error}"
@@ -246,6 +277,11 @@ class CrawlerWorker:
             self.repository.complete_failure(
                 task_id,
                 failure,
+            )
+            self.research_repository.record_crawl_completion(
+                task_id,
+                succeeded=False,
+                error=failure,
             )
 
     def _validated_paths(
@@ -345,6 +381,7 @@ class CrawlerWorker:
                     if not login_ready:
                         waiting_for_login = True
                         self.repository.set_waiting_login(task_id)
+                        self.research_repository.mark_waiting_login(task_id)
 
                 if (
                     not qrcode_seen
@@ -379,6 +416,7 @@ class CrawlerWorker:
                         login_ready = True
                         if waiting_for_login:
                             self.repository.set_running(task_id)
+                            self.research_repository.mark_crawl_resumed(task_id)
                             waiting_for_login = False
                     elif login_signal is not None:
                         await self._terminate_process(process)
@@ -398,6 +436,20 @@ class CrawlerWorker:
                     continue
                 break
         return "completed", last_output_line
+
+    def _reconcile_research_crawls(self) -> None:
+        for item in self.research_repository.waiting_crawls():
+            if item["crawler_status"] == "succeeded":
+                self.research_repository.record_crawl_completion(
+                    str(item["crawler_id"]),
+                    succeeded=True,
+                )
+            elif item["crawler_status"] in {"failed", "cancelled"}:
+                self.research_repository.record_crawl_completion(
+                    str(item["crawler_id"]),
+                    succeeded=False,
+                    error=str(item.get("error_message") or "Crawler task failed"),
+                )
 
     @staticmethod
     async def _read_stream_chunk(stream: asyncio.StreamReader) -> bytes:
