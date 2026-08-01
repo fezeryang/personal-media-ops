@@ -61,6 +61,8 @@ Stages (each in its own SSH session, recorded in /var/lib/mediaops/deploy-state/
   preflight: confirm SSH identity, worktree, target ref, migration authorization, helper version
   backup: create a consistent SQLite backup
   git-sync: fetch origin/main and git pull --ff-only to the fixed target commit
+  model-gateway-key: create or verify the fixed 32-byte gateway master key
+                     with directory mode 0700 and file mode 0600
   runner-sync: install the reviewed MediaCrawler runner copy the Worker executes
                (/var/lib/mediaops/bin/run_mediacrawler.py), backing up any
                differing installed copy first
@@ -174,6 +176,7 @@ state_dir="/var/lib/mediaops/deploy-state"
     printf 'ERROR: worktree became dirty after preflight\n' >&2
     exit 3
 }
+
 git -C "$repository" fetch origin main
 resolved_target="$(git -C "$repository" rev-parse origin/main)"
 [[ "$resolved_target" == "$target_commit" ]] || {
@@ -194,6 +197,76 @@ mkdir -p -- "$state_dir"
 printf 'git-sync=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> "${state_dir}/${target_commit}.stages"
 printf 'git_sync=completed\n'
+REMOTE
+}
+
+# The model gateway master key is deliberately outside the repository,
+# database, environment file, logs, and database-backup tree. Production's
+# mediaops user owns /var/lib/mediaops, so this stage needs no root helper.
+# Existing key material is never read or replaced; malformed state fails shut.
+stage_model_gateway_key() {
+    mediaops_ssh "$host" "bash -s -- model-gateway-key ${target_commit}" <<'REMOTE'
+set -Eeuo pipefail
+shift
+target_commit="$1"
+secret_dir="/var/lib/mediaops/secrets"
+key_file="${secret_dir}/model-gateway-master.key"
+state_dir="/var/lib/mediaops/deploy-state"
+
+[[ "$(id -un)" == "mediaops" ]] || {
+    printf 'ERROR: model gateway key stage requires the mediaops user\n' >&2
+    exit 2
+}
+if [[ -e "$secret_dir" && ( ! -d "$secret_dir" || -L "$secret_dir" ) ]]; then
+    printf 'ERROR: model gateway secret directory is not a real directory\n' >&2
+    exit 3
+fi
+mkdir -p -- "$secret_dir"
+[[ "$(stat -c '%U' -- "$secret_dir")" == "mediaops" ]] || {
+    printf 'ERROR: model gateway secret directory owner is invalid\n' >&2
+    exit 3
+}
+chmod 700 -- "$secret_dir"
+
+key_state="present"
+if [[ -e "$key_file" ]]; then
+    [[ -f "$key_file" && ! -L "$key_file" ]] || {
+        printf 'ERROR: model gateway key is not a regular file\n' >&2
+        exit 3
+    }
+    [[ "$(stat -c '%U' -- "$key_file")" == "mediaops" ]] || {
+        printf 'ERROR: model gateway key owner is invalid\n' >&2
+        exit 3
+    }
+    [[ "$(stat -c '%s' -- "$key_file")" == "32" ]] || {
+        printf 'ERROR: model gateway key length is invalid\n' >&2
+        exit 3
+    }
+else
+    KEY_FILE="$key_file" python3 - <<'PY'
+import os
+
+path = os.environ["KEY_FILE"]
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+descriptor = os.open(path, flags, 0o600)
+try:
+    written = os.write(descriptor, os.urandom(32))
+    if written != 32:
+        raise RuntimeError("short write while creating gateway key")
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+    key_state="created"
+fi
+chmod 600 -- "$key_file"
+mkdir -p -- "$state_dir"
+printf 'model-gateway-key=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "${state_dir}/${target_commit}.stages"
+printf 'model_gateway_master_key=%s directory_mode=0700 file_mode=0600\n' \
+    "$key_state"
 REMOTE
 }
 
@@ -720,6 +793,7 @@ run_marker_stage backup stage_backup
 printf 'Database backup: completed\n'
 
 run_marker_stage git-sync stage_git_sync
+run_marker_stage model-gateway-key stage_model_gateway_key
 run_marker_stage runner-sync stage_runner_sync
 run_marker_stage backend-test stage_backend_test
 run_marker_stage frontend-build stage_frontend_build

@@ -124,7 +124,8 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 ```
 
 脚本按阶段执行：`preflight`（身份、工作树、目标、迁移检测、helper 版本）、
-`backup`、`git-sync`、`runner-sync`（把仓库审查版 runner 同步到 Worker 实际
+`backup`、`git-sync`、`model-gateway-key`（幂等创建或验证 Model Gateway
+master key，固定 0700/0600 权限，不回显秘密）、`runner-sync`（把仓库审查版 runner 同步到 Worker 实际
 执行的 `/var/lib/mediaops/bin/run_mediacrawler.py`，不一致时先做时间戳备份；
 该副本曾漂移并导致真实小红书任务 argparse 失败）、`backend-test`、
 `frontend-build`、`migrate`（仅授权时）、

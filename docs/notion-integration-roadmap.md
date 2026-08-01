@@ -1,9 +1,10 @@
 # Notion integration roadmap
 
-Notion is not connected in stage seven. No OAuth app, token, database ID,
-webhook, or synthetic synchronization UI is installed.
+Notion is not connected. The 2026-08-01 product direction change defers Notion
+until after the built-in AI Runtime and Model Gateway. No OAuth app, token,
+database ID, webhook, or synthetic synchronization UI is installed.
 
-The next task, `external-agent-mcp-and-notion`, may add:
+A later external-integration task may add:
 
 1. an explicitly authorized Notion OAuth/token flow;
 2. a user-selected target database and reviewed property mapping;

@@ -27,6 +27,11 @@ class Settings:
     max_owner_accounts: int = 3
     automation_poll_interval_seconds: float = 30
     ai_provider: str = "disabled"
+    model_gateway_master_key_path: Path = Path(
+        "/var/lib/mediaops/secrets/model-gateway-master.key"
+    )
+    model_gateway_max_connections: int = 20
+    model_gateway_max_keepalive_connections: int = 10
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -90,6 +95,21 @@ class Settings:
         ai_provider = os.getenv("MEDIAOPS_AI_PROVIDER", "disabled").strip()
         if ai_provider != "disabled":
             raise ValueError("MEDIAOPS_AI_PROVIDER must remain disabled")
+        model_gateway_max_connections = int(
+            os.getenv("MEDIAOPS_MODEL_GATEWAY_MAX_CONNECTIONS", "20")
+        )
+        model_gateway_max_keepalive = int(
+            os.getenv("MEDIAOPS_MODEL_GATEWAY_MAX_KEEPALIVE_CONNECTIONS", "10")
+        )
+        if not 1 <= model_gateway_max_connections <= 100:
+            raise ValueError(
+                "MEDIAOPS_MODEL_GATEWAY_MAX_CONNECTIONS must be between 1 and 100"
+            )
+        if not 0 <= model_gateway_max_keepalive <= model_gateway_max_connections:
+            raise ValueError(
+                "MEDIAOPS_MODEL_GATEWAY_MAX_KEEPALIVE_CONNECTIONS must be between "
+                "0 and MEDIAOPS_MODEL_GATEWAY_MAX_CONNECTIONS"
+            )
         return cls(
             frontend_origins=origins,
             database_path=Path(
@@ -135,6 +155,14 @@ class Settings:
             max_owner_accounts=max_owner_accounts,
             automation_poll_interval_seconds=automation_poll_interval,
             ai_provider=ai_provider,
+            model_gateway_master_key_path=Path(
+                os.getenv(
+                    "MEDIAOPS_MODEL_GATEWAY_MASTER_KEY_PATH",
+                    "/var/lib/mediaops/secrets/model-gateway-master.key",
+                )
+            ),
+            model_gateway_max_connections=model_gateway_max_connections,
+            model_gateway_max_keepalive_connections=model_gateway_max_keepalive,
         )
 
 

@@ -11,6 +11,7 @@ import {
   LogOut,
   RadioTower,
   Radar,
+  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
@@ -31,6 +32,7 @@ const navigation = [
   { label: "专题集合", to: "/collections", icon: FolderKanban, end: false },
   { label: "采集中心", to: "/crawler/tasks", icon: Activity, end: false },
   { label: "Agent 与集成", to: "/integrations", icon: Bot, end: false },
+  { label: "AI 模型中心", to: "/ai/models", icon: Sparkles, end: false },
   { label: "系统状态", to: "/system", icon: BookOpen, end: false },
 ];
 

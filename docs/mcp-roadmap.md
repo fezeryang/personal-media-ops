@@ -1,8 +1,11 @@
 # MCP roadmap
 
-Stage seven does not deploy an MCP server. The next task,
-`external-agent-mcp-and-notion`, will map the stable Agent Tool Service to MCP
-without reading crawler JSONL or coupling to the React API.
+MCP is deferred after the product direction change on 2026-08-01. The product
+is prioritizing its built-in AI Runtime and unified Model Gateway in stage 8A.
+The historical `external-agent-mcp-and-notion` plan remains preserved but is
+not the active development line. A later external-integration phase may map the
+stable Agent Tool Service to MCP without reading crawler JSONL or coupling to
+the React API.
 
 Planned read-only tools:
 

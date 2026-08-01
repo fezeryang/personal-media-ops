@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
     http_exception_handler,
@@ -10,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
 from app.api.crawler import router as crawler_router
 from app.api.health import router as health_router
@@ -21,13 +23,16 @@ from app.api.v1 import router as v1_router
 from app.api.watchlist import router as watchlist_router
 from app.core.config import Settings, settings
 from app.crawler.registry import platform_registry
+from app.repositories.ai import AIRepository
 from app.repositories.auth import AuthRepository
 from app.repositories.automation import AutomationRepository
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
 from app.repositories.organization import OrganizationRepository
+from app.security.provider_secrets import ProviderSecretCipher
 from app.services.agent_tools import AgentToolService
+from app.services.ai.model_gateway import ModelGateway
 from app.services.auth import AuthService
 from app.services.automation import AutomationCoordinator
 from app.services.intelligence.briefs import DeterministicBriefGenerator
@@ -44,6 +49,26 @@ def create_app(config: Settings | None = None) -> FastAPI:
     automation_repository = AutomationRepository(active_settings)
     auth_repository = AuthRepository(active_settings.database_path)
     auth_service = AuthService(auth_repository, active_settings)
+    ai_repository = AIRepository(active_settings.database_path)
+    provider_secret_cipher = ProviderSecretCipher(
+        active_settings.model_gateway_master_key_path
+    )
+    ai_http_client = httpx.AsyncClient(
+        limits=httpx.Limits(
+            max_connections=active_settings.model_gateway_max_connections,
+            max_keepalive_connections=(
+                active_settings.model_gateway_max_keepalive_connections
+            ),
+        ),
+        timeout=httpx.Timeout(60, connect=10, pool=10),
+        follow_redirects=False,
+        trust_env=False,
+    )
+    model_gateway = ModelGateway(
+        repository=ai_repository,
+        secret_cipher=provider_secret_cipher,
+        client=ai_http_client,
+    )
     automation_coordinator = AutomationCoordinator(
         automation_repository,
         active_settings,
@@ -60,7 +85,10 @@ def create_app(config: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         repository.initialize()
-        yield
+        try:
+            yield
+        finally:
+            await ai_http_client.aclose()
 
     application = FastAPI(
         title="personal-media-ops-api",
@@ -77,6 +105,10 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.state.agent_tools = agent_tools
     application.state.auth_repository = auth_repository
     application.state.auth_service = auth_service
+    application.state.ai_repository = ai_repository
+    application.state.provider_secret_cipher = provider_secret_cipher
+    application.state.ai_http_client = ai_http_client
+    application.state.model_gateway = model_gateway
     application.state.automation_repository = automation_repository
     application.state.automation_coordinator = automation_coordinator
     application.add_middleware(
@@ -130,6 +162,7 @@ def create_app(config: Settings | None = None) -> FastAPI:
         return await request_validation_exception_handler(request, error)
     application.include_router(health_router, prefix="/api")
     application.include_router(auth_router, prefix="/api")
+    application.include_router(ai_router, prefix="/api")
     application.include_router(crawler_router, prefix="/api")
     application.include_router(library_router, prefix="/api")
     application.include_router(organization_router, prefix="/api")

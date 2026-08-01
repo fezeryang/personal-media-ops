@@ -275,6 +275,9 @@ case "$command_string" in
     "bash -s -- git-sync "*)
         run_stage git-sync
         ;;
+    "bash -s -- model-gateway-key "*)
+        run_stage model-gateway-key
+        ;;
     "bash -s -- runner-sync "*)
         run_stage runner-sync
         ;;
@@ -425,7 +428,7 @@ stub_state_reset "$state_ok"
 execute_output="$(run_stubbed_deploy "$state_ok" --execute)"
 assert_contains "$execute_output" "Deployment succeeded"
 assert_contains "$execute_output" "New commit: ${TARGET_COMMIT}"
-for stage in backup git-sync runner-sync backend-test frontend-build finalize; do
+for stage in backup git-sync model-gateway-key runner-sync backend-test frontend-build finalize; do
     grep -q "^${stage}=done" "${state_ok}/markers" ||
         fail "stage marker missing after execute: ${stage}"
 done
@@ -433,19 +436,25 @@ if grep -qF "bash -s -- migrate" "${state_ok}/ssh.log"; then
     fail "migrate stage must not run without detected migrations"
 fi
 
-# runner-sync must run between git-sync and backend-test.
+# The secret stage and runner sync must run between git-sync and backend-test.
 git_sync_line="$(
     grep -nF "bash -s -- git-sync" "${state_ok}/ssh.log" | head -n 1 | cut -d: -f1
 )"
 runner_sync_line="$(
     grep -nF "bash -s -- runner-sync" "${state_ok}/ssh.log" | head -n 1 | cut -d: -f1
 )"
+model_key_line="$(
+    grep -nF "bash -s -- model-gateway-key" "${state_ok}/ssh.log" | head -n 1 | cut -d: -f1
+)"
 backend_test_line="$(
     grep -nF "bash -s -- backend-test" "${state_ok}/ssh.log" | head -n 1 | cut -d: -f1
 )"
 [[ "$git_sync_line" =~ ^[0-9]+$ &&
+   "$model_key_line" =~ ^[0-9]+$ &&
    "$runner_sync_line" =~ ^[0-9]+$ &&
    "$backend_test_line" =~ ^[0-9]+$ &&
+   "$git_sync_line" -lt "$model_key_line" &&
+   "$model_key_line" -lt "$runner_sync_line" &&
    "$git_sync_line" -lt "$runner_sync_line" &&
    "$runner_sync_line" -lt "$backend_test_line" ]] ||
     fail "runner-sync must run between git-sync and backend-test"
@@ -456,12 +465,14 @@ stub_state_reset "$state_resume"
 {
     printf 'backup=done 2026-07-26T00:00:00Z\n'
     printf 'git-sync=done 2026-07-26T00:00:00Z\n'
+    printf 'model-gateway-key=done 2026-07-26T00:00:00Z\n'
     printf 'runner-sync=done 2026-07-26T00:00:00Z\n'
     printf 'backend-test=done 2026-07-26T00:00:00Z\n'
 } > "${state_resume}/markers"
 resume_output="$(run_stubbed_deploy "$state_resume" --execute --resume)"
 assert_contains "$resume_output" "skipping: backup"
 assert_contains "$resume_output" "skipping: git-sync"
+assert_contains "$resume_output" "skipping: model-gateway-key"
 assert_contains "$resume_output" "skipping: runner-sync"
 assert_contains "$resume_output" "skipping: backend-test"
 assert_contains "$resume_output" "Deployment succeeded"
@@ -470,6 +481,9 @@ if grep -qx "bash -s" "${state_resume}/ssh.log"; then
 fi
 if grep -qF "bash -s -- git-sync" "${state_resume}/ssh.log"; then
     fail "resume must not rerun the completed git-sync stage"
+fi
+if grep -qF "bash -s -- model-gateway-key" "${state_resume}/ssh.log"; then
+    fail "resume must not rerun the completed model-gateway-key stage"
 fi
 if grep -qF "bash -s -- runner-sync" "${state_resume}/ssh.log"; then
     fail "resume must not rerun the completed runner-sync stage"

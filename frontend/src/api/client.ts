@@ -116,6 +116,13 @@ async function fetchApi(
   }
 }
 
+export async function requestResponse(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetchApi(path, init);
+}
+
 export async function requestJson<T>(
   path: string,
   schema: z.ZodType<T>,

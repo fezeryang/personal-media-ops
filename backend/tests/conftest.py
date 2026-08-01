@@ -55,6 +55,7 @@ def test_settings(tmp_path: Path) -> Settings:
         crawler_poll_interval_seconds=0.02,
         douyin_qrcode_startup_timeout_seconds=180,
         enabled_platforms=("bili", "xhs"),
+        model_gateway_master_key_path=tmp_path / "secrets" / "model-gateway.key",
     )
 
 
@@ -69,6 +70,9 @@ def repository(test_settings: Settings) -> CrawlerTaskRepository:
 @pytest.fixture
 def client(test_settings: Settings) -> Iterator[TestClient]:
     run_alembic_command(test_settings.database_path, "upgrade", "head")
+    test_settings.model_gateway_master_key_path.parent.mkdir(mode=0o700)
+    test_settings.model_gateway_master_key_path.write_bytes(b"t" * 32)
+    test_settings.model_gateway_master_key_path.chmod(0o600)
     with TestClient(create_app(test_settings)) as test_client:
         authenticate_test_client(test_client, test_settings)
         yield test_client

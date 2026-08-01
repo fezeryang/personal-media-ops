@@ -3,7 +3,7 @@
   "name": "external-agent-mcp-and-notion",
   "title": "External Agent MCP and Notion",
   "description": "Stage eight planning: MCP Server, external Codex calls, Notion API/Webhook, Agent execution records, write confirmations, and integration audit.",
-  "status": "planning",
+  "status": "deferred_product_direction_changed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "产品优先建设内置 AI Runtime 与 Model Gateway；MCP 和 Notion 调整到后续外部集成阶段。",
   "meta": {}
 }

@@ -2,8 +2,11 @@
 
 ## Status
 
-Planning only. Do not deploy an MCP server or connect Notion until this task is
-explicitly started and the required external authorization is available.
+`deferred_product_direction_changed`.
+
+产品优先建设内置 AI Runtime 与 Model Gateway；MCP 和 Notion 调整到后续外部集成阶段。
+保留以下历史规划作为未来外部集成阶段的输入，但它不再是当前开发主线，也不得在阶段
+8A 中提前实现。
 
 ## Baseline
 

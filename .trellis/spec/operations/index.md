@@ -7,6 +7,7 @@
 | Guide | Description | Status |
 | --- | --- | --- |
 | [Server Deployment](./server-deployment.md) | SSH, diagnostics, backup, deployment, and privilege contracts | Active |
+| [Model Gateway Secret Deployment](./model-gateway-secrets.md) | Master-key creation, permission gates, deployment markers, and acceptance | Active |
 
 ## Quality Check
 

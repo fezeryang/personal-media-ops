@@ -15,6 +15,7 @@ LEGACY_REVISION = "0001_legacy_tasks"
 MULTIPLATFORM_REVISION = "0002_multiplatform_tasks"
 REMAINING_PLATFORMS_REVISION = "0003_remaining_platforms"
 LIBRARY_REVISION = "0005_library_entities"
+STAGE_SEVEN_REVISION = "0009_metrics_and_intelligence"
 REGISTERED_PLATFORMS = ("bili", "xhs", "dy", "zhihu", "wb", "tieba", "ks")
 LEGACY_TASK_COLUMNS = (
     "id",
@@ -162,6 +163,12 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "brief_item_contents",
             "brief_item_trends",
             "brief_schedules",
+            "ai_providers",
+            "ai_provider_secrets",
+            "ai_models",
+            "ai_model_routes",
+            "ai_provider_health_checks",
+            "ai_model_invocations",
         }.issubset({
             row[0]
             for row in connection.execute(
@@ -195,7 +202,151 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "idx_creator_metric_snapshots_entity_time",
             "idx_trend_signals_window_score",
             "idx_briefs_user_created",
+            "idx_ai_providers_enabled",
+            "idx_ai_models_provider_enabled",
+            "idx_ai_model_routes_model",
+            "idx_ai_provider_health_provider_checked",
+            "idx_ai_invocations_started",
+            "idx_ai_invocations_provider_model",
+            "idx_ai_invocations_route_started",
+            "idx_ai_invocations_correlation",
         }.issubset(indexes)
+
+
+def test_upgrade_from_0009_preserves_existing_product_data(tmp_path: Path) -> None:
+    database_path = tmp_path / "stage-seven.db"
+    run_alembic_command(database_path, "upgrade", STAGE_SEVEN_REVISION)
+    now = "2026-08-01T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawler_tasks (
+                id, platform, crawler_type, keywords, login_type, status,
+                requested_count, actual_count, output_dir, log_path,
+                qrcode_path, created_at, finished_at, cancel_requested
+            ) VALUES (
+                'existing-task', 'bili', 'search', 'AI', 'qrcode',
+                'succeeded', 1, 1, '/output', '/log', '/qrcode', ?, ?, 0
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO library_contents (
+                id, platform, source_content_id, content_type, title,
+                first_collected_at, last_collected_at, view_count,
+                raw_payload, created_at, updated_at, is_favorite
+            ) VALUES (
+                'existing-content', 'bili', 'BV-existing', 'video',
+                'Existing content', ?, ?, 10, '{}', ?, ?, 0
+            )
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, username, password_hash, is_active, failed_login_count,
+                created_at, updated_at
+            ) VALUES ('owner-1', 'owner', 'hash', 1, 0, ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO subscriptions (
+                id, user_id, name, query, enabled, schedule_type,
+                schedule_config, timezone, consecutive_failures,
+                created_at, updated_at
+            ) VALUES (
+                'subscription-1', 'owner-1', 'Existing subscription', 'AI',
+                1, 'daily', '{"time_of_day":"08:00"}', 'Asia/Shanghai',
+                0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO trend_signals (
+                id, topic, window_start, window_end, score, volume_score,
+                velocity_score, cross_platform_score, engagement_score,
+                platforms, explanation, evidence, status, formula_version,
+                created_at
+            ) VALUES (
+                'trend-1', 'AI', ?, ?, 50, 50, 50, 50, 50,
+                '["bili"]', 'Existing signal', '[]', 'detected', 'rules-v1', ?
+            )
+            """,
+            (now, now, now),
+        )
+        before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "crawler_tasks",
+                "library_contents",
+                "users",
+                "subscriptions",
+                "trend_signals",
+            )
+        }
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        after = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in before
+        }
+        roles = {
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT role, model_id FROM ai_model_routes"
+            )
+        }
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    assert after == before
+    assert roles == {
+        "default": None,
+        "fast": None,
+        "deep": None,
+        "tool_calling": None,
+        "final_report": None,
+        "fallback": None,
+    }
+    assert integrity == "ok"
+    assert get_current_revision(database_path) == get_head_revision()
+
+
+def test_ai_gateway_downgrade_refuses_configured_provider(tmp_path: Path) -> None:
+    database_path = tmp_path / "mediaops.db"
+    run_alembic_command(database_path, "upgrade", "head")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO ai_providers (
+                id, name, provider_type, protocol, base_url, enabled,
+                timeout_seconds, max_retries, concurrency_limit,
+                created_at, updated_at
+            ) VALUES (
+                'provider-1', 'Existing provider', 'custom_openai',
+                'openai_compatible', 'https://example.test/v1', 0,
+                30, 0, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'
+            )
+            """
+        )
+
+    result = run_alembic_command(
+        database_path,
+        "downgrade",
+        STAGE_SEVEN_REVISION,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "refusing to discard configured AI providers" in result.stderr
+    assert get_current_revision(database_path) == get_head_revision()
 
 
 def test_upgrade_from_0003_adds_modes_without_changing_old_task(

@@ -60,6 +60,9 @@ MEDIAOPS_LOGIN_LOCKOUT_SECONDS=900
 MEDIAOPS_MAX_OWNER_ACCOUNTS=3
 MEDIAOPS_AUTOMATION_POLL_INTERVAL_SECONDS=30
 MEDIAOPS_AI_PROVIDER=disabled
+MEDIAOPS_MODEL_GATEWAY_MASTER_KEY_PATH=/var/lib/mediaops/secrets/model-gateway-master.key
+MEDIAOPS_MODEL_GATEWAY_MAX_CONNECTIONS=20
+MEDIAOPS_MODEL_GATEWAY_MAX_KEEPALIVE_CONNECTIONS=10
 ```
 
 也可用 `MEDIAOPS_NODE_BIN_DIR=/www/server/nodejs/v22.22.3/bin` 代替
@@ -93,7 +96,8 @@ JSONL。`0004_content_modes` 保留原任务列和记录，增加五模式目标
 `0006_access_control` 新增所有者、会话与 Scoped API Key；`0007_subscriptions`
 新增订阅、平台、运行和任务关系；`0008_library_organization` 新增收藏字段、标签和
 有序专题；`0009_metrics_and_intelligence` 新增创作者监控、指标快照、趋势、简报
-和每日简报调度。
+和每日简报调度；`0010_ai_model_gateway` 新增 AI Provider、认证加密凭证、模型、
+角色路由、能力健康检查与调用审计表。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
 资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
 revision，不会静默执行迁移。
@@ -348,6 +352,8 @@ scripts/server/deploy.sh \
 preflight：身份、工作树、目标 commit、迁移检测、helper 版本
 → backup：SQLite 一致性备份
 → git-sync：fetch 并 git pull --ff-only 到固定目标 commit
+→ model-gateway-key：以 mediaops 用户幂等创建或验证 32 字节 master key，
+  目录/文件权限固定为 0700/0600，不回显内容且不使用 root helper
 → runner-sync：将仓库审查版 scripts/crawler/run_mediacrawler.py 同步到
   /var/lib/mediaops/bin/run_mediacrawler.py（Worker 实际执行的已安装副本）
 → backend-test：uv sync --frozen 与后端 pytest
@@ -374,6 +380,10 @@ sudo 执行：源文件缺失即硬失败；与已安装副本逐字节一致（
 UTC 时间戳的 `.backup-*` 备份，再安装新副本、清除
 `/var/lib/mediaops/bin/__pycache__`，并记录 `runner_sync=updated` 与新文件的
 sha256。
+
+`model-gateway-key` 只操作固定的服务端 secrets 目标。key 不存在时使用操作系统随机源
+和排他创建写入 32 字节；存在时验证真实普通文件、所有者和长度，绝不读取、打印或
+替换。异常状态 fail-closed。key 位于数据库与数据库备份目录之外，也不写入 `.env`。
 
 所有测试和构建成功后，部署脚本只调用：
 
@@ -478,8 +488,9 @@ curl -fsS https://ops.fezern8n.com/api/health
 
 部署前备份位于 `/var/backups/mediaops/<UTC timestamp>/`，包含 SQLite 一致性副本、
 元数据和 SHA-256 校验值。代码回滚优先使用经过审查的 Git revert 或已知良好版本；
-禁止在生产运行 `git reset --hard`。`0002` 只有在数据库不存在 `xhs/dy` 任务时才
-允许降级到 `0001`；否则应保持新 schema 并回滚应用代码。数据库恢复必须先停止 API
+禁止在生产运行 `git reset --hard`。`0010` 在存在任何 Provider 或调用历史时拒绝
+downgrade；阶段 8A 回滚优先 Git revert 或前向修复并保留新表。`0002` 只有在数据库
+不存在 `xhs/dy` 任务时才允许降级到 `0001`；否则应保持新 schema 并回滚应用代码。数据库恢复必须先停止 API
 和 Worker 写入方，并使用单独授权、校验备份的人工审查方案。
 
 完整 SSH、日志和权限说明见 [server-operations.md](server-operations.md)。

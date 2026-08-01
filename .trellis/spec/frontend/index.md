@@ -22,6 +22,7 @@ workbench.
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation and API contract | Active |
 | [Intelligence Workbench](./intelligence-workbench.md) | Authenticated shell, real intelligence views, and responsive design tokens | Active |
+| [AI Model Center](./ai-model-center.md) | Provider/model forms, route editing, usage semantics, and bounded gateway diagnostics | Active |
 
 ---
 

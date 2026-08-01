@@ -15,6 +15,7 @@ import { TrendsPage } from "./pages/trends-page";
 import { CreatorWatchPage } from "./pages/creator-watch-page";
 import { CollectionsPage } from "./pages/collections-page";
 import { IntegrationsPage } from "./pages/integrations-page";
+import { AiModelCenterPage } from "./pages/ai-model-center-page";
 import { useAuth } from "./features/auth/auth-context";
 
 function ProtectedShell() {
@@ -51,6 +52,7 @@ export function App() {
         <Route path="creators" element={<CreatorWatchPage />} />
         <Route path="collections" element={<CollectionsPage />} />
         <Route path="integrations" element={<IntegrationsPage />} />
+        <Route path="ai/models" element={<AiModelCenterPage />} />
         <Route path="system" element={<CapabilitiesPage />} />
         <Route path="crawler/tasks" element={<TasksPage />} />
         <Route path="crawler/tasks/:taskId" element={<TaskDetailPage />} />

@@ -48,8 +48,9 @@ describe("AppShell", () => {
       name: "移动端主导航",
     });
     expect(mobile).toHaveClass("overflow-x-auto");
-    expect(mobile.querySelectorAll("a")).toHaveLength(10);
+    expect(mobile.querySelectorAll("a")).toHaveLength(11);
     expect(container).toHaveTextContent("今日情报");
+    expect(container).toHaveTextContent("AI 模型中心");
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(mocks.logout).toHaveBeenCalledOnce();
   });
