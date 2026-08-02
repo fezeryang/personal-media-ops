@@ -20,6 +20,29 @@ ResearchTaskStatus = Literal[
 FindingKind = Literal["fact", "inference"]
 FindingStatus = Literal["active", "superseded"]
 ActionStatus = Literal["pending", "approved", "rejected"]
+ResearchQueryType = Literal[
+    "product",
+    "tool",
+    "company",
+    "creator",
+    "person",
+    "event",
+    "need",
+    "scenario",
+    "technology",
+    "generic_topic",
+]
+ResearchQueryStatus = Literal[
+    "candidate",
+    "approved",
+    "rejected",
+    "running",
+    "completed",
+    "failed",
+]
+SupportType = Literal["direct", "contextual", "contradictory", "background"]
+SupportStrength = Literal["strong", "medium", "weak"]
+CounterevidenceStatus = Literal["found", "not_found", "unknown"]
 
 
 class ResearchBudget(BaseModel):
@@ -78,6 +101,56 @@ class ResearchEvidence(BaseModel):
     published_at: str | None = None
     collected_at: str | None = None
     crawl_task_id: str | None = None
+    support_type: SupportType
+    support_strength: SupportStrength
+    support_explanation: str
+    occurrences: list[ResearchEvidenceOccurrence] = Field(default_factory=list)
+
+
+class ResearchEvidenceOccurrence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    research_task_id: str
+    finding_id: str | None
+    content_id: str
+    crawler_task_id: str | None
+    research_query_id: str | None
+    first_seen_at: str
+    last_seen_at: str
+    occurrence_count: int
+
+
+class ResearchQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    research_task_id: str
+    query: str
+    normalized_query: str
+    query_type: ResearchQueryType
+    platform: str
+    source_type: str
+    source_content_id: str | None
+    source_finding_id: str | None
+    parent_query_id: str | None
+    generation_reason: str
+    relevance_score: float | None
+    specificity_score: float
+    novelty_score: float
+    noise_risk_score: float
+    expected_value_score: float | None
+    status: ResearchQueryStatus
+    rejection_reason: str | None
+    crawler_task_id: str | None
+    executed_at: str | None
+    result_count: int
+    new_content_count: int
+    existing_content_count: int
+    updated_content_count: int
+    duplicate_evidence_count: int
+    created_at: str
+    updated_at: str
 
 
 class ResearchFinding(BaseModel):
@@ -89,6 +162,8 @@ class ResearchFinding(BaseModel):
     kind: FindingKind
     statement: str
     derivation: str | None
+    counterevidence_status: CounterevidenceStatus
+    counterevidence_explanation: str
     status: FindingStatus
     evidence: list[ResearchEvidence]
     created_at: str
@@ -185,5 +260,6 @@ class ResearchTaskDetail(ResearchTaskSummary):
     budget: ResearchBudget
     trace: list[ResearchTraceEntry]
     findings: list[ResearchFinding]
+    queries: list[ResearchQuery]
     events: list[ResearchEvent]
     actions: list[ResearchAction]

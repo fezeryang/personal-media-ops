@@ -169,6 +169,13 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "ai_model_routes",
             "ai_provider_health_checks",
             "ai_model_invocations",
+            "research_tasks",
+            "findings",
+            "finding_contents",
+            "events",
+            "event_contents",
+            "research_queries",
+            "evidence_occurrences",
         }.issubset({
             row[0]
             for row in connection.execute(
@@ -210,7 +217,107 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "idx_ai_invocations_provider_model",
             "idx_ai_invocations_route_started",
             "idx_ai_invocations_correlation",
+            "idx_research_queries_task_created",
+            "idx_research_queries_normalized",
+            "idx_research_queries_parent",
+            "idx_evidence_occurrences_task_content",
+            "idx_evidence_occurrences_finding",
+            "idx_evidence_occurrences_query",
         }.issubset(indexes)
+
+
+def test_upgrade_from_0011_preserves_research_findings_and_adds_quality_columns(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "research-legacy.db"
+    run_alembic_command(database_path, "upgrade", "0011_ai_runtime_research")
+    now = "2026-08-01T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, username, password_hash, is_active, failed_login_count,
+                created_at, updated_at
+            ) VALUES ('research-owner', 'research-owner', 'hash', 1, 0, ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO library_contents (
+                id, platform, source_content_id, content_type, title,
+                first_collected_at, last_collected_at, raw_payload,
+                created_at, updated_at
+            ) VALUES ('research-content', 'bili', 'BV-research', 'video',
+                      'Preserved research evidence', ?, ?, '{}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_tasks (
+                id, user_id, task_type, objective, platforms, status,
+                plan, context, execution_trace, proposed_actions,
+                route_snapshot, budget_crawl_limit, budget_content_limit,
+                budget_duration_seconds, budget_token_limit,
+                budget_cost_enabled, created_at, updated_at
+            ) VALUES (
+                'research-task', 'research-owner', 'research', 'Preserve this task',
+                '["bili"]', 'AwaitingReview', '{}', '{}', '[]', '[]', '{}',
+                2, 100, 3600, 50000, 0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO findings (
+                id, research_task_id, round_number, kind, statement,
+                derivation, status, created_at, updated_at
+            ) VALUES (
+                'finding-legacy', 'research-task', 1, 'inference',
+                'A preserved inference', 'Legacy derivation', 'active', ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO finding_contents (finding_id, content_id, evidence_role)
+            VALUES ('finding-legacy', 'research-content', 'derived_from')
+            """
+        )
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        task_count = connection.execute(
+            "SELECT COUNT(*) FROM research_tasks WHERE id = 'research-task'"
+        ).fetchone()[0]
+        finding_count = connection.execute(
+            "SELECT COUNT(*) FROM findings WHERE id = 'finding-legacy'"
+        ).fetchone()[0]
+        evidence = connection.execute(
+            """
+            SELECT support_type, support_strength, counterevidence_status
+            FROM finding_contents fc
+            JOIN findings f ON f.id = fc.finding_id
+            WHERE fc.finding_id = 'finding-legacy'
+            """
+        ).fetchone()
+        quality_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    assert task_count == 1
+    assert finding_count == 1
+    assert evidence == ("background", "weak", "unknown")
+    assert {"research_queries", "evidence_occurrences"}.issubset(quality_tables)
+    assert integrity == "ok"
+    assert get_current_revision(database_path) == get_head_revision()
 
 
 def test_upgrade_from_0009_preserves_existing_product_data(tmp_path: Path) -> None:

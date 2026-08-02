@@ -252,6 +252,9 @@ class CrawlerWorker:
                     task_id,
                     succeeded=True,
                     new_content_count=ingestion.new_content_count,
+                    existing_content_count=ingestion.existing_content_count,
+                    updated_content_count=ingestion.updated_content_count,
+                    result_count=ingestion.contents,
                 )
             else:
                 failure = f"MediaCrawler exited with code {return_code}"
@@ -443,6 +446,14 @@ class CrawlerWorker:
                 self.research_repository.record_crawl_completion(
                     str(item["crawler_id"]),
                     succeeded=True,
+                    new_content_count=int(item.get("research_new_content_count") or 0),
+                    existing_content_count=int(
+                        item.get("research_existing_content_count") or 0
+                    ),
+                    updated_content_count=int(
+                        item.get("research_updated_content_count") or 0
+                    ),
+                    result_count=int(item.get("actual_count") or 0),
                 )
             elif item["crawler_status"] in {"failed", "cancelled"}:
                 self.research_repository.record_crawl_completion(

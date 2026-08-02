@@ -133,6 +133,7 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         "budget": budget,
         "trace": task.get("execution_trace", []),
         "findings": task.get("findings", []),
+        "queries": task.get("queries", []),
         "events": task.get("events", []),
         "actions": task.get("proposed_actions", []),
     }

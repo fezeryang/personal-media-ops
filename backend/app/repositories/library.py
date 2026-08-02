@@ -74,6 +74,7 @@ class IngestionResult(dict[str, int]):
         new_content_count: int,
         existing_content_count: int,
         changed_content_count: int,
+        updated_content_count: int = 0,
     ) -> None:
         super().__init__(
             contents=contents,
@@ -83,6 +84,10 @@ class IngestionResult(dict[str, int]):
         self.new_content_count = new_content_count
         self.existing_content_count = existing_content_count
         self.changed_content_count = changed_content_count
+        # ``changed_content_count`` is retained for subscription/watchlist
+        # metric semantics. Research quality uses this stricter counter,
+        # limited to title/description/author changes.
+        self.updated_content_count = updated_content_count
 
 
 class LibraryRepository:
@@ -416,6 +421,7 @@ class LibraryRepository:
             new_content_count = 0
             existing_content_count = 0
             changed_content_count = 0
+            updated_content_count = 0
 
             for creator in batch.creators:
                 identifier = self._upsert_creator(
@@ -435,7 +441,8 @@ class LibraryRepository:
                 existing = connection.execute(
                     """
                     SELECT view_count, like_count, favorite_count,
-                           comment_count, share_count
+                           comment_count, share_count, title, description,
+                           author_name
                     FROM library_contents
                     WHERE platform = ? AND source_content_id = ?
                     """,
@@ -452,7 +459,13 @@ class LibraryRepository:
                         content.comment_count,
                         content.share_count,
                     )
-                    previous_metrics = tuple(existing)
+                    previous_metrics = (
+                        existing["view_count"],
+                        existing["like_count"],
+                        existing["favorite_count"],
+                        existing["comment_count"],
+                        existing["share_count"],
+                    )
                     if any(
                         incoming is not None and incoming != previous
                         for incoming, previous in zip(
@@ -462,6 +475,26 @@ class LibraryRepository:
                         )
                     ):
                         changed_content_count += 1
+                    incoming_metadata = (
+                        content.title,
+                        content.description,
+                        content.author_name,
+                    )
+                    previous_metadata = (
+                        existing["title"],
+                        existing["description"],
+                        existing["author_name"],
+                    )
+                    if any(
+                        incoming is not None
+                        and incoming != previous
+                        for incoming, previous in zip(
+                            incoming_metadata,
+                            previous_metadata,
+                            strict=True,
+                        )
+                    ):
+                        updated_content_count += 1
                 identifier = self._upsert_content(connection, content, collected_at)
                 content_ids.append(identifier)
                 self._capture_content_snapshot(
@@ -537,10 +570,20 @@ class LibraryRepository:
                 """
                 UPDATE crawler_tasks
                 SET status = 'succeeded', actual_count = ?, finished_at = ?,
-                    error_message = NULL
+                    error_message = NULL,
+                    research_new_content_count = ?,
+                    research_existing_content_count = ?,
+                    research_updated_content_count = ?
                 WHERE id = ? AND status IN ('running', 'waiting_login')
                 """,
-                (batch.actual_count, collected_at, task_id),
+                (
+                    batch.actual_count,
+                    collected_at,
+                    new_content_count,
+                    existing_content_count,
+                    updated_content_count,
+                    task_id,
+                ),
             )
             if updated.rowcount != 1:
                 raise RuntimeError("crawler task completion state changed")
@@ -580,6 +623,7 @@ class LibraryRepository:
                 new_content_count=new_content_count,
                 existing_content_count=existing_content_count,
                 changed_content_count=changed_content_count,
+                updated_content_count=updated_content_count,
             )
         except Exception:
             connection.rollback()

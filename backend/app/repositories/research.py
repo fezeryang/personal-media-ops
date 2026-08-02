@@ -178,6 +178,7 @@ class ResearchTaskRepository:
             if not detail:
                 return task
             task["findings"] = self._findings_connection(connection, task_id)
+            task["queries"] = self._queries_connection(connection, task_id)
             task["events"] = self._events_connection(connection, task_id)
         return task
 
@@ -197,8 +198,250 @@ class ResearchTaskRepository:
             task = _row_to_task(row)
             if detail:
                 task["findings"] = self._findings_connection(connection, task_id)
+                task["queries"] = self._queries_connection(connection, task_id)
                 task["events"] = self._events_connection(connection, task_id)
         return task
+
+    def list_normalized_queries(self, *, exclude_task_id: str | None = None) -> list[str]:
+        with connect_database(self.database_path) as connection:
+            if exclude_task_id is None:
+                rows = connection.execute(
+                    "SELECT normalized_query FROM research_queries"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT normalized_query FROM research_queries "
+                    "WHERE research_task_id != ?",
+                    (exclude_task_id,),
+                ).fetchall()
+        return [str(row["normalized_query"]) for row in rows]
+
+    def create_query(
+        self,
+        *,
+        task_id: str,
+        query: str,
+        normalized_query: str,
+        query_type: str,
+        platform: str,
+        source_type: str,
+        source_content_id: str | None,
+        source_finding_id: str | None,
+        parent_query_id: str | None,
+        generation_reason: str,
+        specificity_score: float,
+        novelty_score: float,
+        noise_risk_score: float,
+        relevance_score: float | None = None,
+        expected_value_score: float | None = None,
+        status: str = "candidate",
+        rejection_reason: str | None = None,
+    ) -> dict[str, object]:
+        identifier = self.new_id()
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM research_tasks WHERE id = ?", (task_id,)
+            ).fetchone() is None:
+                raise ResearchTaskNotFound(task_id)
+            connection.execute(
+                """
+                INSERT INTO research_queries (
+                    id, research_task_id, query, normalized_query, query_type,
+                    platform, source_type, source_content_id, source_finding_id,
+                    parent_query_id, generation_reason, relevance_score,
+                    specificity_score, novelty_score, noise_risk_score,
+                    expected_value_score, status, rejection_reason,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    identifier,
+                    task_id,
+                    query,
+                    normalized_query,
+                    query_type,
+                    platform,
+                    source_type,
+                    source_content_id,
+                    source_finding_id,
+                    parent_query_id,
+                    generation_reason,
+                    relevance_score,
+                    specificity_score,
+                    novelty_score,
+                    noise_risk_score,
+                    expected_value_score,
+                    status,
+                    rejection_reason,
+                    now,
+                    now,
+                ),
+            )
+            self._append_trace_connection(
+                connection,
+                task_id,
+                event="query_recorded",
+                status=None,
+                reason="quality_gate_candidate_persisted",
+                step="query_gate",
+                tool_name=None,
+                tool_arguments={
+                    "query_id": identifier,
+                    "query": query[:500],
+                    "status": status,
+                    "rejection_reason": rejection_reason,
+                },
+            )
+        return self.get_query(identifier)
+
+    def get_query(self, query_id: str) -> dict[str, object]:
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT * FROM research_queries WHERE id = ?", (query_id,)
+            ).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(query_id)
+        return dict(row)
+
+    def update_query_quality(
+        self,
+        query_id: str,
+        *,
+        relevance_score: float | None,
+        expected_value_score: float | None,
+        status: str,
+        rejection_reason: str | None = None,
+    ) -> dict[str, object]:
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE research_queries
+                SET relevance_score = ?, expected_value_score = ?, status = ?,
+                    rejection_reason = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    relevance_score,
+                    expected_value_score,
+                    status,
+                    rejection_reason,
+                    utc_now(),
+                    query_id,
+                ),
+            )
+        return self.get_query(query_id)
+
+    def attach_query_crawler(self, query_id: str, crawler_task_id: str) -> None:
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                "UPDATE research_queries SET crawler_task_id = ?, status = 'running', updated_at = ? WHERE id = ?",
+                (crawler_task_id, utc_now(), query_id),
+            )
+
+    def complete_query(
+        self,
+        query_id: str,
+        *,
+        result_count: int,
+        new_content_count: int,
+        existing_content_count: int,
+        updated_content_count: int,
+        duplicate_evidence_count: int,
+        failed: bool = False,
+    ) -> None:
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE research_queries
+                SET status = ?, executed_at = ?, result_count = ?,
+                    new_content_count = ?, existing_content_count = ?,
+                    updated_content_count = ?, duplicate_evidence_count = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "failed" if failed else "completed",
+                    utc_now(),
+                    max(0, result_count),
+                    max(0, new_content_count),
+                    max(0, existing_content_count),
+                    max(0, updated_content_count),
+                    max(0, duplicate_evidence_count),
+                    utc_now(),
+                    query_id,
+                ),
+            )
+
+    def record_evidence_occurrences(
+        self,
+        *,
+        task_id: str,
+        content_ids: list[str],
+        crawler_task_id: str | None = None,
+        query_id: str | None = None,
+        finding_id: str | None = None,
+        seen_at: str | None = None,
+    ) -> int:
+        if not content_ids:
+            return 0
+        seen = seen_at or utc_now()
+        inserted_or_updated = 0
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for content_id in dict.fromkeys(content_ids):
+                row = connection.execute(
+                    """
+                    SELECT id, occurrence_count FROM evidence_occurrences
+                    WHERE research_task_id = ? AND content_id = ?
+                      AND (crawler_task_id = ? OR (crawler_task_id IS NULL AND ? IS NULL))
+                      AND (research_query_id = ? OR (research_query_id IS NULL AND ? IS NULL))
+                      AND (finding_id = ? OR (finding_id IS NULL AND ? IS NULL))
+                    LIMIT 1
+                    """,
+                    (
+                        task_id,
+                        content_id,
+                        crawler_task_id,
+                        crawler_task_id,
+                        query_id,
+                        query_id,
+                        finding_id,
+                        finding_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        """
+                        INSERT INTO evidence_occurrences (
+                            id, research_task_id, finding_id, content_id,
+                            crawler_task_id, research_query_id, first_seen_at,
+                            last_seen_at, occurrence_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        """,
+                        (
+                            self.new_id(),
+                            task_id,
+                            finding_id,
+                            content_id,
+                            crawler_task_id,
+                            query_id,
+                            seen,
+                            seen,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE evidence_occurrences
+                        SET last_seen_at = ?, occurrence_count = occurrence_count + 1
+                        WHERE id = ?
+                        """,
+                        (seen, row["id"]),
+                    )
+                inserted_or_updated += 1
+        return inserted_or_updated
 
     def claim_next(self) -> dict[str, object] | None:
         with connect_database(self.database_path) as connection:
@@ -599,12 +842,25 @@ class ResearchTaskRepository:
         *,
         succeeded: bool,
         new_content_count: int = 0,
+        existing_content_count: int = 0,
+        updated_content_count: int = 0,
+        duplicate_evidence_count: int = 0,
+        result_count: int | None = None,
         error: str | None = None,
     ) -> None:
+        occurrence_content_ids: list[str] = []
+        query_id: str | None = None
+        task_id: str | None = None
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT id, status, context FROM research_tasks WHERE waiting_crawl_task_id = ?",
+                """
+                SELECT t.id, t.status, t.context, c.actual_count,
+                       c.research_task_id
+                FROM research_tasks t
+                JOIN crawler_tasks c ON c.id = t.waiting_crawl_task_id
+                WHERE t.waiting_crawl_task_id = ?
+                """,
                 (crawler_task_id,),
             ).fetchone()
             if row is None:
@@ -644,6 +900,80 @@ class ResearchTaskRepository:
                     task_id,
                 ),
             )
+            query = connection.execute(
+                "SELECT id FROM research_queries WHERE crawler_task_id = ?",
+                (crawler_task_id,),
+            ).fetchone()
+            query_id = str(query["id"]) if query is not None else None
+            if query_id is not None:
+                if result_count is None:
+                    result_count = int(row["actual_count"] or 0)
+                connection.execute(
+                    """
+                    UPDATE research_queries
+                    SET status = ?, executed_at = ?, result_count = ?,
+                        new_content_count = ?, existing_content_count = ?,
+                        updated_content_count = ?, duplicate_evidence_count = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "completed" if succeeded else "failed",
+                        now,
+                        max(0, result_count or 0),
+                        max(0, new_content_count),
+                        max(0, existing_content_count),
+                        max(0, updated_content_count),
+                        max(0, duplicate_evidence_count),
+                        now,
+                        query_id,
+                    ),
+                )
+            if succeeded and task_id is not None:
+                occurrence_content_ids = [
+                    str(item["entity_id"])
+                    for item in connection.execute(
+                        """
+                        SELECT entity_id FROM crawl_task_entities
+                        WHERE task_id = ? AND entity_type = 'content'
+                        """,
+                        (crawler_task_id,),
+                    ).fetchall()
+                ]
+                context["last_crawl_content_ids"] = list(
+                    dict.fromkeys(occurrence_content_ids)
+                )[:20]
+                connection.execute(
+                    "UPDATE research_tasks SET context = ?, updated_at = ? WHERE id = ?",
+                    (_dump(context), now, task_id),
+                )
+                if duplicate_evidence_count == 0:
+                    duplicate_evidence_count = sum(
+                        1
+                        for content_id in set(occurrence_content_ids)
+                        if connection.execute(
+                            """
+                            SELECT 1 FROM evidence_occurrences
+                            WHERE content_id = ?
+                            UNION ALL
+                            SELECT 1
+                            FROM crawl_task_entities e
+                            JOIN crawler_tasks c ON c.id = e.task_id
+                            WHERE e.entity_type = 'content'
+                              AND e.entity_id = ?
+                              AND c.research_task_id IS NOT NULL
+                              AND c.research_task_id != ?
+                            LIMIT 1
+                            """,
+                            (content_id, content_id, task_id),
+                        ).fetchone()
+                        is not None
+                    ) + max(0, len(occurrence_content_ids) - len(set(occurrence_content_ids)))
+                if query_id is not None:
+                    connection.execute(
+                        "UPDATE research_queries SET duplicate_evidence_count = ?, updated_at = ? WHERE id = ?",
+                        (duplicate_evidence_count, now, query_id),
+                    )
             self._append_trace_connection(
                 connection,
                 task_id,
@@ -652,6 +982,48 @@ class ResearchTaskRepository:
                 reason=error if not succeeded else "crawler_ingestion_committed",
                 step="research_round" if succeeded else "crawl_failed",
             )
+        if succeeded and task_id is not None:
+            self.record_evidence_occurrences(
+                task_id=task_id,
+                content_ids=occurrence_content_ids,
+                crawler_task_id=crawler_task_id,
+                query_id=query_id,
+            )
+
+    def quality_summary(self, task_id: str) -> dict[str, int]:
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(SUM(new_content_count), 0) AS new_content_count,
+                       COALESCE(SUM(existing_content_count), 0) AS existing_content_count,
+                       COALESCE(SUM(updated_content_count), 0) AS updated_content_count,
+                       COALESCE(SUM(duplicate_evidence_count), 0) AS duplicate_evidence_count,
+                       COALESCE(SUM(result_count), 0) AS result_count
+                FROM research_queries WHERE research_task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            independent = connection.execute(
+                """
+                SELECT COUNT(DISTINCT fc.content_id)
+                FROM finding_contents fc
+                JOIN findings f ON f.id = fc.finding_id
+                WHERE f.research_task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()[0]
+            discovery_count = connection.execute(
+                """
+                SELECT COALESCE(SUM(occurrence_count), 0)
+                FROM evidence_occurrences
+                WHERE research_task_id = ? AND finding_id IS NULL
+                """,
+                (task_id,),
+            ).fetchone()[0]
+        summary = dict(row) if row is not None else {}
+        summary["independent_evidence_count"] = int(independent or 0)
+        summary["discovery_count"] = int(discovery_count or 0)
+        return {key: int(value or 0) for key, value in summary.items()}
 
     def _transition_by_crawler(
         self,
@@ -693,11 +1065,55 @@ class ResearchTaskRepository:
         statement: str,
         derivation: str | None,
         content_ids: list[str],
+        evidence_links: list[dict[str, str]] | None = None,
+        counterevidence_status: str = "not_found",
+        counterevidence_explanation: str = "未找到反证。",
     ) -> dict[str, object]:
         if kind == "fact" and not content_ids:
             raise ResearchTaskConflict("fact findings require content evidence")
         if not content_ids:
             raise ResearchTaskConflict("findings require content evidence")
+        if kind == "inference" and not derivation:
+            raise ResearchTaskConflict("inference findings require a derivation")
+        if counterevidence_status not in {"found", "not_found", "unknown"}:
+            raise ResearchTaskConflict("counterevidence status is invalid")
+        if kind == "inference" and counterevidence_status == "unknown":
+            raise ResearchTaskConflict(
+                "inference findings require a counterevidence status"
+            )
+        if not counterevidence_explanation.strip():
+            raise ResearchTaskConflict("counterevidence explanation is required")
+        normalized_links = evidence_links or [
+            {
+                "content_id": content_id,
+                "support_type": "direct",
+                "support_strength": "medium",
+                "support_explanation": "Evidence was supplied by the legacy finding API.",
+            }
+            for content_id in content_ids
+        ]
+        linked_ids = [str(item.get("content_id") or "") for item in normalized_links]
+        if set(linked_ids) != set(content_ids) or len(linked_ids) != len(set(linked_ids)):
+            raise ResearchTaskConflict("finding evidence metadata must cover each content once")
+        allowed_support_types = {"direct", "contextual", "contradictory", "background"}
+        allowed_support_strengths = {"strong", "medium", "weak"}
+        if any(
+            item.get("support_type") not in allowed_support_types
+            or item.get("support_strength") not in allowed_support_strengths
+            or not str(item.get("support_explanation") or "").strip()
+            for item in normalized_links
+        ):
+            raise ResearchTaskConflict("finding evidence support metadata is invalid")
+        if kind == "fact" and not any(
+            item.get("support_type") == "direct" for item in normalized_links
+        ):
+            raise ResearchTaskConflict("fact findings require direct evidence")
+        if kind == "inference" and counterevidence_status == "found" and not any(
+            item.get("support_type") == "contradictory" for item in normalized_links
+        ):
+            raise ResearchTaskConflict(
+                "found counterevidence requires a contradictory evidence link"
+            )
         identifier = self.new_id()
         now = utc_now()
         with connect_database(self.database_path) as connection:
@@ -717,12 +1133,44 @@ class ResearchTaskRepository:
             if found != set(content_ids):
                 raise ResearchTaskConflict("finding evidence contains unknown content")
             connection.execute(
-                "INSERT INTO findings (id, research_task_id, round_number, kind, statement, derivation, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
-                (identifier, task_id, round_number, kind, statement, derivation, now, now),
+                """
+                INSERT INTO findings (
+                    id, research_task_id, round_number, kind, statement,
+                    derivation, counterevidence_status,
+                    counterevidence_explanation, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    identifier,
+                    task_id,
+                    round_number,
+                    kind,
+                    statement,
+                    derivation,
+                    counterevidence_status,
+                    counterevidence_explanation,
+                    now,
+                    now,
+                ),
             )
             connection.executemany(
-                "INSERT INTO finding_contents (finding_id, content_id, evidence_role) VALUES (?, ?, ?)",
-                [(identifier, content_id, "derived_from" if kind == "inference" else "supports") for content_id in content_ids],
+                """
+                INSERT INTO finding_contents (
+                    finding_id, content_id, evidence_role, support_type,
+                    support_strength, support_explanation
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        identifier,
+                        str(item["content_id"]),
+                        "derived_from" if kind == "inference" else "supports",
+                        str(item["support_type"]),
+                        str(item["support_strength"]),
+                        str(item["support_explanation"]),
+                    )
+                    for item in normalized_links
+                ],
             )
             self._append_trace_connection(
                 connection,
@@ -733,7 +1181,19 @@ class ResearchTaskRepository:
                 round_number=round_number,
                 step="save_finding",
             )
-        return {"id": identifier, "kind": kind, "statement": statement, "content_ids": content_ids}
+        self.record_evidence_occurrences(
+            task_id=task_id,
+            content_ids=content_ids,
+            finding_id=identifier,
+            seen_at=now,
+        )
+        return {
+            "id": identifier,
+            "kind": kind,
+            "statement": statement,
+            "content_ids": content_ids,
+            "counterevidence_status": counterevidence_status,
+        }
 
     def dedupe_event(
         self,
@@ -963,7 +1423,9 @@ class ResearchTaskRepository:
                 """
                 SELECT t.id AS research_id, t.waiting_crawl_task_id AS crawler_id,
                        c.status AS crawler_status, c.error_message,
-                       c.actual_count
+                       c.actual_count, c.research_new_content_count,
+                       c.research_existing_content_count,
+                       c.research_updated_content_count
                 FROM research_tasks t
                 JOIN crawler_tasks c ON c.id = t.waiting_crawl_task_id
                 WHERE t.status IN ('WaitingCrawl', 'WaitingLogin')
@@ -1015,6 +1477,8 @@ class ResearchTaskRepository:
                 """
                 SELECT c.id AS content_id, c.platform, c.title, c.source_url,
                        c.author_name, c.published_at,
+                       fc.support_type, fc.support_strength,
+                       fc.support_explanation,
                        (SELECT e.collected_at FROM crawl_task_entities e
                         WHERE e.entity_id = c.id AND e.entity_type = 'content'
                         ORDER BY e.collected_at DESC, e.task_id DESC LIMIT 1)
@@ -1030,9 +1494,44 @@ class ResearchTaskRepository:
                 """,
                 (row["id"],),
             ).fetchall()
-            item["evidence"] = [dict(evidence) for evidence in evidence_rows]
+            evidence: list[dict[str, object]] = []
+            for evidence_row in evidence_rows:
+                evidence_item = dict(evidence_row)
+                evidence_item["occurrences"] = [
+                    dict(occurrence)
+                    for occurrence in connection.execute(
+                        """
+                        SELECT id, research_task_id, finding_id, content_id,
+                               crawler_task_id, research_query_id,
+                               first_seen_at, last_seen_at, occurrence_count
+                        FROM evidence_occurrences
+                        WHERE research_task_id = ? AND content_id = ?
+                        ORDER BY first_seen_at, id
+                        """,
+                        (task_id, evidence_item["content_id"]),
+                    ).fetchall()
+                ]
+                evidence.append(evidence_item)
+            item["evidence"] = evidence
             result.append(item)
         return result
+
+    def _queries_connection(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+    ) -> list[dict[str, object]]:
+        return [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT * FROM research_queries
+                WHERE research_task_id = ?
+                ORDER BY created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
 
     def _events_connection(
         self,

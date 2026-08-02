@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import Mock
@@ -140,6 +141,8 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
     detail = repository.get(user_id=owner_id, task_id=task_id, detail=True)
     assert detail is not None
     assert detail["findings"][0]["evidence"][0]["crawl_task_id"] == crawler_task["id"]
+    assert detail["findings"][0]["evidence"][0]["support_type"] == "direct"
+    assert detail["findings"][0]["evidence"][0]["occurrences"]
     assert len(detail["execution_trace"]) >= 6
 
     with pytest.raises(ResearchTaskConflict, match="require content evidence"):
@@ -150,6 +153,62 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
             statement="Unsupported",
             derivation=None,
             content_ids=[],
+        )
+    with pytest.raises(ResearchTaskConflict, match="direct evidence"):
+        repository.save_finding(
+            task_id=task_id,
+            round_number=1,
+            kind="fact",
+            statement="Context only",
+            derivation=None,
+            content_ids=[content_id],
+            evidence_links=[
+                {
+                    "content_id": content_id,
+                    "support_type": "contextual",
+                    "support_strength": "weak",
+                    "support_explanation": "Only surrounding context.",
+                }
+            ],
+        )
+    with pytest.raises(ResearchTaskConflict, match="counterevidence status"):
+        repository.save_finding(
+            task_id=task_id,
+            round_number=1,
+            kind="inference",
+            statement="Unknown counterevidence",
+            derivation="A bounded derivation.",
+            content_ids=[content_id],
+            counterevidence_status="unknown",
+            counterevidence_explanation="Not assessed.",
+        )
+    with pytest.raises(ResearchTaskConflict, match="derivation"):
+        repository.save_finding(
+            task_id=task_id,
+            round_number=1,
+            kind="inference",
+            statement="Missing derivation",
+            derivation=None,
+            content_ids=[content_id],
+        )
+    with pytest.raises(ResearchTaskConflict, match="contradictory"):
+        repository.save_finding(
+            task_id=task_id,
+            round_number=1,
+            kind="inference",
+            statement="Found counterevidence",
+            derivation="A bounded derivation.",
+            content_ids=[content_id],
+            evidence_links=[
+                {
+                    "content_id": content_id,
+                    "support_type": "direct",
+                    "support_strength": "medium",
+                    "support_explanation": "Direct supporting statement.",
+                }
+            ],
+            counterevidence_status="found",
+            counterevidence_explanation="A contrary claim was found.",
         )
 
 
@@ -389,11 +448,31 @@ def test_orphan_crawl_is_reconciled_after_runtime_restart(tmp_path: Path) -> Non
     assert current["consumed_crawl_count"] == 1
     assert crawler.claim_next() is not None
     crawler.complete_success(str(orphan["id"]), actual_count=0)
-    repository.record_crawl_completion(str(orphan["id"]), succeeded=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            UPDATE crawler_tasks
+            SET actual_count = 3,
+                research_new_content_count = 2,
+                research_existing_content_count = 1,
+                research_updated_content_count = 1
+            WHERE id = ?
+            """,
+            (orphan["id"],),
+        )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=Mock(),
+    )
+    runtime._recover_waiting_crawls()
     assert repository.reconcile_orphan_crawls() == []
     current = repository.get_for_runtime(task_id)
     assert current is not None
     assert current["consumed_crawl_count"] == 1
+    assert current["consumed_content_count"] == 2
+    assert current["status"] == "Researching"
     assert current["context"]["crawl_requested"] is False
 
 
@@ -1167,6 +1246,97 @@ def test_runtime_plan_keywords_are_bounded_and_non_verbatim() -> None:
         "agent memory",
         "evidence graph",
     ]
+
+
+def test_runtime_quality_gate_batches_scores_and_preserves_query_chain(
+    tmp_path: Path,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id)
+    task_id = str(task["id"])
+    source_content_id = _seed_content(database, tmp_path)
+    repository.save_plan(
+        task_id,
+        plan={"initial_query": "寻找个人 AI 工作台产品"},
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id)
+    assert current is not None
+
+    ai_repository = Mock()
+    ai_repository.invocation_cost.return_value = None
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"relevance_scores":[0.9]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=5, output_tokens=3),
+            ),
+            ModelResponse(
+                content='{"relevance_scores":[0.8]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=5, output_tokens=3),
+            ),
+        ]
+    )
+    tools = Mock()
+    tools.supports_quality_queries = True
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=tools,
+    )
+
+    context: dict[str, object] = {}
+    first = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=1,
+            context=context,
+            plan={"initial_query": "寻找个人 AI 工作台产品"},
+            crawl_count=0,
+        )
+    )
+    assert first is not None
+    first_query, first_id, _ = first
+    assert first_query == "寻找个人 AI 工作台产品"
+    context.update(
+        {
+            "last_query_id": first_id,
+            "last_search_content_ids": [source_content_id],
+            "entities": ["WorkBuddy"],
+        }
+    )
+    second = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=2,
+            context=context,
+            plan={"initial_query": "寻找个人 AI 工作台产品"},
+            crawl_count=1,
+        )
+    )
+    assert second is not None
+    _, second_id, _ = second
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    queries = detail["queries"]
+    assert len(queries) == 4
+    rejected = [item for item in queries if item["status"] == "rejected"]
+    approved = [item for item in queries if item["status"] == "approved"]
+    assert len(rejected) == 2
+    assert all(item["query"] == "agent" for item in rejected)
+    assert len(approved) == 2
+    expansion = next(item for item in approved if item["id"] == second_id)
+    assert expansion["parent_query_id"] == first_id
+    assert expansion["source_content_id"] == source_content_id
+    assert len(gateway.requests) == 2
 
 
 def test_runtime_rotates_selected_platforms_for_bounded_crawls() -> None:

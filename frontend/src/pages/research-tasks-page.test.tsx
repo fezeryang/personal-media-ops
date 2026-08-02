@@ -139,6 +139,12 @@ const task: researchApi.ResearchTaskDetail = {
     summary_markdown: "## 模型化研究摘要",
     summary_html: "<h2>模型化研究摘要</h2><script>alert(1)</script>",
     evidence_count: 1,
+    new_content_count: 2,
+    existing_content_count: 3,
+    updated_content_count: 1,
+    duplicate_evidence_count: 1,
+    independent_evidence_count: 1,
+    discovery_count: 5,
   },
   route_snapshot: { primary: { provider: "MiniMax", model: "MiniMax-M3" } },
   budget: {
@@ -188,10 +194,74 @@ const task: researchApi.ResearchTaskDetail = {
           published_at: null,
           collected_at: "2026-08-01T00:00:02Z",
           crawl_task_id: "crawl-1",
+          support_type: "direct",
+          support_strength: "strong",
+          support_explanation: "标题与正文直接描述该产品。",
+          occurrences: [],
         },
       ],
       created_at: "2026-08-01T00:00:03Z",
       updated_at: "2026-08-01T00:00:03Z",
+    },
+  ],
+  queries: [
+    {
+      id: "query-1",
+      research_task_id: "research-1",
+      query: "Claude Code 个人工作流",
+      normalized_query: "claude code 个人工作流",
+      query_type: "scenario",
+      platform: "bili",
+      source_type: "user_goal",
+      source_content_id: null,
+      source_finding_id: null,
+      parent_query_id: null,
+      generation_reason: "由用户研究目标生成首轮查询",
+      relevance_score: 0.9,
+      specificity_score: 0.8,
+      novelty_score: 1,
+      noise_risk_score: 0.1,
+      expected_value_score: 0.72,
+      status: "completed",
+      rejection_reason: null,
+      crawler_task_id: "crawl-1",
+      executed_at: "2026-08-01T00:00:02Z",
+      result_count: 5,
+      new_content_count: 2,
+      existing_content_count: 3,
+      updated_content_count: 1,
+      duplicate_evidence_count: 1,
+      created_at: "2026-08-01T00:00:01Z",
+      updated_at: "2026-08-01T00:00:02Z",
+    },
+    {
+      id: "query-rejected",
+      research_task_id: "research-1",
+      query: "agent",
+      normalized_query: "agent",
+      query_type: "generic_topic",
+      platform: "bili",
+      source_type: "user_goal",
+      source_content_id: null,
+      source_finding_id: null,
+      parent_query_id: null,
+      generation_reason: "规划模型候选",
+      relevance_score: null,
+      specificity_score: 0,
+      novelty_score: 1,
+      noise_risk_score: 1,
+      expected_value_score: null,
+      status: "rejected",
+      rejection_reason: "仅包含泛化词，必须与具体实体或限定场景组合",
+      crawler_task_id: null,
+      executed_at: null,
+      result_count: 0,
+      new_content_count: 0,
+      existing_content_count: 0,
+      updated_content_count: 0,
+      duplicate_evidence_count: 0,
+      created_at: "2026-08-01T00:00:01Z",
+      updated_at: "2026-08-01T00:00:01Z",
     },
   ],
   events: [],
@@ -235,10 +305,27 @@ describe("ResearchTasksPage", () => {
     expect(screen.getByText("模型化研究摘要")).toBeInTheDocument();
     expect(document.querySelector("script")).not.toBeInTheDocument();
     expect(screen.getByText("AI 工作台实践")).toBeInTheDocument();
+    expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
+    expect(screen.getByText(/仅包含泛化词/)).toBeInTheDocument();
+    expect(screen.getByText("独立证据")).toBeInTheDocument();
     expect(screen.getByText("执行轨迹（1 步）")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByText("search_library"));
     expect(screen.getByText(/AI workbench/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
+  });
+
+  it("keeps quality counts, rejected queries, and evidence reachable at 390px", async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      renderPage();
+      expect(await screen.findByText("查询轨迹与质量闸门")).toBeInTheDocument();
+      expect(screen.getByText("已存在")).toBeInTheDocument();
+      expect(screen.getByText(/拒绝原因：仅包含泛化词/)).toBeInTheDocument();
+      expect(screen.getByText("直接支持 · 强")).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+    }
   });
 
   it("creates a bounded task from the single task page", async () => {

@@ -460,7 +460,50 @@ DB 记录总生命周期到 Done 为 278.710s，解释了“203 秒”口径与�
 8B 任务状态更新为 `completed_with_quality_followups`；平台配置未改，生产状态
 API/Worker active，工作树原有未跟踪 `CLAUDE.md` 保留。
 
-### 下一步
+## Session 14: requested_count 修复后的 bili 真实复核
+
+**Date**: 2026-08-01
+**Task**: 08-01-research-quality-foundation
+
+### 结果
+
+生产部署 `6af303a16da0b7bfc38fc76eede083cc75d5b9f8` 后，真实任务
+`b376dff6-d6a5-4430-9c78-76d3c3bb1ec5` 以 bili 单平台运行，3 次采集全部 succeeded，
+默认路径实际使用 requested_count=12，分别带回 4、4 条新增；第三次模型显式传入
+requested_count=8，带回 6 条新增。累计 32 次内容发现、27 个独立内容、14 条新增，
+证实 0.2 的 (c) 缺陷已修复并且真实候选池能产生新增。
+
+### 质量观察
+
+任务执行了两轮来源驱动扩展：原始目标 → `codex agent claude code skill workbuddy`
+→ `WorkBuddy 槽点 Codex 翻车 踩坑`。现有 8B trace 只保留模型上下文和工具参数，
+没有持久化 parent_query_id/source_content_id，因此不能把本次运行宣称为 8C-1 的最终
+来源链验收；这正是 `research_queries` 必须补齐的契约。已有 Finding 仍只做形式性
+content_id 校验，后续必须实现 direct/contextual/contradictory/background 与强度、
+解释和反证状态。
+
+任务最终 Done；owner proposed action 为评论采集且未产生 crawler task。平台配置、
+登录态、Worker 单并发和用户动作边界均未改变。
 
 架构审查门禁通过后，先修复 requested_count 并在 bili 单平台重跑验证，再进入
 0012、查询质量闸门、四类内容计数、occurrences/support metadata 与既有研究页增强。
+
+## Session 15: 8C-1 quality foundation implementation and local gates
+
+**Date**: 2026-08-01
+**Task**: 08-01-research-quality-foundation
+
+实现了 0012 迁移、`research_queries` 查询闸门、批量 relevance 评分、四类内容计数、
+`evidence_occurrences`、Finding 支持类型/强度/解释与反证约束，并扩展现有 Research
+任务页。查询来源链要求后续查询同时保留父查询和内容/Finding 来源；泛化候选保留在库中
+并在前端单独展示。为保证 8B 的进程重启语义，成功 ingestion 在 crawler 同一事务中
+保存 new/existing/updated checkpoint，Runtime/Worker 恢复时读取而非归零。
+
+本地门禁：后端 375 passed，覆盖率 86.16%；前端 `npm ci`、lint、22 files/54 tests、
+build 通过；`bash -n scripts/server/*.sh` 与 release script tests 通过。未执行生产迁移，
+未改平台配置、登录态或 Worker 并发。
+
+### 下一步
+
+提交并部署 0012（先备份 SQLite），完成最终 bili 单平台真实验收任务，核对全部 query、
+拒绝记录、四类计数、occurrences、事实/推测 Finding 支持和服务残留状态。

@@ -7,7 +7,7 @@
 ## Overview
 
 Backend code targets Python 3.11 and is managed with uv. Ruff, compile checks,
-pytest, and at least 80% application coverage form the quality gate.
+pytest, and at least 86% application coverage form the quality gate.
 
 ---
 

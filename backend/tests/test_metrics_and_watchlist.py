@@ -25,14 +25,19 @@ def _seed_active_task(client: TestClient, task_id: str) -> None:
     assert repository.claim_next()["id"] == task_id
 
 
-def _batch(*, views: int | None, followers: int | None) -> TaskEntityBatch:
+def _batch(
+    *,
+    views: int | None,
+    followers: int | None,
+    title: str = "Metric content",
+) -> TaskEntityBatch:
     return TaskEntityBatch(
         contents=[
             NormalizedContent(
                 platform="bili",
                 source_content_id="BV-metric",
                 content_type="video",
-                title="Metric content",
+                title=title,
                 description=None,
                 source_url="https://www.bilibili.com/video/BV-metric",
                 cover_url=None,
@@ -81,12 +86,21 @@ def test_ingestion_classifies_incremental_results_and_snapshots(
         task_id="metric-two",
         batch=_batch(views=125, followers=None),
     )
+    _seed_active_task(client, "metric-three")
+    third = library.ingest_task(
+        task_id="metric-three",
+        batch=_batch(views=125, followers=None, title="Metric content updated"),
+    )
 
     assert first.new_content_count == 1
     assert first.existing_content_count == 0
     assert second.new_content_count == 0
     assert second.existing_content_count == 1
     assert second.changed_content_count == 1
+    assert second.updated_content_count == 0
+    assert third.existing_content_count == 1
+    assert third.changed_content_count == 0
+    assert third.updated_content_count == 1
 
     database_path = client.app.state.settings.database_path
     with sqlite3.connect(database_path) as connection:
@@ -102,9 +116,24 @@ def test_ingestion_classifies_incremental_results_and_snapshots(
             WHERE platform = 'bili' AND source_creator_id = 'creator-metric'
             """
         ).fetchone()[0]
+        research_counts = connection.execute(
+            """
+            SELECT id, research_new_content_count,
+                   research_existing_content_count,
+                   research_updated_content_count
+            FROM crawler_tasks
+            WHERE id IN ('metric-one', 'metric-two', 'metric-three')
+            ORDER BY id
+            """
+        ).fetchall()
     assert content_snapshots == 2
     assert creator_snapshots == 1
     assert follower_count == 20
+    assert research_counts == [
+        ("metric-one", 1, 0, 0),
+        ("metric-three", 0, 1, 1),
+        ("metric-two", 0, 1, 0),
+    ]
 
     content_id = library.list_contents(
         platform="bili",

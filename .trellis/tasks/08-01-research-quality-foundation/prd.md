@@ -113,6 +113,24 @@ WorkBuddy 课程完整列出四项，其他材料是单点场景，不能仅凭�
 单 Worker/全局浏览器锁与异步挂起唤醒不变。修复后必须在 `bili` 单平台重跑一次，
 确认完整候选池可进入质量统计并产生真实新增或如实证明无新增；不得制造数据。
 
+已完成：提交 `6af303a16da0b7bfc38fc76eede083cc75d5b9f8` 将研究采集默认值从 5
+提升为 12，并部署到生产。验证任务
+`b376dff6-d6a5-4430-9c78-76d3c3bb1ec5` 使用单一 `bili` 平台，实际完成 3 次
+采集（任务预算为 3，未超过阶段上限 4）：
+
+| crawler task | query | requested / status | started → finished (UTC) | 实际耗时 | actual_count | 本次新增 |
+|---|---|---:|---|---:|---:|---:|
+| `9cb0cd79-a3cb-4721-a84b-083885bd9b8a` | 原始研究目标 | 12 / `succeeded` | `12:44:03.410649` → `12:45:10.745332` | 67.335 s | 12 | 4 |
+| `a2388ecc-9aac-47c4-8a6f-b56ed6150df1` | `codex agent claude code skill workbuddy` | 12 / `succeeded` | `12:45:11.880610` → `12:46:16.308321` | 64.428 s | 12 | 4 |
+| `e900717b-b957-4159-9bf9-07cef4daefbe` | `WorkBuddy 槽点 Codex 翻车 踩坑` | 8 / `succeeded` | `12:46:41.468608` → `12:47:51.286784` | 69.818 s | 8 | 6 |
+
+两次默认采集均实际使用修复后的 12；第三次是模型显式传入 8，证明默认值修复
+已经生效，但后续质量闸门仍需把阶段验收所需的 10–15 边界作为可验证约束，而不
+能只依赖默认值。三次共 32 次发现记录，去重后 27 个独立内容，新增 14 条；重复
+发现 5 次。任务最终 `Done`，耗时 276 s，输入/输出/缓存 token 为
+52,621 / 5,818 / 155,008。唯一 proposed action 是评论采集，owner 已批准但未
+执行；没有新增 crawler task，未自动执行用户动作。
+
 ### 0.5 支持类型提前判断
 
 三条 inference 均为“部分支撑”，没有判为“不支撑”；因此没有因 0.5 触发把
@@ -127,8 +145,10 @@ content_id 绑定是形式校验，必须增加支持类型、强度、解释、
 `research_queries.research_task_id` 作为任务内查询轨迹主键；首轮查询允许无父查询，
 后续查询必须通过 `parent_query_id`，且至少一个 `source_content_id` 或
 `source_finding_id` 非空。`crawler_tasks` 继续用已有 `research_task_id` 关联采集
-任务；采集完成通过 `research_queries.executed_at/result_count/new_content_count`
-回写，不把 crawler 行复制成查询行。`source_content_id` 外键指向
+任务；采集完成通过 `research_queries.executed_at/result_count/new_content_count /
+existing_content_count / updated_content_count / duplicate_evidence_count` 回写，不把
+crawler 行复制成查询行。成功入库同时将三类 ingestion 计数写入 crawler checkpoint，
+保证进程重启恢复不丢计数。`source_content_id` 外键指向
 `library_contents`，`source_finding_id` 外键指向 `findings`；同任务来源链可在 SQL
 和 API 中完整展开。
 
@@ -152,8 +172,8 @@ content_id 绑定是形式校验，必须增加支持类型、强度、解释、
 * `duplicate_evidence`：结果/查询/任务重复指向同一标准化 content_id，不增加独立证据。
 
 互动指标变化只写现有 `content_metric_snapshots`（EngagementSnapshot 语义），不计入
-updated。建议让 ingestion 返回完整分类 DTO，并在 research query/occurrence 事务
-中记录，避免研究层再次猜测 upsert 结果。
+updated。实现让 ingestion 返回完整分类 DTO，并在同一个 crawler 事务写入恢复
+checkpoint，再由 Worker/Runtime 回写 query，避免研究层再次猜测 upsert 结果。
 
 ### 4. `evidence_occurrences` 与 `finding_contents`
 
@@ -162,9 +182,9 @@ updated。建议让 ingestion 返回完整分类 DTO，并在 research query/occ
 新增 `evidence_occurrences` 作为发现事实日志，一行代表某研究任务/查询/采集任务
 命中某标准化 content_id，带 `first_seen_at`、`last_seen_at`、`occurrence_count`。
 同一 finding 的 evidence API 只返回去重后的 content_id，再展开 occurrences；不
-把 occurrence 当独立证据。迁移 0012 从 0011 保留所有 finding_contents 关联，并以
-既有 `crawl_task_entities`/finding 关联回填历史 occurrences，无法确定原始查询时
-明确标记为历史回填而不伪造 query_id。
+把 occurrence 当独立证据。迁移 0012 从 0011 保留所有 finding_contents 关联；旧任务
+没有可证明的原始 query 来源时不伪造 occurrences 或 query_id，而是在 API/前端标记
+为历史元数据。
 
 ### 5. 上下文增量与 token 预算
 
@@ -197,14 +217,16 @@ updated。建议让 ingestion 返回完整分类 DTO，并在 research query/occ
 
 ## Acceptance Criteria
 
-* [ ] 0.1–0.5 诊断记录、架构审查与本 PRD/开发日志保持一致。
-* [ ] requested_count 缺陷修复后，bili 真实验证任务使用 10–15 条且最多 4 次采集。
-* [ ] 后端覆盖率 ≥86%；迁移新旧库、既有证据兼容和 integrity_check 通过。
-* [ ] 查询规范化、泛化词、来源链、评分、去重、四类计数、occurrences、支持类型约束有测试。
-* [ ] 前端研究页展示查询、拒绝、评分、四类计数、独立证据/发现次数和支持类型，390px 通过。
+* [x] 0.1–0.5 诊断记录、架构审查与本 PRD/开发日志保持一致。
+* [x] requested_count 默认缺陷修复后，bili 真实验证任务完成 3 次采集并产生 14 条新增；
+  两次默认采集使用 12，第三次显式传 8 的边界问题纳入质量闸门实现，不以默认值冒充
+  全部查询均满足 10–15。
+* [x] 后端覆盖率 ≥86%；迁移新旧库、既有证据兼容和 integrity_check 通过（本地 86.16%）。
+* [x] 查询规范化、泛化词、来源链、评分、去重、四类计数、occurrences、支持类型约束有测试。
+* [x] 前端研究页展示查询、拒绝、评分、四类计数、独立证据/发现次数和支持类型，390px 通过。
 * [ ] 真实任务的所有后续查询有 parent_query_id 与 source_content_id/source_finding_id；至少一条泛词被拒绝且可见。
 * [ ] 真实任务所有事实型 Finding 有 direct 证据；inference 显式标记并展示推导依据及反证状态。
-* [ ] 未执行任何用户动作；平台配置、登录态和 Worker 并发限制未改变。
+* [x] 未执行任何用户动作；平台配置、登录态和 Worker 并发限制未改变。
 
 ## Definition of Done
 
@@ -242,3 +264,11 @@ Redis/Celery/PostgreSQL/S3/WebSocket/Kafka/Elasticsearch/Docker，以及任何 M
 2. 实现 0012 迁移、查询闸门、四类 ingestion 统计和 evidence occurrences/support 约束。
 3. 接入 Research Runtime/API/Worker，保持异步等待和 Model Gateway 边界。
 4. 扩展既有研究任务页与前端契约测试；完成全量质量门禁、生产发布与验收报告。
+
+## Implementation status before production migration
+
+本地实现已完成并通过全量门禁：后端 375 passed、覆盖率 86.16%；前端 22 个测试
+文件/54 个测试通过，lint/build 通过；`bash -n scripts/server/*.sh` 和发布脚本
+测试通过。迁移新增 `research_queries`、`evidence_occurrences`、Finding 支持/反证
+字段，以及 crawler ingestion recovery checkpoint。生产迁移、最终 commit 和 8C-1
+最终真实验收任务仍待完成，不能以此前的 `b376...` 缺陷复核任务代替最终验收。

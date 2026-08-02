@@ -13,6 +13,11 @@ from app.repositories.research import (
 )
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.providers import ProviderError
+from app.services.ai.research_quality import (
+    evaluate_query,
+    expected_value_score,
+    parse_relevance_batch,
+)
 from app.services.ai.research_rendering import render_research_markdown
 from app.services.ai.research_tools import (
     RESEARCH_DEFAULT_REQUESTED_COUNT,
@@ -144,7 +149,14 @@ class ResearchRuntime:
                 self.research.record_crawl_completion(
                     crawler_id,
                     succeeded=True,
-                    new_content_count=0,
+                    new_content_count=int(item.get("research_new_content_count") or 0),
+                    existing_content_count=int(
+                        item.get("research_existing_content_count") or 0
+                    ),
+                    updated_content_count=int(
+                        item.get("research_updated_content_count") or 0
+                    ),
+                    result_count=int(item.get("actual_count") or 0),
                 )
             elif status in {"failed", "cancelled"}:
                 self.research.record_crawl_completion(
@@ -362,7 +374,19 @@ class ResearchRuntime:
         context = task.get("context")
         if not isinstance(context, dict):
             context = {}
-        context.update({"messages": [], "entities": [], "crawl_requested": False})
+        context.update(
+            {
+                "messages": [],
+                "entities": [],
+                "crawl_requested": False,
+                "quality_gate_required": getattr(
+                    self.tools,
+                    "supports_quality_queries",
+                    False,
+                )
+                is True,
+            }
+        )
         self.research.update_context(task_id, context, step="research_round", round_number=1)
         self.research.transition(
             task_id,
@@ -421,33 +445,262 @@ class ResearchRuntime:
                 candidates.append(item)
         return candidates[:8]
 
+    @staticmethod
+    def _quality_expansion_term(entities: object) -> str | None:
+        if not isinstance(entities, list):
+            return None
+        generic = {
+            "ai",
+            "agent",
+            "api",
+            "app",
+            "产品",
+            "工具",
+            "软件",
+            "工作台",
+        }
+        for item in entities:
+            if not isinstance(item, str):
+                continue
+            candidate = item.strip()
+            if candidate and candidate.casefold() not in generic:
+                return candidate
+        return None
+
+    async def _score_quality_candidates(
+        self,
+        task: dict[str, object],
+        candidates: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Score all accepted deterministic candidates in one model call."""
+
+        if not candidates:
+            return []
+        snapshot = task.get("route_snapshot")
+        primary = snapshot.get("primary") if isinstance(snapshot, dict) else None
+        if not isinstance(primary, dict):
+            raise ResearchTaskConflict("research route snapshot is missing")
+        payload = [
+            {
+                "query_id": item["id"],
+                "query": item["query"],
+                "query_type": item["query_type"],
+                "specificity_score": item["specificity_score"],
+                "novelty_score": item["novelty_score"],
+                "noise_risk_score": item["noise_risk_score"],
+            }
+            for item in candidates
+        ]
+        response = await self._generate(
+            task_id=str(task["id"]),
+            request=ModelRequest(
+                system=(
+                    "You are the batch query relevance gate for a bounded research task. "
+                    "Score every supplied query against the research objective. "
+                    "Return JSON only in the form {\"relevance_scores\":[0..1]}. "
+                    "Do not add or rewrite queries."
+                ),
+                messages=[
+                    ModelMessage(
+                        role="user",
+                        content=json.dumps(
+                            {
+                                "objective": task["objective"],
+                                "candidates": payload,
+                            },
+                            ensure_ascii=False,
+                        )[:12_000],
+                    )
+                ],
+                max_tokens=180,
+                tools=None,
+                tool_choice="none",
+                metadata={"runtime_step": "query_quality_batch"},
+                timeout=45,
+            ),
+            route_role="tool_calling",
+            model_record_id=str(primary["model_record_id"]),
+        )
+        scores = parse_relevance_batch(response.response.content or "", len(candidates))
+        if scores is None:
+            for item in candidates:
+                self.research.update_query_quality(
+                    str(item["id"]),
+                    relevance_score=None,
+                    expected_value_score=None,
+                    status="rejected",
+                    rejection_reason="批量相关性评分解析失败，未执行查询",
+                )
+            return []
+        approved: list[dict[str, object]] = []
+        for item, relevance in zip(candidates, scores, strict=True):
+            value = expected_value_score(
+                relevance,
+                float(item["specificity_score"]),
+                float(item["novelty_score"]),
+            )
+            if relevance < 0.35 or value is None or value < 0.05:
+                self.research.update_query_quality(
+                    str(item["id"]),
+                    relevance_score=relevance,
+                    expected_value_score=value,
+                    status="rejected",
+                    rejection_reason="相关性或预期价值低于执行阈值",
+                )
+                continue
+            updated = self.research.update_query_quality(
+                str(item["id"]),
+                relevance_score=relevance,
+                expected_value_score=value,
+                status="approved",
+            )
+            approved.append(updated)
+        return approved
+
+    async def _prepare_quality_query(
+        self,
+        task: dict[str, object],
+        *,
+        round_number: int,
+        context: dict[str, object],
+        plan: dict[str, object],
+        crawl_count: int,
+    ) -> tuple[str, str, str] | None:
+        """Persist deterministic candidates, reject noise, then batch-score."""
+
+        task_id = str(task["id"])
+        platform, _ = self._planned_crawl_platform(task, context)
+        if crawl_count == 0:
+            query = str(plan.get("initial_query") or task["objective"])[:500]
+            source_type = "user_goal"
+            source_content_id = None
+            parent_query_id = None
+            reason = "由用户研究目标生成首轮查询"
+        else:
+            term = self._quality_expansion_term(context.get("entities"))
+            query = f"{term} 使用体验" if term else "个人 AI 工作台 使用体验"
+            source_type = "content_entity"
+            parent_query_id = context.get("last_query_id")
+            parent_query_id = parent_query_id if isinstance(parent_query_id, str) else None
+            source_ids = context.get("last_search_content_ids")
+            if not isinstance(source_ids, list) or not source_ids:
+                source_ids = context.get("last_crawl_content_ids")
+            source_content_id = (
+                source_ids[0]
+                if isinstance(source_ids, list) and source_ids and isinstance(source_ids[0], str)
+                else None
+            )
+            reason = (
+                "从上轮查询结果的实体/场景生成扩展查询"
+                + (f"，来源内容 {source_content_id}" if source_content_id else "")
+            )
+
+        historical = self.research.list_normalized_queries(exclude_task_id=task_id)
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        current_queries = detail.get("queries", []) if isinstance(detail, dict) else []
+        historical.extend(
+            str(item["normalized_query"])
+            for item in current_queries
+            if isinstance(item, dict) and item.get("normalized_query")
+        )
+        raw_candidates = [query, "agent"]
+        persisted: list[dict[str, object]] = []
+        for candidate in raw_candidates:
+            quality = evaluate_query(
+                candidate,
+                generation_reason=reason,
+                source_type=source_type,
+                historical_queries=historical,
+                parent_query_id=parent_query_id,
+                source_content_id=source_content_id,
+            )
+            row = self.research.create_query(
+                task_id=task_id,
+                query=candidate,
+                normalized_query=quality.normalized_query,
+                query_type=quality.query_type,
+                platform=platform,
+                source_type=source_type,
+                source_content_id=source_content_id,
+                source_finding_id=None,
+                parent_query_id=parent_query_id,
+                generation_reason=reason,
+                specificity_score=quality.specificity_score,
+                novelty_score=quality.novelty_score,
+                noise_risk_score=quality.noise_risk_score,
+                status="rejected" if not quality.accepted else "candidate",
+                rejection_reason=quality.rejection_reason,
+            )
+            if quality.accepted:
+                persisted.append(row)
+            historical.append(quality.normalized_query)
+        approved = await self._score_quality_candidates(task, persisted)
+        if not approved:
+            return None
+        selected = approved[0]
+        context["last_query_id"] = str(selected["id"])
+        context["last_query_query"] = str(selected["query"])
+        return str(selected["query"]), str(selected["id"]), platform
+
     async def _research_round(self, task: dict[str, object]) -> None:
         task_id = str(task["id"])
         round_number = max(1, int(task["current_round"]))
         plan = task.get("plan")
         if not isinstance(plan, dict):
             raise ResearchTaskConflict("research plan is missing")
-        query = str(plan.get("initial_query") or task["objective"])
-        if round_number > 1:
-            derived = plan.get("derived_keywords")
-            if isinstance(derived, list) and derived:
-                query = " ".join(str(item) for item in derived[:8])
+        context = task.get("context")
+        if not isinstance(context, dict):
+            context = {}
+        crawl_count = int(task["consumed_crawl_count"])
+        quality_enabled = getattr(self.tools, "supports_quality_queries", False) is True
+        query_id: str | None = None
+        query_platform: str | None = None
+        if quality_enabled:
+            prepared = await self._prepare_quality_query(
+                task,
+                round_number=round_number,
+                context=context,
+                plan=plan,
+                crawl_count=crawl_count,
+            )
+            if prepared is None:
+                raise ResearchTaskConflict("all research query candidates were rejected")
+            query, query_id, query_platform = prepared
+        else:
+            query = str(plan.get("initial_query") or task["objective"])
+            if round_number > 1:
+                derived = plan.get("derived_keywords")
+                if isinstance(derived, list) and derived:
+                    query = " ".join(str(item) for item in derived[:8])
         search = await self._execute_tool(
             task,
             "search_library",
-            {"query": query, "platform": None},
+            {
+                "query": query,
+                "platform": query_platform,
+                "_research_query_id": query_id,
+            },
         )
         items = search.get("data") if isinstance(search, dict) else []
         if not isinstance(items, list):
             items = []
-        context = task.get("context")
-        if not isinstance(context, dict):
-            context = {}
+        if query_id is not None:
+            self.research.record_evidence_occurrences(
+                task_id=task_id,
+                content_ids=[
+                    str(item["id"])
+                    for item in items
+                    if isinstance(item, dict) and item.get("id")
+                ][:20],
+                query_id=query_id,
+            )
         context["last_search_query"] = query
         context["last_search_content_ids"] = [
             str(item.get("id")) for item in items if isinstance(item, dict) and item.get("id")
         ][:20]
         context["crawl_requested"] = False
+        if query_id is not None:
+            context["last_query_id"] = query_id
         entities = extract_entities([item for item in items if isinstance(item, dict)])
         if entities:
             plan["derived_keywords"] = entities
@@ -457,7 +710,6 @@ class ResearchRuntime:
         else:
             self.research.update_context(task_id, context, step="search_library", round_number=round_number)
 
-        crawl_count = int(task["consumed_crawl_count"])
         crawl_limit = int(task["budget_crawl_limit"])
         if crawl_count == 0 and crawl_limit > 0:
             # Always spend the first bounded crawl after checking the library;
@@ -468,6 +720,7 @@ class ResearchRuntime:
                 context=context,
                 keywords=query[:200],
                 round_number=round_number,
+                query_id=query_id,
             )
             return
         if crawl_count < min(2, crawl_limit) and items and round_number >= 1 and entities:
@@ -478,6 +731,7 @@ class ResearchRuntime:
                 context=context,
                 keywords=" ".join(entities[:6]),
                 round_number=round_number + 1,
+                query_id=query_id,
             )
             return
         if not items and crawl_count == 0 and crawl_count < crawl_limit:
@@ -486,6 +740,7 @@ class ResearchRuntime:
                 context=context,
                 keywords=query[:200],
                 round_number=round_number,
+                query_id=query_id,
             )
             return
 
@@ -531,6 +786,7 @@ class ResearchRuntime:
         context: dict[str, object],
         keywords: str,
         round_number: int,
+        query_id: str | None = None,
     ) -> None:
         """Submit one bounded crawl and rotate selected platforms fairly."""
 
@@ -550,6 +806,7 @@ class ResearchRuntime:
                 "platform": platform,
                 "keywords": keywords,
                 "requested_count": RESEARCH_DEFAULT_REQUESTED_COUNT,
+                "_research_query_id": query_id,
             },
         )
         if result.get("status") == "waiting_crawl":
@@ -671,7 +928,8 @@ class ResearchRuntime:
                     f"Durable evidence-bound findings: {json.dumps(evidence, ensure_ascii=False)[:12_000]}\n"
                     f"Missing required artifacts: {', '.join(missing)}\n"
                     "Use only the supplied repair tools. Save at least one evidence-bound inference "
-                    "with a non-empty derivation and content_ids when evidence supports it. "
+                    "with a non-empty derivation, content_ids, and per-evidence support metadata when evidence supports it. "
+                    "Include counterevidence_status and counterevidence_explanation. "
                     "Then propose exactly one safe, owner-approval action. Do not crawl."
                 ),
             )
@@ -911,7 +1169,8 @@ class ResearchRuntime:
                     f"Research objective: {task['objective']}\n"
                     f"Current query: {query}\n"
                     f"Collected library results (JSON): {json.dumps(items[:12], ensure_ascii=False)[:16_000]}\n"
-                    "Use tools to inspect evidence. Every fact or inference must be saved with content_ids. "
+                    "Use tools to inspect evidence. Every fact or inference must be saved with content_ids and one evidence_links item per content_id; each item needs support_type, support_strength, and a one-sentence support_explanation. "
+                    "Inference findings also need a derivation and counterevidence_explanation; use not_found only when no contrary evidence was found. "
                     "If evidence is insufficient, submit one bounded crawl. Finish by saving findings and proposing one safe action."
                 ),
             )
@@ -1058,10 +1317,14 @@ class ResearchRuntime:
             raise ResearchTaskConflict("research task disappeared before summarizing")
         findings = detail.get("findings") or []
         context = detail.get("context") or {}
+        quality = self.research.quality_summary(task_id)
+        quality_queries = detail.get("queries") or []
         prompt = {
             "objective": detail["objective"],
             "findings": findings,
             "events": detail.get("events") or [],
+            "query_quality": quality_queries,
+            "quality_counts": quality,
             "last_model_text": context.get("last_model_text") if isinstance(context, dict) else None,
             "evidence_rule": "separate facts, inferences, unknowns, and proposed actions",
         }
@@ -1088,7 +1351,13 @@ class ResearchRuntime:
             "summary_html": render_research_markdown(summary_markdown),
             "facts": [item for item in findings if isinstance(item, dict) and item.get("kind") == "fact"],
             "inferences": [item for item in findings if isinstance(item, dict) and item.get("kind") == "inference"],
-            "evidence_count": sum(len(item.get("evidence", [])) for item in findings if isinstance(item, dict)),
+            "evidence_count": quality["independent_evidence_count"],
+            "new_content_count": quality["new_content_count"],
+            "existing_content_count": quality["existing_content_count"],
+            "updated_content_count": quality["updated_content_count"],
+            "duplicate_evidence_count": quality["duplicate_evidence_count"],
+            "independent_evidence_count": quality["independent_evidence_count"],
+            "discovery_count": quality["discovery_count"],
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
         self.research.update_result(task_id, result)
