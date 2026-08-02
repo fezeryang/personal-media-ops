@@ -1552,6 +1552,48 @@ def test_research_api_detail_controls_actions_and_sse(
     assert formatted.json()["result"]["summary_markdown"] == "# Legacy result"
     assert "<h1>Legacy result</h1>" in formatted.json()["result"]["summary_html"]
 
+
+def test_research_api_detail_projects_populated_entity_coverage(
+    client: TestClient,
+    owner_id: str,
+) -> None:
+    repository = client.app.state.research_repository
+    task = repository.create(
+        user_id=owner_id,
+        objective="Inspect populated research coverage",
+        platforms=["bili", "zhihu"],
+        crawl_limit=2,
+        content_limit=100,
+        duration_seconds=3600,
+        token_limit=50_000,
+        cost_limit=None,
+        cost_currency=None,
+    )
+    task_id = str(task["id"])
+    repository.upsert_entity_coverage(
+        task_id,
+        "Codex",
+        platform="bili",
+        query_count_delta=2,
+        evidence_count_delta=3,
+        new_content_count_delta=2,
+    )
+
+    response = client.get(f"/api/research/tasks/{task_id}")
+
+    assert response.status_code == 200
+    entity = response.json()["entity_coverage"][0]
+    assert entity == {
+        "canonical_name": "Codex",
+        "entity_type": "product",
+        "entity_query_count": 2,
+        "entity_evidence_count": 3,
+        "entity_new_content_count": 2,
+        "entity_platform_count": 1,
+        "entity_coverage_ratio": 1.0,
+        "saturated": True,
+    }
+
     review = repository.create(
         user_id=owner_id,
         objective="Review a completed research result",

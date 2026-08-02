@@ -58,6 +58,12 @@ unique independent evidence denominator. A single content item may match more
 than one entity, but entity mention multiplicity must not make a concentrated
 study appear diverse.
 
+Detail response projections must explicitly select the fields declared by
+their Pydantic response models. Internal coverage row identifiers,
+`research_task_id`, platform-set JSON, and audit timestamps must not leak into
+an `extra="forbid"` API model; populated legacy and 8C rows must validate the
+same as empty rows.
+
 Step usage covers planning, query generation/review, tool evaluation, entity
 extraction, evidence selection, finding generation, coverage review, and final
 report. Each row records provider instance, vendor, model, billing mode,

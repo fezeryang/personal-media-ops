@@ -379,7 +379,10 @@ class ResearchTaskRepository:
         entities = []
         for row in connection.execute(
             """
-            SELECT * FROM research_entity_coverage
+            SELECT canonical_name, entity_type, entity_query_count,
+                   entity_evidence_count, entity_new_content_count,
+                   entity_platform_count, entity_coverage_ratio, saturated
+            FROM research_entity_coverage
             WHERE research_task_id = ?
             ORDER BY entity_evidence_count DESC, canonical_name
             """,
@@ -387,9 +390,6 @@ class ResearchTaskRepository:
         ).fetchall():
             item = dict(row)
             item["saturated"] = bool(item.get("saturated"))
-            # The platform set is an internal accounting aid; the API exposes
-            # its stable cardinality as entity_platform_count.
-            item.pop("platforms_json", None)
             entities.append(item)
         task["entity_coverage"] = entities
         task["content_decisions"] = [
