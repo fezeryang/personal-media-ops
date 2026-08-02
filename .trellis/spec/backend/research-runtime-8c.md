@@ -64,6 +64,11 @@ their Pydantic response models. Internal coverage row identifiers,
 an `extra="forbid"` API model; populated legacy and 8C rows must validate the
 same as empty rows.
 
+Numeric `research_budget_events.amount` and `estimated_cost` values must be
+serialized as nullable decimal strings at the API boundary. SQLite numeric
+affinity can return integers or floats even when writers store numeric text;
+the frontend contract must not receive those raw values.
+
 Step usage covers planning, query generation/review, tool evaluation, entity
 extraction, evidence selection, finding generation, coverage review, and final
 report. Each row records provider instance, vendor, model, billing mode,

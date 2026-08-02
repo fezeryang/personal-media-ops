@@ -1578,6 +1578,14 @@ def test_research_api_detail_projects_populated_entity_coverage(
         evidence_count_delta=3,
         new_content_count_delta=2,
     )
+    repository.record_budget_event(
+        task_id,
+        event_type="model_call",
+        amount=131,
+        unit="tokens",
+        billing_mode="subscription_fixed",
+        estimated_cost="0.125",
+    )
 
     response = client.get(f"/api/research/tasks/{task_id}")
 
@@ -1593,6 +1601,9 @@ def test_research_api_detail_projects_populated_entity_coverage(
         "entity_coverage_ratio": 1.0,
         "saturated": True,
     }
+    budget_event = response.json()["budget_events"][0]
+    assert budget_event["amount"] == "131"
+    assert budget_event["estimated_cost"] == "0.125"
 
     review = repository.create(
         user_id=owner_id,

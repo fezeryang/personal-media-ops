@@ -423,18 +423,21 @@ class ResearchTaskRepository:
                 (task_id,),
             ).fetchall()
         ]
-        task["budget_events"] = [
-            dict(row)
-            for row in connection.execute(
-                """
-                SELECT event_type, amount, unit, provider_instance_id, vendor,
-                       billing_mode, currency, estimated_cost, reason, created_at
-                FROM research_budget_events
-                WHERE research_task_id = ? ORDER BY created_at, id
-                """,
-                (task_id,),
-            ).fetchall()
-        ]
+        budget_events = []
+        for row in connection.execute(
+            """
+            SELECT event_type, amount, unit, provider_instance_id, vendor,
+                   billing_mode, currency, estimated_cost, reason, created_at
+            FROM research_budget_events
+            WHERE research_task_id = ? ORDER BY created_at, id
+            """,
+            (task_id,),
+        ).fetchall():
+            item = dict(row)
+            item["amount"] = _decimal(item.get("amount"))
+            item["estimated_cost"] = _decimal(item.get("estimated_cost"))
+            budget_events.append(item)
+        task["budget_events"] = budget_events
         task["billing_summary"] = ResearchTaskRepository._billing_summary_connection(
             connection, task_id
         )
