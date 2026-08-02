@@ -34,6 +34,7 @@ from app.services.ai.research_quality import (
     evaluate_query,
     expected_value_score,
     marginal_stop_decision,
+    normalize_query,
     parse_relevance_batch,
     parse_structured_json,
     platform_query_variants,
@@ -785,6 +786,47 @@ class ResearchRuntime:
                 return candidate[:120]
         return None
 
+    @staticmethod
+    def _strip_platform_binding(query: str) -> str:
+        """Remove a prior platform's evidence strategy from a held query."""
+        terms = (
+            "哔哩哔哩",
+            "知乎",
+            "微博",
+            "贴吧",
+            "小红书",
+            "教程",
+            "演示",
+            "使用体验",
+            "工作流案例",
+            "深度分析",
+            "需求讨论",
+            "产品评价",
+            "反向观点",
+            "即时发布",
+            "传播变化",
+            "产品动态",
+            "争议",
+            "真实问题",
+            "负面体验",
+            "长期用户反馈",
+            "故障 使用障碍",
+            "实际使用体验",
+            "消费决策",
+            "场景反馈",
+            "易用性",
+            "普通用户评价",
+            "问题",
+            "缺点",
+            "不好用",
+            "失败",
+            "替代",
+        )
+        result = query
+        for term in sorted(set(terms), key=len, reverse=True):
+            result = result.replace(term, " ")
+        return " ".join(result.split())
+
     async def _score_quality_candidates(
         self,
         task: dict[str, object],
@@ -991,9 +1033,13 @@ class ResearchRuntime:
             candidate: str,
             candidate_role: str,
             offset: int,
+            *,
+            rebind: bool = False,
         ) -> str:
-            if not production_tool_service or crawl_count != 0:
+            if not production_tool_service or (crawl_count != 0 and not rebind):
                 return candidate
+            if rebind:
+                candidate = self._strip_platform_binding(candidate)
             variants = platform_query_variants(
                 candidate,
                 platform,
@@ -1017,6 +1063,20 @@ class ResearchRuntime:
                 platform=platform,
             )
             if held is not None:
+                held_query = str(held["query"])
+                rebound_query = transform_initial_candidate(
+                    held_query,
+                    str(held.get("query_role") or "seed_discovery"),
+                    0,
+                    rebind=True,
+                )
+                if production_tool_service:
+                    held = self.research.rebind_execution_query_platform(
+                        str(held["id"]),
+                        platform=platform,
+                        query=rebound_query,
+                        normalized_query=normalize_query(rebound_query),
+                    )
                 context["last_query_id"] = str(held["id"])
                 context["last_query_query"] = str(held["query"])
                 return str(held["query"]), str(held["id"]), platform

@@ -168,6 +168,36 @@ the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
 Never request an interactive sudo password, seek a root shell, or automatically
 install/overwrite the helper or sudoers.
 
+## Production Data Loading and Login-QR Acceptance
+
+An authenticated page showing `数据加载失败` or `请求失败（HTTP 500）` is a
+blocking production defect, even when `/api/health`, systemd, and the public
+homepage are healthy. Every production acceptance involving Research or
+crawler login must exercise the real authenticated API contracts, including:
+
+- `/api/research/tasks`;
+- `/api/research/tasks/{id}` and `/api/research/tasks/{id}/events` for every
+  acceptance task;
+- `/api/crawler/tasks/{id}` and `/api/crawler/tasks/{id}/qrcode` for every
+  crawler task that is `waiting_login`.
+
+The detail endpoint must be validated with populated nested data, especially
+information utilities, entity/event candidates, memory items, alignment
+reviews, queries, and evidence. Before release, locally validate the exact
+repository payload through its Pydantic response model; a database row that
+loads but cannot satisfy the response model is an API failure. Do not claim
+acceptance from a successful list request alone.
+
+For a `waiting_login` task, the QR endpoint must return HTTP 200 with
+`image/png`, the QR file must exist at the bounded task path, and the UI must
+poll it until login or a terminal state. If the task has already timed out or
+left `waiting_login`, the absence of a QR is expected and must be reported as
+an explicit terminal/login failure; it is not evidence that login succeeded.
+Never delete or silently reuse browser login state to make this check pass.
+Any 500, missing nested response field, stale QR state, or mismatch between
+task status and QR availability requires a regression test and a new
+production verification before the stage can be marked complete.
+
 For the stage-four rollout authorized on 2026-07-26, the reproduced
 Codex-observer failure at the external Beaver/WAF boundary (`403`, `525`, or a
 TLS reset) is non-blocking only when the restricted helper and Nginx checks

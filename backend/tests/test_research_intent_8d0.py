@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from app.api.research import _detail
+from app.models.research import ResearchTaskDetail
 from app.repositories.auth import AuthRepository
 from app.repositories.research import ResearchTaskRepository
 from app.security.passwords import hash_password
@@ -15,7 +17,7 @@ from app.services.ai.intent_interpreter import (
     model_request,
     repair_model_request,
 )
-from app.services.ai.research_quality import evaluate_query
+from app.services.ai.research_quality import evaluate_query, normalize_query
 from tests.alembic_utils import run_alembic_command
 
 
@@ -356,6 +358,32 @@ def test_intent_and_8d0_artifacts_are_durable(tmp_path: Path) -> None:
     assert claimed["lifecycle_status"] == "executing"
     assert claimed["gate_status"] == "allow"
     assert repository.claim_held_execution_query(task_id, platform="zhihu") is None
+    rebound_query = "NewTool 真实使用体验 小红书"
+    rebound = repository.rebind_execution_query_platform(
+        str(claimed["id"]),
+        platform="xhs",
+        query=rebound_query,
+        normalized_query=normalize_query(rebound_query),
+    )
+    assert rebound["platform"] == "xhs"
+    assert rebound["query"] == rebound_query
+    assert rebound["normalized_query"] == normalize_query(rebound_query)
+    trace = repository.get_for_runtime(task_id, detail=True)
+    assert trace is not None
+    rebound_events = [
+        item for item in trace["execution_trace"]
+        if item.get("event") == "query_platform_rebound"
+    ]
+    assert rebound_events
+    assert rebound_events[-1]["tool_arguments"]["old_platform"] == "xhs"
+    assert rebound_events[-1]["tool_arguments"]["new_platform"] == "xhs"
+    reactivated_events = [
+        item for item in trace["execution_trace"]
+        if item.get("event") == "query_reactivated"
+    ]
+    assert reactivated_events
+    assert reactivated_events[-1]["tool_arguments"]["old_platform"] == "bili"
+    assert reactivated_events[-1]["tool_arguments"]["platform"] == "xhs"
 
     entity = repository.save_entity_candidate(
         task_id=task_id,
@@ -395,3 +423,6 @@ def test_intent_and_8d0_artifacts_are_durable(tmp_path: Path) -> None:
     assert event["status"] == "candidate"
     assert memory["is_current"] is True
     assert review["review_status"] == "partial_completion"
+    runtime_detail = repository.get_for_runtime(task_id, detail=True)
+    assert runtime_detail is not None
+    ResearchTaskDetail.model_validate(_detail(runtime_detail))

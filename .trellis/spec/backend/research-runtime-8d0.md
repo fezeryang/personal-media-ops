@@ -96,7 +96,7 @@ available and a material gap remains; otherwise it reaches
 
 | Condition | Required behavior |
 |---|---|
-| Platform crawler fails | Record the platform/query failure as a coverage fact, then reuse the next held execution direction on the next eligible platform |
+| Platform crawler fails | Record the platform/query failure as a coverage fact, then reuse the next held execution direction on the next eligible platform; rebind its platform-specific query text and normalized query while retaining old/new values in the execution trace |
 | Platform crawler fails and no held/new direction remains | Enter Summarizing/`partial_completion` with an explicit gap; do not convert the platform failure into a generic candidate-rejection failure |
 | Planner returns malformed/unsupported JSON | Ignore field names and free-form JSON fragments; use deterministic Intent-Contract directions |
 | Historical deduplication removes a modern initial direction | Transform it with platform evidence strategy and platform binding before the gate; preserve the original direction in the plan audit |
@@ -131,7 +131,8 @@ available and a material gap remains; otherwise it reaches
 Platform crawler failure is a coverage fact, not an automatic Research
 failure. The failed platform/query is recorded with its error, and a modern
 task first reuses the next held execution direction on the next eligible
-platform. If no held or newly valid direction remains, the task converges to
+platform, rebuilding the platform-specific evidence strategy rather than
+carrying the old platform's terms into the new query. If no held or newly valid direction remains, the task converges to
 an auditable summary/`partial_completion` with an explicit coverage gap rather
 than raising a generic “all research query candidates were rejected” failure.
 

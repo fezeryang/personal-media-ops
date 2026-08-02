@@ -964,7 +964,7 @@ class ResearchTaskRepository:
         memory_items = []
         for row in connection.execute(
             """
-            SELECT id, memory_type, memory_key, value_json, source_content_id,
+            SELECT id, research_task_id, memory_type, memory_key, value_json, source_content_id,
                    source_query_id, source_finding_id, confidence, is_current,
                    created_at, updated_at
             FROM research_memory_items
@@ -1406,8 +1406,53 @@ class ResearchTaskRepository:
                 tool_name=None,
                 tool_arguments={
                     "query_id": query_id,
+                    "old_platform": row["platform"],
                     "platform": platform,
                     "query_role": row["query_role"],
+                },
+            )
+        return self.get_query(query_id)
+
+    def rebind_execution_query_platform(
+        self,
+        query_id: str,
+        *,
+        platform: str,
+        query: str,
+        normalized_query: str,
+    ) -> dict[str, object]:
+        """Persist the platform-specific form of a reactivated direction."""
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT research_task_id, platform, query FROM research_queries WHERE id = ?",
+                (query_id,),
+            ).fetchone()
+            if row is None:
+                raise ResearchTaskNotFound(query_id)
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE research_queries
+                SET platform = ?, query = ?, normalized_query = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (platform, query, normalized_query, now, query_id),
+            )
+            self._append_trace_connection(
+                connection,
+                str(row["research_task_id"]),
+                event="query_platform_rebound",
+                status=None,
+                reason="跨平台复用 held 查询时重新绑定平台证据策略",
+                step="query_gate",
+                tool_name=None,
+                tool_arguments={
+                    "query_id": query_id,
+                    "old_platform": row["platform"],
+                    "new_platform": platform,
+                    "old_query": row["query"],
+                    "new_query": query,
                 },
             )
         return self.get_query(query_id)

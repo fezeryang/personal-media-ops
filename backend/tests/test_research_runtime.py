@@ -1629,6 +1629,100 @@ def test_modern_runtime_reuses_held_direction_after_platform_round(
     assert prepared == ("Codex WorkBuddy Skills 直接对比", str(held["id"]), "xhs")
 
 
+def test_production_runtime_rebinds_held_direction_to_next_platform(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id, platforms=["bili", "xhs"])
+    task_id = str(task["id"])
+    from app.services.ai.intent_interpreter import build_default_intent
+
+    intent = build_default_intent("比较 Codex 与 WorkBuddy 的差异", ["bili", "xhs"])
+    saved_intent = repository.save_intent(
+        task_id,
+        intent.model_dump(mode="json"),
+        change_reason="test",
+    )
+    held = repository.create_query(
+        task_id=task_id,
+        intent_id=str(saved_intent["id"]),
+        record_type="execution_query",
+        gate_status="hold",
+        decision="hold",
+        query_role="cross_platform_validation",
+        query="Codex WorkBuddy Skills 直接对比 演示 哔哩哔哩",
+        normalized_query=normalize_query(
+            "Codex WorkBuddy Skills 直接对比 演示 哔哩哔哩"
+        ),
+        query_type="product",
+        platform="bili",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="held plan direction",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        relevance_score=0.9,
+        expected_value_score=0.8,
+        status="approved",
+        lifecycle_status="skipped_low_marginal_value",
+    )
+    repository.save_plan(
+        task_id,
+        plan={"initial_query": "Codex WorkBuddy 长期记忆 直接对比"},
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id, detail=True)
+    assert current is not None
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=Mock(),
+        crawler=Mock(),
+        research=repository,
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=tools,
+    )
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=2,
+            context={"next_crawl_platform_index": 1},
+            plan=current["plan"],  # type: ignore[arg-type]
+            crawl_count=1,
+        )
+    )
+
+    assert prepared is not None
+    rebound_query, rebound_id, rebound_platform = prepared
+    assert rebound_id == str(held["id"])
+    assert rebound_platform == "xhs"
+    assert "小红书" in rebound_query
+    assert "哔哩哔哩" not in rebound_query
+    assert "演示" not in rebound_query
+    saved_query = repository.get_query(rebound_id)
+    assert saved_query["platform"] == "xhs"
+    assert saved_query["query"] == rebound_query
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    rebound_events = [
+        item for item in detail["execution_trace"]
+        if item.get("event") == "query_platform_rebound"
+    ]
+    assert rebound_events
+    assert rebound_events[-1]["tool_arguments"]["old_query"] == held["query"]
+    assert rebound_events[-1]["tool_arguments"]["new_query"] == rebound_query
+
+
 def test_platform_failure_with_no_remaining_queries_converges_to_summary() -> None:
     research = Mock()
     research.coverage_summary.return_value = {"actual_platform_count": 0}
