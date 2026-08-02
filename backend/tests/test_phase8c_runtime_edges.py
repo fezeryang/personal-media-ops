@@ -185,6 +185,8 @@ def test_runtime_route_policy_and_plan_generation(tmp_path: Path) -> None:
     assert runtime._plan_keywords('{"keywords":["objective","new term"]}', "objective") == ["new term"]
     assert runtime._quality_expansion_term(["AI", "WorkBuddy"]) == "WorkBuddy"
     assert runtime._quality_expansion_term(["AI", "agent"]) is None
+    assert runtime._quality_expansion_term(["coding", "Codex"], "vibecoding 的最佳教学") == "Codex"
+    assert runtime._quality_expansion_term(["coding"], "vibecoding 的最佳教学") == "vibecoding 的最佳教学"
 
     task = repository.get_for_runtime(task_id) or task_record
     asyncio.run(runtime._plan(task))

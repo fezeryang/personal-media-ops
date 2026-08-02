@@ -538,25 +538,59 @@ class ResearchRuntime:
         return candidates[:8]
 
     @staticmethod
-    def _quality_expansion_term(entities: object) -> str | None:
+    def _quality_expansion_term(
+        entities: object,
+        objective: str | None = None,
+    ) -> str | None:
         if not isinstance(entities, list):
-            return None
+            entities = []
         generic = {
             "ai",
             "agent",
             "api",
             "app",
+            "auto",
+            "code",
+            "coding",
             "产品",
             "工具",
             "软件",
             "工作台",
+            "vibe",
+            "vibecoding",
+            "话题",
+            "使用",
+            "体验",
+            "问题",
         }
-        for item in entities:
+        preferred = {
+            "chatgpt",
+            "claude",
+            "codex",
+            "cursor",
+            "deepseek",
+            "hermes",
+            "minimax",
+            "openclaw",
+            "workbuddy",
+        }
+        candidates = [
+            item.strip()
+            for item in entities
+            if isinstance(item, str) and item.strip()
+        ]
+        for item in candidates:
+            if item.casefold() in preferred:
+                return item
+        for item in candidates:
             if not isinstance(item, str):
                 continue
-            candidate = item.strip()
+            if item.casefold() not in generic:
+                return item
+        if isinstance(objective, str):
+            candidate = " ".join(objective.strip().split())
             if candidate and candidate.casefold() not in generic:
-                return candidate
+                return candidate[:120]
         return None
 
     async def _score_quality_candidates(
@@ -689,7 +723,10 @@ class ResearchRuntime:
             parent_query_id = None
             reason = "由用户研究目标生成首轮查询"
         else:
-            term = self._quality_expansion_term(context.get("entities"))
+            term = self._quality_expansion_term(
+                context.get("entities"),
+                str(task.get("objective") or ""),
+            )
             query = f"{term} 使用体验" if term else "个人 AI 工作台 使用体验"
             source_type = "content_entity"
             parent_query_id = context.get("last_query_id")
@@ -953,9 +990,16 @@ class ResearchRuntime:
                 status="executing",
                 planned_query_count=1,
             )
-        if entities:
-            plan["derived_keywords"] = entities
-            context["entities"] = entities
+        previous_entities = context.get("entities")
+        previous_entities = (
+            [item for item in previous_entities if isinstance(item, str) and item.strip()]
+            if isinstance(previous_entities, list)
+            else []
+        )
+        merged_entities = list(dict.fromkeys(previous_entities + entities))[:24]
+        if merged_entities:
+            plan["derived_keywords"] = merged_entities
+            context["entities"] = merged_entities
             self.research.update_context(task_id, context, step="search_library", round_number=round_number)
             self.research.save_plan(task_id, plan=plan, route_snapshot=task.get("route_snapshot") if isinstance(task.get("route_snapshot"), dict) else {}, round_number=round_number)
         else:
@@ -1529,6 +1573,10 @@ class ResearchRuntime:
                     f"Current query: {query}\n"
                     f"Collected evidence cards (JSON): {json.dumps(item_cards[:12], ensure_ascii=False)[:16_000]}\n"
                     f"Compacted research context (JSON): {json.dumps(compacted, ensure_ascii=False)[:12_000]}\n"
+                    "Respect the coverage plan: compare relevant candidates across every completed platform before concluding, "
+                    "and do not let one entity or one platform stand in for the market. "
+                    "When the plan asks for negative evidence, inspect at least one bounded problem/shortcoming query; "
+                    "record not_found only when the inspected evidence genuinely contains no contrary signal. "
                     "Use tools to inspect evidence. Every fact or inference must be saved with content_ids and one evidence_links item per content_id; each item needs support_type, support_strength, and a one-sentence support_explanation. "
                     "Inference findings also need a derivation and counterevidence_explanation; use not_found only when no contrary evidence was found. "
                     "If evidence is insufficient, submit one bounded crawl. Finish by saving findings and proposing one safe action."
@@ -1697,15 +1745,47 @@ class ResearchRuntime:
         detail = self.research.get_for_runtime(task_id, detail=True)
         if detail is None:
             raise ResearchTaskConflict("research task disappeared before summarizing")
-        findings = detail.get("findings") or []
-        context = detail.get("context") or {}
-        compacted_context = (
-            context.get("compacted_context")
-            if isinstance(context, dict) and isinstance(context.get("compacted_context"), dict)
-            else context
-        )
         self.research.finalize_content_decisions(task_id)
         self.research.finalize_platform_coverage(task_id)
+        detail = self.research.get_for_runtime(task_id, detail=True) or detail
+        findings = detail.get("findings") or []
+        context = detail.get("context") or {}
+        context = dict(context) if isinstance(context, dict) else {}
+        candidate_contents = [
+            {"id": item.get("content_id")}
+            for item in (detail.get("content_decisions") or [])
+            if isinstance(item, dict) and item.get("content_id")
+        ]
+        compacted_context, compaction_stats = compact_research_context(
+            objective=str(detail["objective"]),
+            coverage=(detail.get("coverage") if isinstance(detail.get("coverage"), dict) else {}),
+            entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
+            queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
+            findings=(findings if isinstance(findings, list) else []),
+            candidate_contents=candidate_contents,
+            loaded_content_ids=context.get("full_content_ids", []),
+            unresolved_questions=(
+                context.get("unresolved_questions", [])
+                if isinstance(context.get("unresolved_questions"), list)
+                else []
+            ),
+            budget={
+                "max_total_tokens": detail.get("budget_max_total_tokens"),
+                "max_model_calls": detail.get("budget_max_model_calls"),
+                "max_crawl_tasks": detail.get("budget_max_crawl_tasks"),
+                "consumed_model_calls": detail.get("consumed_model_call_count"),
+                "consumed_crawl_tasks": detail.get("consumed_crawl_count"),
+            },
+        )
+        context["compacted_context"] = compacted_context
+        context["compaction_stats"] = compaction_stats
+        self.research.update_context(
+            task_id,
+            context,
+            step="context_compaction",
+            round_number=int(detail.get("current_round") or 1),
+        )
+        self.research.record_step_usage(task_id, step="context_compaction")
         quality = self.research.quality_summary(task_id)
         coverage_review = self.research.coverage_summary(task_id)
         self.research.record_step_usage(task_id, step="coverage_review")

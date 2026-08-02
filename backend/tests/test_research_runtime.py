@@ -791,6 +791,8 @@ def test_runtime_plans_researches_with_tools_and_summarizes(tmp_path: Path) -> N
     assert detail is not None
     assert detail["result"]["summary"] == "Final report with evidence IDs."
     assert detail["findings"][0]["evidence"][0]["content_id"] == content_id
+    assert detail["context"]["compaction_stats"]["final_evidence_count"] >= 1
+    assert content_id in detail["context"]["compacted_context"]["preserved_content_ids"]
 
 
 def test_runtime_repairs_missing_inference_and_action_artifacts(tmp_path: Path) -> None:
