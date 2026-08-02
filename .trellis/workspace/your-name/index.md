@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-08-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~623 | Active |
+| `journal-1.md` | ~656 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-08-02 | Fix Phase 8C research detail HTTP 500 | `9e24ae8` | `main` |
 | 14 | 2026-08-02 | Phase 8C cross-platform research completion | `cf6b26c`, `ffb57a5`, `b324216`, `d7a530a`, `d85b125` | `main` |
 | 13 | 2026-08-02 | Session 16: 8C-1 production acceptance | `54fdda0`, `b376762`, `f156017`, `c719f47` | `main` |
 | 12 | 2026-08-01 | Research Center platform selector and HTML rendering | `2ca748b24db08681da6a5ddb9d8c7c15e800f60c` | `main` |

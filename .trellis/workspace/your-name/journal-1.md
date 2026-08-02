@@ -621,3 +621,36 @@ Completed Phase 8C cross-platform research, coverage controls, evidence provenan
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Fix Phase 8C research detail HTTP 500
+
+**Date**: 2026-08-02
+**Task**: Fix Phase 8C research detail HTTP 500
+**Branch**: `main`
+
+### Summary
+
+Diagnosed the Research detail HTTP 500 on production 8C tasks to a response-model mismatch: entity coverage leaked internal database columns into an extra-forbid Pydantic model. Added an explicit API projection and authenticated detail regression test, updated the 8C spec, passed backend 395 tests and frontend lint/56 tests/build, deployed without migration, and verified both supplied production task shapes serialize successfully. Preserved unrelated CLAUDE.md and UX task changes.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e24ae8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

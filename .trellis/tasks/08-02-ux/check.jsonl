@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/intelligence-workbench.md", "purpose": "验证UI组件是否符合前端spec要求"}
+{"file": ".trellis/spec/backend/research-runtime-8c.md", "purpose": "验证前端改动不影响后端API契约"}
