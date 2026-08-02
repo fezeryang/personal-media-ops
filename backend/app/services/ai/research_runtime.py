@@ -701,12 +701,22 @@ class ResearchRuntime:
             for key in ("search_terms", "keywords", "queries", "derived_keywords"):
                 value = parsed.get(key)
                 if isinstance(value, list):
-                    raw_candidates.extend(str(item) for item in value)
+                    raw_candidates.extend(
+                        item for item in value if isinstance(item, str)
+                    )
                     parsed_candidates = True
         elif isinstance(parsed, list):
-            raw_candidates.extend(str(item) for item in parsed)
+            raw_candidates.extend(item for item in parsed if isinstance(item, str))
             parsed_candidates = True
         if not parsed_candidates:
+            # A decoded planner object without a supported query-list field is
+            # still malformed for this stage. Do not turn JSON field names
+            # into executable queries (for example `time_window_days`).
+            if isinstance(parsed, dict):
+                return []
+            stripped = text.strip()
+            if stripped.startswith(("{", "[", "```")):
+                return []
             raw_candidates.extend(text.replace("\n", ",").split(","))
         for raw in raw_candidates:
             item = raw.strip(" -*•`\t:：0123456789.[]{}\"'")
@@ -976,6 +986,31 @@ class ResearchRuntime:
                 else "entity_expansion"
             ),
         )]
+
+        def transform_initial_candidate(
+            candidate: str,
+            candidate_role: str,
+            offset: int,
+        ) -> str:
+            if not production_tool_service or crawl_count != 0:
+                return candidate
+            variants = platform_query_variants(
+                candidate,
+                platform,
+                negative=candidate_role in {"counterevidence", "pain_point_probe"},
+            )
+            if not variants:
+                return candidate
+            platform_labels = {
+                "bili": "哔哩哔哩",
+                "zhihu": "知乎",
+                "wb": "微博",
+                "tieba": "贴吧",
+                "xhs": "小红书",
+            }
+            label = platform_labels.get(platform, platform)
+            return f"{variants[(platform_index + offset) % len(variants)]} {label}"
+
         if modern_intent and crawl_count > 0:
             held = self.research.claim_held_execution_query(
                 task_id,
@@ -991,11 +1026,16 @@ class ResearchRuntime:
                 raw_candidates = []
                 for item in directions[:10]:
                     if isinstance(item, dict) and isinstance(item.get("query"), str):
+                        candidate_role = str(item.get("query_role") or "seed_discovery")
                         raw_candidates.append(
                             (
-                                str(item["query"])[:500],
-                                f"研究计划基于 Intent Contract 的执行查询转换：{item.get('query_role', 'seed_discovery')}",
-                                str(item.get("query_role") or "seed_discovery"),
+                                transform_initial_candidate(
+                                    str(item["query"])[:500],
+                                    candidate_role,
+                                    len(raw_candidates),
+                                ),
+                                f"研究计划基于 Intent Contract 的执行查询转换：{candidate_role}",
+                                candidate_role,
                             )
                         )
                 if raw_candidates:
@@ -1007,6 +1047,13 @@ class ResearchRuntime:
                     continue
                 candidate = item.strip()[:500]
                 if candidate:
+                    candidate = transform_initial_candidate(
+                        candidate,
+                        "seed_discovery"
+                        if modern_intent and crawl_count == 0
+                        else "entity_expansion",
+                        len(raw_candidates),
+                    )
                     raw_candidates.append(
                         (
                             candidate,

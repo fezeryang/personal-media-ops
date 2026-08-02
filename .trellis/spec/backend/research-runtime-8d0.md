@@ -71,6 +71,14 @@ Every execution query records its `query_role`, such as `seed_discovery`,
 `entity_expansion`, `cross_platform_validation`, `counterevidence`,
 `competitor_scan`, `trend_probe`, `creator_scan`, or `pain_point_probe`.
 
+Planner output is not trusted as a query list. A malformed or unsupported JSON
+object is discarded as planner output and falls back to deterministic
+Intent-Contract directions; JSON field names must never become execution
+queries. For a modern task, initial directions are transformed with the
+selected platform's evidence strategy and platform label before historical
+deduplication, so a valid direction is not lost solely because an earlier task
+used the unbound base wording.
+
 Information utility is multi-label and explainable. Valid labels are
 `core_evidence`, `discovery_seed`, `background_context`, `event_signal`,
 `counterevidence`, `memory_update`, `action_trigger`, `noise`, and
@@ -90,6 +98,8 @@ available and a material gap remains; otherwise it reaches
 |---|---|
 | Platform crawler fails | Record the platform/query failure as a coverage fact, then reuse the next held execution direction on the next eligible platform |
 | Platform crawler fails and no held/new direction remains | Enter Summarizing/`partial_completion` with an explicit gap; do not convert the platform failure into a generic candidate-rejection failure |
+| Planner returns malformed/unsupported JSON | Ignore field names and free-form JSON fragments; use deterministic Intent-Contract directions |
+| Historical deduplication removes a modern initial direction | Transform it with platform evidence strategy and platform binding before the gate; preserve the original direction in the plan audit |
 | Blank/meaningless user goal | Reject task input with a validation error |
 | User goal contains a broad word such as “工具” or “趋势” | Accept and interpret; never reject from a generic-term rule alone |
 | Unbound seed execution query | Hold/reject with an Intent Contract binding reason |

@@ -1291,6 +1291,10 @@ def test_runtime_plan_keywords_are_bounded_and_non_verbatim() -> None:
         "agent memory",
         "evidence graph",
     ]
+    assert ResearchRuntime._plan_keywords(
+        '{"research_scope": "comparison", "time_window_days": 30}',
+        "Find AI workbench products",
+    ) == []
 
 
 def test_runtime_quality_gate_batches_scores_and_preserves_query_chain(
@@ -1466,6 +1470,100 @@ def test_runtime_quality_gate_uses_plan_terms_after_history_rejects_initial_quer
     }
     assert len([item for item in queries if item["status"] == "approved"]) == 1
     assert len(gateway.requests) == 1
+
+
+def test_modern_initial_directions_are_platform_transformed_after_history_duplicates(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    previous = create_task(database, owner_id)
+    repeated = "Codex WorkBuddy 长期记忆 直接对比"
+    repository.create_query(
+        task_id=str(previous["id"]),
+        query=repeated,
+        normalized_query=normalize_query(repeated),
+        query_type="product",
+        platform="bili",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="previous validation task",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        status="approved",
+    )
+    task = create_task(database, owner_id, objective="比较 Codex 与 WorkBuddy", platforms=["bili"])
+    task_id = str(task["id"])
+    from app.services.ai.intent_interpreter import build_default_intent
+
+    intent = build_default_intent("比较 Codex 与 WorkBuddy", ["bili"])
+    repository.save_intent(
+        task_id,
+        intent.model_dump(mode="json"),
+        change_reason="test",
+    )
+    direction = "Codex WorkBuddy 长期记忆 直接对比"
+    repository.save_plan(
+        task_id,
+        plan={
+            "initial_query": direction,
+            "execution_query_directions": [
+                {"query": direction, "query_role": "cross_platform_validation"},
+            ],
+            "derived_keywords": [],
+        },
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id, detail=True)
+    assert current is not None
+
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"relevance_scores":[0.9]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=5, output_tokens=3),
+            )
+        ]
+    )
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=Mock(),
+        crawler=Mock(),
+        research=repository,
+    )
+    ai_repository = Mock()
+    ai_repository.invocation_cost.return_value = None
+    ai_repository.invocation_billing.return_value = {}
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=tools,
+    )
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=1,
+            context={},
+            plan=current["plan"],  # type: ignore[arg-type]
+            crawl_count=0,
+        )
+    )
+
+    assert prepared is not None
+    assert prepared[0] != direction
+    assert any(term in prepared[0] for term in ("教程", "演示", "使用体验", "工作流案例"))
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    assert any(item["lifecycle_status"] == "executing" for item in detail["queries"])
 
 
 def test_modern_runtime_reuses_held_direction_after_platform_round(

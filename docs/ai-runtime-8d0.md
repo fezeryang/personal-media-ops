@@ -57,6 +57,12 @@ and marginal-value gates. Query decisions are `allow`, `transform`, `hold` or
 cross-platform validation, counterevidence, competitor, trend, creator and
 pain-point probes.
 
+Planner 输出不会直接成为查询列表。模型返回 malformed 或不支持的 JSON
+对象时，运行时丢弃其中的字段名和自由文本碎片，回退到由 Intent Contract
+生成的确定性方向；例如 `time_window_days`、`research_scope` 等字段名永远
+不会成为 Execution Query。现代任务的首轮方向还会先叠加平台证据策略和
+平台限定，再参与历史去重，从而避免有效方向因历史未绑定原词而全部消失。
+
 Historical 8B/8C tasks receive a read-only `legacy_migrated` intent projection
 and are not re-planned. Historical goal rows are marked `user_goal` while
 their audit history remains intact.
