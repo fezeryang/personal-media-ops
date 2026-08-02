@@ -1455,25 +1455,27 @@ class ResearchRuntime:
                 crawl_count=crawl_count,
             )
             if prepared is None:
-                if isinstance(context.get("last_crawl_failure"), str):
-                    stop_reason = "query_candidates_exhausted_after_platform_failure"
-                    context["stop_reason"] = stop_reason
-                    self.research.update_context(
-                        task_id,
-                        context,
-                        step="query_gate",
-                        round_number=round_number,
-                    )
-                    self.research.set_stop_reason(task_id, stop_reason)
-                    self.research.transition(
-                        task_id,
-                        status="Summarizing",
-                        reason=stop_reason,
-                        step="summarizing",
-                        round_number=round_number,
-                    )
-                    return
-                raise ResearchTaskConflict("all research query candidates were rejected")
+                stop_reason = (
+                    "query_candidates_exhausted_after_platform_failure"
+                    if isinstance(context.get("last_crawl_failure"), str)
+                    else "query_candidates_exhausted_after_quality_gate"
+                )
+                context["stop_reason"] = stop_reason
+                self.research.update_context(
+                    task_id,
+                    context,
+                    step="query_gate",
+                    round_number=round_number,
+                )
+                self.research.set_stop_reason(task_id, stop_reason)
+                self.research.transition(
+                    task_id,
+                    status="Summarizing",
+                    reason=stop_reason,
+                    step="summarizing",
+                    round_number=round_number,
+                )
+                return
             query, query_id, query_platform = prepared
         else:
             query = str(plan.get("initial_query") or task["objective"])

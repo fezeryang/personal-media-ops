@@ -96,7 +96,9 @@ Research 标记为失败。现代任务会优先复用计划中已生成、暂�
 
 如果没有合法的 held 或新候选查询，运行时会进入可审计的
 `Summarizing`/`partial_completion` 路径，并明确记录覆盖缺口，而不是以
-笼统的 `all research query candidates were rejected` 结束任务。
+笼统的 `all research query candidates were rejected` 结束任务。没有平台
+故障但质量闸门耗尽所有候选时，也会以
+`query_candidates_exhausted_after_quality_gate` 进入同一条部分完成路径。
 
 ## API and UI
 

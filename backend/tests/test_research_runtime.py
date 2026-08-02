@@ -1759,6 +1759,44 @@ def test_platform_failure_with_no_remaining_queries_converges_to_summary() -> No
     )
 
 
+def test_quality_gate_exhaustion_converges_to_partial_summary() -> None:
+    research = Mock()
+    research.coverage_summary.return_value = {"actual_platform_count": 1}
+    runtime = ResearchRuntime(
+        research=research,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=Mock(supports_quality_queries=True),
+    )
+    runtime._prepare_quality_query = AsyncMock(return_value=None)
+    task = {
+        "id": "research-quality-exhaustion",
+        "current_round": 1,
+        "plan": {"initial_query": "current AI topics"},
+        "context": {},
+        "consumed_crawl_count": 1,
+        "coverage": {
+            "target_platform_count": 3,
+            "low_marginal_value_threshold": 0.1,
+            "low_marginal_round_limit": 2,
+        },
+    }
+
+    asyncio.run(runtime._research_round(task))
+
+    research.set_stop_reason.assert_called_once_with(
+        "research-quality-exhaustion",
+        "query_candidates_exhausted_after_quality_gate",
+    )
+    research.transition.assert_called_once_with(
+        "research-quality-exhaustion",
+        status="Summarizing",
+        reason="query_candidates_exhausted_after_quality_gate",
+        step="summarizing",
+        round_number=1,
+    )
+
+
 def test_runtime_rotates_selected_platforms_for_bounded_crawls() -> None:
     task = {"platforms": ["bili", "xhs"]}
     context: dict[str, object] = {}
