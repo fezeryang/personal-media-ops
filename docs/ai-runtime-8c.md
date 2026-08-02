@@ -1,5 +1,14 @@
 # Phase 8C：跨平台研究、预算与 Runtime 可靠性
 
+> **Status: completed — 2026-08-02.** The implementation, migration, bounded
+> real-platform validation, recovery checks, quality gates, and production
+> deployment are complete. The supplied live-source acceptance task reached
+> the platform/entity/independent-evidence/new-content targets, while its
+> negative-evidence target was truthfully recorded as unmet because the
+> selected sources did not produce a qualifying negative item; this is a
+> coverage shortfall, not a fabricated success. Phase 8C-1 remains archived;
+> Discovery Engine work remains deferred to Phase 8D.
+
 Phase 8C extends the Phase 8B Research Runtime without adding another Agent
 abstraction. The durable path remains:
 
