@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from datetime import UTC, datetime
 from time import perf_counter
 
@@ -11,12 +12,17 @@ from app.repositories.research import (
     ResearchTaskConflict,
     ResearchTaskRepository,
 )
+from app.services.ai.context_compactor import compact_research_context
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.providers import ProviderError
 from app.services.ai.research_quality import (
     evaluate_query,
     expected_value_score,
+    marginal_stop_decision,
     parse_relevance_batch,
+    parse_structured_json,
+    platform_query_variants,
+    query_priority_score,
 )
 from app.services.ai.research_rendering import render_research_markdown
 from app.services.ai.research_tools import (
@@ -111,6 +117,15 @@ class ResearchRuntime:
             await self._tick(task)
         except asyncio.CancelledError:
             raise
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error).casefold() or "busy" in str(error).casefold():
+                # SQLite already waits briefly at the connection boundary;
+                # keep a transient lock from turning a recoverable task into
+                # a terminal runtime failure.
+                await asyncio.sleep(0.2)
+                self.wake()
+                return True
+            self._fail_task(str(task["id"]), self._safe_failure(error))
         except Exception as error:  # noqa: BLE001 - persist runtime boundary failure
             self._fail_task(str(task["id"]), self._safe_failure(error))
         return True
@@ -139,6 +154,13 @@ class ResearchRuntime:
 
     def _fail_task(self, task_id: str, reason: str) -> None:
         self.research.set_failure(task_id, reason)
+
+    def _step_is_allowed(self, task_id: str) -> bool:
+        """Re-read durable controls before every new model/tool step."""
+        current = self.research.get_for_runtime(task_id)
+        if current is None:
+            return False
+        return not (str(current.get("status")) == "Cancelled" or bool(current.get("paused")))
 
     def _recover_waiting_crawls(self) -> None:
         self.research.reconcile_orphan_crawls()
@@ -196,6 +218,21 @@ class ResearchRuntime:
             )
             return
         if status == "Planning":
+            checkpoint = self.research.load_checkpoint(task_id)
+            if (
+                isinstance(checkpoint, dict)
+                and checkpoint.get("checkpoint_key") == "planning_completed"
+                and isinstance(task.get("plan"), dict)
+                and task.get("plan", {}).get("derived_keywords")
+            ):
+                self.research.transition(
+                    task_id,
+                    status="Researching",
+                    reason="planning_checkpoint_resumed",
+                    step="research_round",
+                    round_number=max(1, int(task.get("current_round", 1))),
+                )
+                return
             await self._plan(task)
             return
         if status in {"Researching", "BudgetExceeded"}:
@@ -259,11 +296,21 @@ class ResearchRuntime:
         if _elapsed_from(task.get("started_at")) >= int(task["budget_duration_seconds"]):
             return "research duration budget reached"
         tokens = int(task["input_tokens"]) + int(task["output_tokens"])
-        if tokens >= int(task["budget_token_limit"]):
+        if tokens >= int(task.get("budget_max_total_tokens", task["budget_token_limit"])):
             return "token budget reached"
+        max_input = task.get("budget_max_input_tokens")
+        if max_input is not None and int(task["input_tokens"]) >= int(max_input):
+            return "input token budget reached"
+        max_output = task.get("budget_max_output_tokens")
+        if max_output is not None and int(task["output_tokens"]) >= int(max_output):
+            return "output token budget reached"
+        max_calls = task.get("budget_max_model_calls")
+        if max_calls is not None and int(task.get("consumed_model_call_count", 0)) >= int(max_calls):
+            return "model call budget reached"
         if bool(task["budget_cost_enabled"]) and task.get("budget_cost_limit") is not None:
             consumed = float(task.get("estimated_cost") or 0)
-            if consumed >= float(task["budget_cost_limit"]):
+            max_payg = task.get("budget_max_payg_amount") or task.get("budget_cost_limit")
+            if max_payg is not None and consumed >= float(max_payg):
                 return "configured cost budget reached"
         return None
 
@@ -277,6 +324,31 @@ class ResearchRuntime:
             if item.get("model_record_id") is not None
         }
         primary = routes.get("tool_calling")
+        route_policy = str(task.get("route_policy") or "balanced")
+        if route_policy == "prefer_subscription" and primary is not None:
+            subscription_candidates = [
+                item
+                for item in routes.values()
+                if item.get("billing_mode") == "subscription_fixed"
+                and item.get("model_record_id") is not None
+            ]
+            for candidate in subscription_candidates:
+                candidate_model = self.ai_repository.get_model(str(candidate["model_record_id"]))
+                if candidate_model is not None and candidate_model.get("supports_tools") is True:
+                    primary = candidate
+                    break
+        elif route_policy == "prefer_payg" and primary is not None:
+            payg_candidates = [
+                item
+                for item in routes.values()
+                if item.get("billing_mode") == "pay_as_you_go"
+                and item.get("model_record_id") is not None
+            ]
+            for candidate in payg_candidates:
+                candidate_model = self.ai_repository.get_model(str(candidate["model_record_id"]))
+                if candidate_model is not None and candidate_model.get("supports_tools") is True:
+                    primary = candidate
+                    break
         if primary is None or primary.get("model_enabled") is not True or primary.get("provider_enabled") is not True:
             raise ResearchTaskConflict("tool_calling route is not configured with an enabled model")
         model = self.ai_repository.get_model(str(primary["model_record_id"]))
@@ -287,8 +359,12 @@ class ResearchRuntime:
                 "role": "tool_calling",
                 "model_record_id": str(primary["model_record_id"]),
                 "provider": primary.get("provider_name"),
+                "provider_id": primary.get("provider_id"),
                 "model": primary.get("model_id"),
                 "streaming": model.get("supports_streaming") is True,
+                "supports_tools": model.get("supports_tools") is True,
+                "vendor": primary.get("vendor"),
+                "billing_mode": primary.get("billing_mode"),
             },
             "fast": self._route_item(routes.get("fast")),
             "deep": self._route_item(routes.get("deep")),
@@ -312,6 +388,9 @@ class ResearchRuntime:
             "model_record_id": item.get("model_record_id"),
             "provider": item.get("provider_name"),
             "model": item.get("model_id"),
+            "provider_id": item.get("provider_id"),
+            "vendor": item.get("vendor"),
+            "billing_mode": item.get("billing_mode"),
         }
 
     async def _plan(self, task: dict[str, object]) -> None:
@@ -320,16 +399,30 @@ class ResearchRuntime:
         primary = snapshot["primary"]
         if not isinstance(primary, dict):
             raise ResearchTaskConflict("research route snapshot is invalid")
-        primary_model = self.ai_repository.get_model(str(primary["model_record_id"]))
-        cost_enabled = bool(
-            task.get("budget_cost_limit") is not None
-            and task.get("budget_cost_currency")
-            and primary_model is not None
-            and primary_model.get("input_price_per_million") is not None
-            and primary_model.get("output_price_per_million") is not None
-            and primary_model.get("price_currency")
-            and primary_model.get("price_effective_at")
-        )
+        cost_enabled = False
+        payg_limit = task.get("budget_max_payg_amount") or task.get("budget_cost_limit")
+        budget_currency = task.get("budget_currency") or task.get("budget_cost_currency")
+        if payg_limit is not None and budget_currency:
+            for route in snapshot.values():
+                if not isinstance(route, dict) or route.get("billing_mode") != "pay_as_you_go":
+                    continue
+                route_model_id = route.get("model_record_id")
+                if not isinstance(route_model_id, str):
+                    continue
+                candidate = self.ai_repository.get_model(route_model_id)
+                if candidate is None:
+                    continue
+                provider_id = route.get("provider_id")
+                if isinstance(provider_id, str):
+                    candidate = self.ai_repository.effective_pricing_model(candidate, provider_id)
+                if (
+                    candidate.get("input_price_per_million") is not None
+                    and candidate.get("output_price_per_million") is not None
+                    and candidate.get("price_currency")
+                    and candidate.get("price_effective_at")
+                ):
+                    cost_enabled = True
+                    break
         self.research.set_cost_enabled(task_id, cost_enabled)
         snapshot["cost_enabled"] = cost_enabled
         request = ModelRequest(
@@ -346,12 +439,16 @@ class ResearchRuntime:
             metadata={"runtime_step": "planning"},
             timeout=45,
         )
+        if not self._step_is_allowed(task_id):
+            return
         response = await self._generate(
             task_id=task_id,
             request=request,
             route_role="tool_calling",
             model_record_id=str(primary["model_record_id"]),
         )
+        if not self._step_is_allowed(task_id):
+            return
         text = response.response.content or ""
         derived_keywords = self._plan_keywords(text, str(task["objective"]))
         if len(derived_keywords) < 3:
@@ -385,9 +482,19 @@ class ResearchRuntime:
                     False,
                 )
                 is True,
+                "coverage": task.get("coverage", {}),
+                "low_marginal_rounds": 0,
+                "stop_reason": None,
             }
         )
         self.research.update_context(task_id, context, step="research_round", round_number=1)
+        self.research.record_step_usage(task_id, step="initial_query_generation")
+        self.research.save_checkpoint(
+            task_id,
+            checkpoint_key="planning_completed",
+            last_completed_step="planning",
+            payload={"derived_keywords": derived_keywords, "coverage": task.get("coverage", {})},
+        )
         self.research.transition(
             task_id,
             status="Researching",
@@ -406,22 +513,7 @@ class ResearchRuntime:
         }
         candidates: list[str] = []
         raw_candidates: list[str] = []
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            # Compatible models sometimes wrap an otherwise valid JSON plan
-            # in a Markdown code fence.  Strip only that presentation layer;
-            # the persisted raw model plan remains untouched for auditability.
-            fenced = text.strip()
-            if fenced.startswith("```") and fenced.endswith("```"):
-                lines = fenced.splitlines()
-                fenced = "\n".join(lines[1:-1]).strip()
-                if fenced.casefold().startswith("json\n"):
-                    fenced = fenced[5:]
-            try:
-                parsed = json.loads(fenced)
-            except json.JSONDecodeError:
-                parsed = None
+        parsed = parse_structured_json(text).value
         parsed_candidates = False
         if isinstance(parsed, dict):
             for key in ("search_terms", "keywords", "queries", "derived_keywords"):
@@ -491,6 +583,8 @@ class ResearchRuntime:
             }
             for item in candidates
         ]
+        if not self._step_is_allowed(str(task["id"])):
+            return []
         response = await self._generate(
             task_id=str(task["id"]),
             request=ModelRequest(
@@ -515,12 +609,14 @@ class ResearchRuntime:
                 max_tokens=180,
                 tools=None,
                 tool_choice="none",
-                metadata={"runtime_step": "query_quality_batch"},
+                metadata={"runtime_step": "query_quality_review"},
                 timeout=45,
             ),
             route_role="tool_calling",
             model_record_id=str(primary["model_record_id"]),
         )
+        if not self._step_is_allowed(str(task["id"])):
+            return []
         scores = parse_relevance_batch(response.response.content or "", len(candidates))
         if scores is None:
             for item in candidates:
@@ -553,8 +649,23 @@ class ResearchRuntime:
                 relevance_score=relevance,
                 expected_value_score=value,
                 status="approved",
+                lifecycle_status="approved_pending",
             )
             approved.append(updated)
+        approved.sort(
+            key=lambda item: query_priority_score(
+                relevance_score=item.get("relevance_score"),
+                specificity_score=float(item.get("specificity_score") or 0),
+                novelty_score=float(item.get("novelty_score") or 0),
+                noise_risk_score=float(item.get("noise_risk_score") or 0),
+                expected_value_score=item.get("expected_value_score"),
+                entity_diversity_bonus=float(item.get("entity_diversity_bonus") or 0),
+                platform_diversity_bonus=float(item.get("platform_diversity_bonus") or 0),
+                negative_evidence_bonus=float(item.get("negative_evidence_bonus") or 0),
+                estimated_resource_use=float(item.get("estimated_resource_use") or 0),
+            ),
+            reverse=True,
+        )
         return approved
 
     async def _prepare_quality_query(
@@ -569,7 +680,8 @@ class ResearchRuntime:
         """Persist deterministic candidates, reject noise, then batch-score."""
 
         task_id = str(task["id"])
-        platform, _ = self._planned_crawl_platform(task, context)
+        platform, platform_index = self._planned_crawl_platform(task, context)
+        production_tool_service = isinstance(self.tools, ResearchToolService)
         if crawl_count == 0:
             query = str(plan.get("initial_query") or task["objective"])[:500]
             source_type = "user_goal"
@@ -595,6 +707,22 @@ class ResearchRuntime:
                 + (f"，来源内容 {source_content_id}" if source_content_id else "")
             )
 
+        if production_tool_service:
+            negative_target = int(
+                (task.get("coverage") or {}).get("target_negative_evidence_count", 1)
+            )
+            negative_found = int(
+                self.research.quality_summary(task_id).get("negative_evidence_count", 0)
+            )
+            variants = platform_query_variants(
+                query,
+                platform,
+                negative=bool(crawl_count > 0 and negative_found < negative_target),
+            )
+            if variants:
+                query = variants[platform_index % len(variants)]
+                reason = f"平台 {platform} 差异化证据策略；{reason}"
+
         historical = self.research.list_normalized_queries(exclude_task_id=task_id)
         detail = self.research.get_for_runtime(task_id, detail=True)
         current_queries = detail.get("queries", []) if isinstance(detail, dict) else []
@@ -614,8 +742,13 @@ class ResearchRuntime:
                     raw_candidates.append(
                         (candidate, f"{reason}；研究计划候选")
                     )
+        # Keep one deliberately broad control candidate so the generic-word
+        # gate remains observable in every round.  It is expected to be
+        # rejected and must never become an executed search.
         raw_candidates.append(("agent", reason))
         persisted: list[dict[str, object]] = []
+        covered_entities = detail.get("entity_coverage", []) if isinstance(detail, dict) else []
+        covered_entities = covered_entities if isinstance(covered_entities, list) else []
         for candidate, candidate_reason in raw_candidates:
             quality = evaluate_query(
                 candidate,
@@ -625,6 +758,15 @@ class ResearchRuntime:
                 parent_query_id=parent_query_id,
                 source_content_id=source_content_id,
             )
+            candidate_normalized = str(quality.normalized_query).casefold()
+            matching_entities = [
+                item for item in covered_entities
+                if isinstance(item, dict)
+                and str(item.get("canonical_name") or "").casefold() in candidate_normalized
+            ]
+            entity_bonus = 0.8 if not matching_entities else 0.2
+            if any(bool(item.get("saturated")) for item in matching_entities):
+                entity_bonus = 0.0
             row = self.research.create_query(
                 task_id=task_id,
                 query=candidate,
@@ -641,6 +783,24 @@ class ResearchRuntime:
                 noise_risk_score=quality.noise_risk_score,
                 status="rejected" if not quality.accepted else "candidate",
                 rejection_reason=quality.rejection_reason,
+                lifecycle_status=(
+                    "rejected_generic"
+                    if quality.rejection_reason and "泛化" in quality.rejection_reason
+                    else "rejected_duplicate"
+                    if quality.rejection_reason and "重复" in quality.rejection_reason
+                    else "rejected_low_value"
+                    if quality.rejection_reason
+                    else "generated"
+                ),
+                platform_diversity_bonus=0.8 if production_tool_service else 0,
+                entity_diversity_bonus=entity_bonus if production_tool_service else 0,
+                negative_evidence_bonus=0.8 if "负面" in candidate_reason or "反向" in candidate_reason else 0,
+                estimated_resource_use=0.2,
+                expected_evidence_role=(
+                    "contradictory"
+                    if "反向" in candidate_reason or "负面" in candidate_reason
+                    else "direct"
+                ),
             )
             if quality.accepted:
                 persisted.append(row)
@@ -649,6 +809,15 @@ class ResearchRuntime:
         if not approved:
             return None
         selected = approved[0]
+        self.research.set_query_lifecycle(
+            str(selected["id"]), lifecycle_status="executing"
+        )
+        for skipped in approved[1:]:
+            self.research.set_query_lifecycle(
+                str(skipped["id"]),
+                lifecycle_status="skipped_low_marginal_value",
+                reason="同轮已有更高预期价值查询，保留为未执行候选",
+            )
         context["last_query_id"] = str(selected["id"])
         context["last_query_query"] = str(selected["query"])
         return str(selected["query"]), str(selected["id"]), platform
@@ -663,6 +832,37 @@ class ResearchRuntime:
         if not isinstance(context, dict):
             context = {}
         crawl_count = int(task["consumed_crawl_count"])
+        coverage_values = task.get("coverage")
+        coverage_values = coverage_values if isinstance(coverage_values, dict) else {}
+        coverage_review = self.research.coverage_summary(task_id)
+        marginal_stop = marginal_stop_decision(
+            rounds_below_threshold=int(context.get("low_marginal_rounds") or 0),
+            threshold=float(coverage_values.get("low_marginal_value_threshold", 0.1)),
+            round_limit=int(coverage_values.get("low_marginal_round_limit", 2)),
+            has_new_entity=int(context.get("last_new_entity_count") or 0) > 0,
+            has_negative_evidence=bool(context.get("last_negative_evidence_found")),
+        )
+        if (
+            marginal_stop is not None
+            and int(coverage_review.get("actual_platform_count", 0))
+            >= int(coverage_values.get("target_platform_count", 0))
+        ):
+            self.research.skip_pending_queries(
+                task_id,
+                lifecycle_status=marginal_stop,
+                reason="连续低新增率且没有新增实体或反向证据",
+            )
+            context["stop_reason"] = marginal_stop
+            self.research.update_context(task_id, context, step="marginal_review", round_number=round_number)
+            self.research.set_stop_reason(task_id, marginal_stop)
+            self.research.transition(
+                task_id,
+                status="Summarizing",
+                reason=marginal_stop,
+                step="summarizing",
+                round_number=round_number,
+            )
+            return
         quality_enabled = getattr(self.tools, "supports_quality_queries", False) is True
         query_id: str | None = None
         query_platform: str | None = None
@@ -705,6 +905,7 @@ class ResearchRuntime:
                 ][:20],
                 query_id=query_id,
             )
+        self.research.record_step_usage(task_id, step="tool_result_evaluation")
         context["last_search_query"] = query
         context["last_search_content_ids"] = [
             str(item.get("id")) for item in items if isinstance(item, dict) and item.get("id")
@@ -712,7 +913,46 @@ class ResearchRuntime:
         context["crawl_requested"] = False
         if query_id is not None:
             context["last_query_id"] = query_id
-        entities = extract_entities([item for item in items if isinstance(item, dict)])
+        content_items = [item for item in items if isinstance(item, dict)]
+        for item in content_items:
+            content_id = item.get("id")
+            if isinstance(content_id, str):
+                self.research.record_content_decision(
+                    task_id=task_id,
+                    content_id=content_id,
+                    query_id=query_id,
+                    decision="candidate",
+                )
+        entities = [
+            entity
+            for entity in extract_entities(content_items)
+            if entity.casefold() not in {"ai", "agent", "产品", "工具", "软件", "工作台"}
+        ]
+        self.research.record_step_usage(task_id, step="entity_extraction")
+        existing_detail = self.research.get_for_runtime(task_id, detail=True)
+        known_entity_names = {
+            str(item.get("canonical_name")).casefold()
+            for item in (existing_detail.get("entity_coverage", []) if isinstance(existing_detail, dict) else [])
+            if isinstance(item, dict) and item.get("canonical_name")
+        }
+        context["last_new_entity_count"] = sum(
+            1 for entity in dict.fromkeys(entities) if entity.casefold() not in known_entity_names
+        )
+        for entity in entities[:8]:
+            self.research.upsert_entity_coverage(
+                task_id,
+                entity,
+                entity_type="product" if entity.casefold() not in {"需求", "场景"} else "need",
+                query_count_delta=1,
+                platform=query_platform,
+            )
+        if query_platform is not None:
+            self.research.upsert_platform_coverage(
+                task_id,
+                query_platform,
+                status="executing",
+                planned_query_count=1,
+            )
         if entities:
             plan["derived_keywords"] = entities
             context["entities"] = entities
@@ -722,30 +962,15 @@ class ResearchRuntime:
             self.research.update_context(task_id, context, step="search_library", round_number=round_number)
 
         crawl_limit = int(task["budget_crawl_limit"])
-        if crawl_count == 0 and crawl_limit > 0:
-            # Always spend the first bounded crawl after checking the library;
-            # this makes the first round a real retrieval pass even when the
-            # library already contains adjacent material.
-            await self._submit_research_crawl(
-                task,
-                context=context,
-                keywords=query[:200],
-                round_number=round_number,
-                query_id=query_id,
-            )
-            return
-        if crawl_count < min(2, crawl_limit) and items and round_number >= 1 and entities:
-            # The second-round query is made only from entities extracted from
-            # actual first-round library results; it never repeats the goal.
-            await self._submit_research_crawl(
-                task,
-                context=context,
-                keywords=" ".join(entities[:6]),
-                round_number=round_number + 1,
-                query_id=query_id,
-            )
-            return
-        if not items and crawl_count == 0 and crawl_count < crawl_limit:
+        coverage = task.get("coverage")
+        coverage = coverage if isinstance(coverage, dict) else {}
+        target_platform_count = int(
+            coverage.get("target_platform_count", min(3, len(task.get("platforms", []))))
+        )
+        target_crawls = min(crawl_limit, max(0, target_platform_count))
+        if crawl_count < target_crawls and crawl_limit > 0:
+            # Spend one bounded crawl per planned platform before allowing the
+            # model to summarize. This is the durable cross-platform gate.
             await self._submit_research_crawl(
                 task,
                 context=context,
@@ -755,12 +980,42 @@ class ResearchRuntime:
             )
             return
 
+        if query_id is not None:
+            # The library search itself is an executed query even when the
+            # crawl budget or platform target prevents a follow-up crawl.
+            self.research.complete_query(
+                query_id,
+                result_count=len(content_items),
+                new_content_count=0,
+                existing_content_count=len(content_items),
+                updated_content_count=0,
+                duplicate_evidence_count=0,
+            )
+
+        if crawl_count >= crawl_limit:
+            context["stop_reason"] = "budget_exhausted"
+            self.research.update_context(task_id, context, step="budget_review", round_number=round_number)
+
         await self._model_tool_loop(task, items, query, round_number)
+        refreshed = self.research.get_for_runtime(task_id)
+        if refreshed is not None:
+            refreshed_context = refreshed.get("context")
+            if not isinstance(refreshed_context, dict):
+                refreshed_context = {}
+            refreshed_context["last_negative_evidence_found"] = (
+                self.research.quality_summary(task_id).get("negative_evidence_count", 0) > 0
+            )
+            self.research.update_context(
+                task_id,
+                refreshed_context,
+                step="coverage_review",
+                round_number=round_number,
+            )
         latest = self.research.get_for_runtime(task_id)
-        if latest is not None and str(latest["status"]) == "Researching":
+        if latest is not None and str(latest["status"]) == "Researching" and not bool(latest.get("paused")):
             await self._ensure_research_artifacts(latest, query, round_number)
             latest = self.research.get_for_runtime(task_id)
-        if latest is not None and str(latest["status"]) == "Researching":
+        if latest is not None and str(latest["status"]) == "Researching" and not bool(latest.get("paused")):
             self.research.transition(
                 task_id,
                 status="Summarizing",
@@ -817,16 +1072,55 @@ class ResearchRuntime:
                 "platform": platform,
                 "keywords": keywords,
                 "requested_count": RESEARCH_DEFAULT_REQUESTED_COUNT,
+                "reason": (
+                    f"平台 {platform} 证据策略；来源查询 {query_id or 'library-search'}"
+                ),
+                "query_type": "product",
+                "parent_query_id": query_id,
+                "source_content_id": (
+                    context.get("last_search_content_ids", [None])[0]
+                    if isinstance(context.get("last_search_content_ids"), list)
+                    and context.get("last_search_content_ids")
+                    else None
+                ),
+                "research_task_id": task_id,
+                "expected_evidence_role": (
+                    "contradictory"
+                    if "问题" in keywords
+                    or "缺点" in keywords
+                    or "不好用" in keywords
+                    or "失败" in keywords
+                    or "替代" in keywords
+                    else "direct"
+                ),
                 "_research_query_id": query_id,
             },
         )
         if result.get("status") == "waiting_crawl":
             context["next_crawl_platform_index"] = platform_index + 1
+            self.research.upsert_platform_coverage(
+                task_id,
+                platform,
+                status="executing",
+                planned_query_count=1,
+            )
+            if query_id is not None:
+                self.research.set_query_lifecycle(query_id, lifecycle_status="executing")
             self.research.update_context(
                 task_id,
                 context,
                 step="waiting_crawl",
                 round_number=round_number,
+            )
+            self.research.save_checkpoint(
+                task_id,
+                checkpoint_key="crawl_submitted",
+                last_completed_step="search_library",
+                payload={
+                    "crawler_task_id": result.get("crawler_task_id"),
+                    "platform": platform,
+                    "query_id": query_id,
+                },
             )
 
     async def _ensure_research_artifacts(
@@ -946,6 +1240,8 @@ class ResearchRuntime:
             )
         ]
         for _ in range(MAX_ARTIFACT_ROUNDS):
+            if not self._step_is_allowed(task_id):
+                return
             request = ModelRequest(
                 system=(
                     "You are repairing the structured artifacts of a bounded research task. "
@@ -974,6 +1270,8 @@ class ResearchRuntime:
                     round_number=round_number,
                     step="research_artifacts",
                 )
+                return
+            if not self._step_is_allowed(task_id):
                 return
             model_response = response.response
             if not model_response.tool_calls:
@@ -1084,6 +1382,8 @@ class ResearchRuntime:
             )
         ]
         for _ in range(MAX_ACTION_ARTIFACT_ROUNDS):
+            if not self._step_is_allowed(task_id):
+                return
             request = ModelRequest(
                 system=(
                     "You are completing the approval boundary of a bounded research task. "
@@ -1112,6 +1412,8 @@ class ResearchRuntime:
                     round_number=round_number,
                     step="research_action",
                 )
+                return
+            if not self._step_is_allowed(task_id):
                 return
             model_response = response.response
             if not model_response.tool_calls:
@@ -1173,13 +1475,60 @@ class ResearchRuntime:
         primary = snapshot.get("primary") if isinstance(snapshot, dict) else None
         if not isinstance(primary, dict):
             raise ResearchTaskConflict("research route snapshot is missing")
+        detail = self.research.get_for_runtime(task_id, detail=True) or task
+        runtime_context = detail.get("context")
+        runtime_context = dict(runtime_context) if isinstance(runtime_context, dict) else {}
+        compacted, compaction_stats = compact_research_context(
+            objective=str(task["objective"]),
+            coverage=(detail.get("coverage") if isinstance(detail.get("coverage"), dict) else {}),
+            entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
+            queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
+            findings=(detail.get("findings") if isinstance(detail.get("findings"), list) else []),
+            candidate_contents=items,
+            loaded_content_ids=(
+                runtime_context.get("full_content_ids", [])
+                if isinstance(runtime_context, dict)
+                else []
+            ),
+            budget={
+                "token_limit": task.get("budget_token_limit"),
+                "model_calls": task.get("consumed_model_call_count", 0),
+                "crawl_count": task.get("consumed_crawl_count", 0),
+            },
+        )
+        runtime_context["compacted_context"] = compacted
+        runtime_context["compaction_stats"] = compaction_stats
+        self.research.update_context(task_id, runtime_context, step="context_compaction", round_number=round_number)
+        self.research.append_trace(
+            task_id,
+            event="context_compacted",
+            status="Researching",
+            reason=json.dumps(compaction_stats, ensure_ascii=False),
+            round_number=round_number,
+            step="context_compaction",
+        )
+        self.research.record_step_usage(task_id, step="evidence_selection")
+        item_cards = [
+            {
+                "content_id": item.get("id"),
+                "title": str(item.get("title") or "")[:300],
+                "description": str(item.get("description") or "")[:800],
+                "source_url": item.get("source_url") or (item.get("source") or {}).get("url") if isinstance(item.get("source"), dict) else item.get("source_url"),
+                "platform": item.get("platform"),
+                "published_at": item.get("published_at"),
+                "evidence_role": "candidate",
+            }
+            for item in items[:20]
+            if isinstance(item, dict)
+        ]
         messages = [
             ModelMessage(
                 role="user",
                 content=(
                     f"Research objective: {task['objective']}\n"
                     f"Current query: {query}\n"
-                    f"Collected library results (JSON): {json.dumps(items[:12], ensure_ascii=False)[:16_000]}\n"
+                    f"Collected evidence cards (JSON): {json.dumps(item_cards[:12], ensure_ascii=False)[:16_000]}\n"
+                    f"Compacted research context (JSON): {json.dumps(compacted, ensure_ascii=False)[:12_000]}\n"
                     "Use tools to inspect evidence. Every fact or inference must be saved with content_ids and one evidence_links item per content_id; each item needs support_type, support_strength, and a one-sentence support_explanation. "
                     "Inference findings also need a derivation and counterevidence_explanation; use not_found only when no contrary evidence was found. "
                     "If evidence is insufficient, submit one bounded crawl. Finish by saving findings and proposing one safe action."
@@ -1187,6 +1536,8 @@ class ResearchRuntime:
             )
         ]
         for _ in range(MAX_TOOL_ROUNDS):
+            if not self._step_is_allowed(task_id):
+                return
             request = ModelRequest(
                 system=(
                     "You are the only Research Agent. Use only the supplied tools. "
@@ -1197,7 +1548,7 @@ class ResearchRuntime:
                 max_tokens=700,
                 tools=self.tools.definitions(),
                 tool_choice="auto",
-                metadata={"runtime_step": "research_round", "round": str(round_number)},
+                metadata={"runtime_step": "finding_generation", "round": str(round_number)},
                 timeout=60,
             )
             try:
@@ -1224,6 +1575,8 @@ class ResearchRuntime:
                 # of discarding the completed findings because one provider
                 # response could not be normalized.
                 return
+            if not self._step_is_allowed(task_id):
+                return
             model_response = response.response
             if not model_response.tool_calls:
                 context = self.research.get_for_runtime(task_id)
@@ -1240,6 +1593,8 @@ class ResearchRuntime:
             )
             messages.append(assistant)
             for call in model_response.tool_calls:
+                if not self._step_is_allowed(task_id):
+                    return
                 try:
                     result = await self._execute_tool(task, call.name, call.arguments)
                 except ResearchTaskConflict as error:
@@ -1303,6 +1658,22 @@ class ResearchRuntime:
                 tool_arguments=_safe_arguments(arguments),
             )
             raise
+        if name == "get_content":
+            content_id = arguments.get("content_id")
+            if isinstance(content_id, str) and content_id:
+                current = self.research.get_for_runtime(task_id)
+                context = current.get("context") if current else {}
+                context = dict(context) if isinstance(context, dict) else {}
+                loaded = context.get("full_content_ids")
+                loaded_ids = [item for item in loaded if isinstance(item, str)] if isinstance(loaded, list) else []
+                if content_id not in loaded_ids:
+                    loaded_ids.append(content_id)
+                context["full_content_ids"] = loaded_ids[-50:]
+                stats = context.get("compaction_stats")
+                stats = dict(stats) if isinstance(stats, dict) else {}
+                stats["loaded_full_content_count"] = len(context["full_content_ids"])
+                context["compaction_stats"] = stats
+                self.research.update_context(task_id, context, step="get_content")
         self.research.append_trace(
             task_id,
             event="tool_result",
@@ -1328,7 +1699,25 @@ class ResearchRuntime:
             raise ResearchTaskConflict("research task disappeared before summarizing")
         findings = detail.get("findings") or []
         context = detail.get("context") or {}
+        compacted_context = (
+            context.get("compacted_context")
+            if isinstance(context, dict) and isinstance(context.get("compacted_context"), dict)
+            else context
+        )
+        self.research.finalize_content_decisions(task_id)
         quality = self.research.quality_summary(task_id)
+        coverage_review = self.research.coverage_summary(task_id)
+        self.research.record_step_usage(task_id, step="coverage_review")
+        stop_reason = detail.get("stop_reason")
+        if not isinstance(stop_reason, str) or not stop_reason:
+            stop_reason = (
+                "coverage_target_reached"
+                if coverage_review.get("all_targets_reached")
+                else "budget_exhausted"
+                if self._budget_reason(detail) is not None
+                else "platform_capability_limited"
+            )
+            self.research.set_stop_reason(task_id, stop_reason)
         quality_queries = detail.get("queries") or []
         prompt = {
             "objective": detail["objective"],
@@ -1336,9 +1725,15 @@ class ResearchRuntime:
             "events": detail.get("events") or [],
             "query_quality": quality_queries,
             "quality_counts": quality,
+            "coverage_review": coverage_review,
+            "step_usage": detail.get("step_usage", []),
+            "billing_summary": detail.get("billing_summary", {}),
             "last_model_text": context.get("last_model_text") if isinstance(context, dict) else None,
+            "compacted_context": compacted_context,
             "evidence_rule": "separate facts, inferences, unknowns, and proposed actions",
         }
+        if not self._step_is_allowed(task_id):
+            return
         response = await self._generate(
             task_id=task_id,
             request=ModelRequest(
@@ -1347,12 +1742,14 @@ class ResearchRuntime:
                 max_tokens=1_200,
                 tools=None,
                 tool_choice="none",
-                metadata={"runtime_step": "summarizing"},
+                metadata={"runtime_step": "final_report"},
                 timeout=60,
             ),
             route_role=route_role,
             model_record_id=str(target["model_record_id"]),
         )
+        if not self._step_is_allowed(task_id):
+            return
         summary_markdown = (response.response.content or "").strip()
         result = {
             # Keep the historical key for existing consumers while exposing
@@ -1369,6 +1766,10 @@ class ResearchRuntime:
             "duplicate_evidence_count": quality["duplicate_evidence_count"],
             "independent_evidence_count": quality["independent_evidence_count"],
             "discovery_count": quality["discovery_count"],
+            "repost_count": quality.get("repost_count", 0),
+            "negative_evidence_count": quality.get("negative_evidence_count", 0),
+            "coverage_review": coverage_review,
+            "stop_reason": stop_reason,
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
         self.research.update_result(task_id, result)
@@ -1397,19 +1798,67 @@ class ResearchRuntime:
         )
         model_response = response.response
         usage = model_response.usage
+        provider_metadata = self.ai_repository.get_provider(response.final_provider_id)
+        provider_metadata = provider_metadata if isinstance(provider_metadata, dict) else {}
+        step = str(request.metadata.get("runtime_step") or "unknown")
+        billing_snapshot: dict[str, object] = {}
+        billing_reader = getattr(self.ai_repository, "invocation_billing", None)
+        if callable(billing_reader):
+            candidate = billing_reader(
+                request_correlation_id=response.request_correlation_id,
+                research_task_id=task_id,
+            )
+            if isinstance(candidate, dict):
+                billing_snapshot = candidate
+        estimated_cost = billing_snapshot.get("estimated_cost")
+        if estimated_cost is None:
+            estimated_cost = self.ai_repository.invocation_cost(
+                request_correlation_id=response.request_correlation_id,
+                research_task_id=task_id,
+            )
         self.research.record_usage(
             task_id,
             input_tokens=usage.input_tokens if usage else None,
             output_tokens=usage.output_tokens if usage else None,
             cached_tokens=usage.cached_tokens if usage else None,
-            estimated_cost=self.ai_repository.invocation_cost(
-                request_correlation_id=response.request_correlation_id,
-                research_task_id=task_id,
-            ),
+            estimated_cost=estimated_cost,
             provider=model_response.provider,
             model=model_response.model,
             route_role=response.route_role,
             request_correlation_id=response.request_correlation_id,
             elapsed_ms=max(0, round((perf_counter() - started) * 1000)),
+            currency=(
+                str(billing_snapshot["currency"])
+                if billing_snapshot.get("currency")
+                else None
+            ),
+            price_source=(
+                str(billing_snapshot["price_source"])
+                if billing_snapshot.get("price_source")
+                else None
+            ),
+            provider_instance_id=response.final_provider_id,
+            vendor=(str(provider_metadata["vendor"]) if provider_metadata.get("vendor") else None),
+            billing_mode=(
+                str(provider_metadata["billing_mode"])
+                if provider_metadata.get("billing_mode")
+                else None
+            ),
+            fallback_from_provider_instance_id=(
+                response.initial_provider_id if response.fallback_used else None
+            ),
+            fallback_reason="primary_provider_failed" if response.fallback_used else None,
+            step=step,
+        )
+        self.research.save_checkpoint(
+            task_id,
+            checkpoint_key=f"model_step_{step}",
+            last_completed_step=step,
+            payload={
+                "request_correlation_id": response.request_correlation_id,
+                "initial_provider_id": response.initial_provider_id,
+                "final_provider_id": response.final_provider_id,
+                "fallback_used": response.fallback_used,
+            },
         )
         return response

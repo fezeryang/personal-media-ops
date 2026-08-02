@@ -320,6 +320,66 @@ def test_upgrade_from_0011_preserves_research_findings_and_adds_quality_columns(
     assert get_current_revision(database_path) == get_head_revision()
 
 
+def test_upgrade_from_0012_preserves_query_lifecycle_history(tmp_path: Path) -> None:
+    database_path = tmp_path / "research-query-history.db"
+    run_alembic_command(database_path, "upgrade", "0012_research_quality_foundation")
+    now = "2026-08-02T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, username, password_hash, is_active, failed_login_count,
+                created_at, updated_at
+            ) VALUES ('query-owner', 'query-owner', 'hash', 1, 0, ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_tasks (
+                id, user_id, task_type, objective, platforms, status,
+                plan, context, execution_trace, proposed_actions,
+                route_snapshot, budget_crawl_limit, budget_content_limit,
+                budget_duration_seconds, budget_token_limit,
+                budget_cost_enabled, created_at, updated_at
+            ) VALUES (
+                'query-task', 'query-owner', 'research', 'Preserve query history',
+                '["bili"]', 'Done', '{}', '{}', '[]', '[]', '{}',
+                2, 100, 3600, 50000, 0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_queries (
+                id, research_task_id, query, normalized_query, query_type,
+                platform, source_type, generation_reason, specificity_score,
+                novelty_score, noise_risk_score, expected_value_score, status,
+                executed_at, result_count, new_content_count,
+                existing_content_count, updated_content_count,
+                duplicate_evidence_count, created_at, updated_at
+            ) VALUES (
+                'query-history', 'query-task', 'WorkBuddy 使用体验',
+                'workbuddy 使用体验', 'product', 'bili', 'goal',
+                'historical query', 0.9, 0.8, 0.1, 0.7, 'completed',
+                ?, 4, 2, 1, 1, 0, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        lifecycle = connection.execute(
+            "SELECT status, lifecycle_status FROM research_queries WHERE id = 'query-history'"
+        ).fetchone()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    assert lifecycle == ("completed", "completed")
+    assert integrity == "ok"
+
+
 def test_upgrade_from_0009_preserves_existing_product_data(tmp_path: Path) -> None:
     database_path = tmp_path / "stage-seven.db"
     run_alembic_command(database_path, "upgrade", STAGE_SEVEN_REVISION)

@@ -193,6 +193,80 @@ def test_provider_templates_have_no_models_prices_or_keys(client: TestClient) ->
     assert "models" not in encoded
 
 
+def test_billing_profiles_and_versioned_prices_are_owner_visible(client: TestClient) -> None:
+    profile = client.post(
+        "/api/ai/billing-profiles",
+        json={
+            "name": "MiniMax 年度套餐测试",
+            "vendor": "MiniMax",
+            "billing_mode": "subscription_fixed",
+            "package_name": "年度专业版",
+            "purchase_amount": "999",
+            "currency": "cny",
+            "starts_at": "2026-01-01T00:00:00Z",
+            "ends_at": "2026-12-31T23:59:59Z",
+            "quota_description": "年度订阅额度",
+            "token_quota": 1000000,
+            "call_limit": 1000,
+            "concurrency_limit": 1,
+        },
+    )
+    assert profile.status_code == 201, profile.text
+    assert profile.json()["currency"] == "CNY"
+    assert any(item["vendor"] == "MiniMax" for item in client.get("/api/ai/billing-profiles").json())
+
+    provider = _create_provider(client, name="DeepSeek 官方")
+    model = _create_model(client, str(provider["id"]))
+    price = client.post(
+        "/api/ai/provider-prices",
+        json={
+            "provider_id": provider["id"],
+            "model_record_id": model["id"],
+            "model_id": "model-a",
+            "input_price_per_million": "0.27",
+            "output_price_per_million": "1.10",
+            "cached_input_price_per_million": "0.07",
+            "cache_write_price_per_million": "0.50",
+            "currency": "usd",
+            "effective_at": "2026-08-01T00:00:00Z",
+            "source": "official-price-config",
+        },
+    )
+    assert price.status_code == 201, price.text
+    assert price.json()["currency"] == "USD"
+    assert client.get("/api/ai/provider-prices").json()[0]["source"] == "official-price-config"
+
+    invalid_price_model = dict(
+        PROVIDER_PAYLOAD,
+        api_key=None,
+    )
+    invalid_price_model["name"] = "Invalid price provider"
+    created = client.post("/api/ai/providers", json=invalid_price_model)
+    assert created.status_code == 201
+    invalid_model = {
+        "provider_id": created.json()["id"],
+        "model_id": "invalid-price-model",
+        "display_name": "Invalid price model",
+        "enabled": False,
+        "context_window": 1000,
+        "max_output_tokens": 100,
+        "supports_streaming": True,
+        "supports_tools": False,
+        "supports_thinking": None,
+        "supports_vision": None,
+        "supports_files": None,
+        "supports_structured_output": None,
+        "capabilities_source": "user",
+        "input_price_per_million": "1",
+        "output_price_per_million": None,
+        "cached_input_price_per_million": None,
+        "cache_write_price_per_million": None,
+        "price_currency": None,
+        "price_effective_at": None,
+    }
+    assert client.post("/api/ai/models", json=invalid_model).status_code == 422
+
+
 def test_model_and_routes_require_enabled_records_and_guard_deletion(
     client: TestClient,
 ) -> None:

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
@@ -145,6 +145,8 @@ const task: researchApi.ResearchTaskDetail = {
     duplicate_evidence_count: 1,
     independent_evidence_count: 1,
     discovery_count: 5,
+    repost_count: 1,
+    negative_evidence_count: 1,
   },
   route_snapshot: { primary: { provider: "MiniMax", model: "MiniMax-M3" } },
   budget: {
@@ -154,7 +156,128 @@ const task: researchApi.ResearchTaskDetail = {
     token_limit: 50000,
     cost_limit: null,
     cost_currency: null,
+    max_input_tokens: 20000,
+    max_output_tokens: 10000,
+    max_model_calls: 12,
+    route_policy: "prefer_subscription",
+    max_total_tokens: 50000,
+    max_crawl_tasks: 6,
+    max_new_contents: 100,
+    max_runtime_seconds: 3600,
+    max_payg_amount: null,
+    currency: "CNY",
   },
+  coverage: {
+    target_platform_count: 3,
+    target_entity_count: 3,
+    target_negative_evidence_count: 1,
+    max_single_entity_evidence_ratio: 0.6,
+    target_independent_evidence_count: 5,
+    target_new_content_count: 5,
+    low_marginal_value_threshold: 0.25,
+    low_marginal_round_limit: 2,
+    stop_reason: "skipped_low_marginal_value",
+    completed_at: "2026-08-01T00:00:12Z",
+  },
+  platform_coverage: [
+    {
+      id: "coverage-bili",
+      research_task_id: "research-1",
+      platform: "bili",
+      order_index: 0,
+      status: "completed",
+      planned_query_count: 2,
+      actual_query_count: 2,
+      result_count: 5,
+      new_content_count: 2,
+      independent_evidence_count: 1,
+      negative_evidence_count: 0,
+      failure_reason: null,
+    },
+    {
+      id: "coverage-zhihu",
+      research_task_id: "research-1",
+      platform: "zhihu",
+      order_index: 1,
+      status: "failed",
+      planned_query_count: 1,
+      actual_query_count: 1,
+      result_count: 0,
+      new_content_count: 0,
+      independent_evidence_count: 0,
+      negative_evidence_count: 1,
+      failure_reason: "平台登录状态失效",
+    },
+  ],
+  entity_coverage: [
+    {
+      canonical_name: "WorkBuddy",
+      entity_type: "product",
+      entity_query_count: 2,
+      entity_evidence_count: 1,
+      entity_new_content_count: 1,
+      entity_platform_count: 1,
+      entity_coverage_ratio: 1,
+      saturated: true,
+    },
+    {
+      canonical_name: "Local Agent",
+      entity_type: "product",
+      entity_query_count: 1,
+      entity_evidence_count: 0,
+      entity_new_content_count: 0,
+      entity_platform_count: 1,
+      entity_coverage_ratio: 0,
+      saturated: false,
+    },
+  ],
+  content_decisions: [
+    {
+      content_id: "content-1",
+      research_query_id: "query-1",
+      decision: "adopted",
+      not_adopted_reason: null,
+      source_independence: "independent",
+      content_completeness: "complete",
+      evidence_quality: "high",
+      is_repost: false,
+      repost_of_content_id: null,
+      similarity_score: null,
+    },
+    {
+      content_id: "content-2",
+      research_query_id: "query-1",
+      decision: "not_adopted",
+      not_adopted_reason: "重复转载",
+      source_independence: "repost",
+      content_completeness: "partial",
+      evidence_quality: "low",
+      is_repost: true,
+      repost_of_content_id: "content-1",
+      similarity_score: 0.98,
+    },
+  ],
+  step_usage: [
+    {
+      step: "final_report",
+      sequence: 1,
+      provider_instance_id: "provider-minimax",
+      vendor: "MiniMax",
+      model: "MiniMax-M3",
+      billing_mode: "subscription_fixed",
+      estimated_cost: null,
+      currency: "CNY",
+      price_source: null,
+      input_tokens: 120,
+      output_tokens: 80,
+      cached_tokens: 0,
+      latency_ms: 120,
+      fallback_from_provider_instance_id: null,
+      fallback_reason: null,
+      invocation_id: "invocation-1",
+      created_at: "2026-08-01T00:00:03Z",
+    },
+  ],
   trace: [
     {
       sequence: 1,
@@ -263,6 +386,42 @@ const task: researchApi.ResearchTaskDetail = {
       created_at: "2026-08-01T00:00:01Z",
       updated_at: "2026-08-01T00:00:01Z",
     },
+    {
+      id: "query-skipped",
+      research_task_id: "research-1",
+      query: "WorkBuddy 不好用",
+      normalized_query: "workbuddy 不好用",
+      query_type: "product",
+      platform: "zhihu",
+      source_type: "finding",
+      source_content_id: "content-1",
+      source_finding_id: "finding-1",
+      parent_query_id: "query-1",
+      generation_reason: "寻找反向证据",
+      relevance_score: 0.8,
+      specificity_score: 0.9,
+      novelty_score: 0.8,
+      noise_risk_score: 0.2,
+      expected_value_score: 0.6,
+      status: "skipped_low_marginal_value",
+      lifecycle_status: "skipped_low_marginal_value",
+      unexecuted_reason: "连续两轮新增率低于阈值且未发现新实体",
+      rejection_reason: null,
+      crawler_task_id: null,
+      executed_at: null,
+      result_count: 0,
+      new_content_count: 0,
+      existing_content_count: 0,
+      updated_content_count: 0,
+      duplicate_evidence_count: 0,
+      new_content_rate: 0,
+      new_entity_count: 0,
+      new_independent_evidence_count: 0,
+      duplicate_rate: 1,
+      marginal_value_score: 0.1,
+      created_at: "2026-08-01T00:00:01Z",
+      updated_at: "2026-08-01T00:00:01Z",
+    },
   ],
   events: [],
   actions: [
@@ -296,6 +455,9 @@ describe("ResearchTasksPage", () => {
     vi.spyOn(researchApi, "listResearchTasks").mockResolvedValue([task]);
     vi.spyOn(researchApi, "getResearchTask").mockResolvedValue(task);
     vi.spyOn(researchApi, "decideResearchAction").mockResolvedValue(task.actions[0]);
+    vi.spyOn(researchApi, "pauseResearchTask").mockResolvedValue(task);
+    vi.spyOn(researchApi, "resumeResearchTask").mockResolvedValue(task);
+    vi.spyOn(researchApi, "cancelResearchTask").mockResolvedValue(task);
   });
 
   it("shows status, evidence provenance, trace parameters, and owner actions", async () => {
@@ -306,7 +468,11 @@ describe("ResearchTasksPage", () => {
     expect(document.querySelector("script")).not.toBeInTheDocument();
     expect(screen.getByText("AI 工作台实践")).toBeInTheDocument();
     expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
+    expect(screen.getByText("平台计划与实体覆盖")).toBeInTheDocument();
+    expect(screen.getByText("证据池与未采用内容")).toBeInTheDocument();
+    expect(screen.getByText("预算分类与模型轨迹")).toBeInTheDocument();
     expect(screen.getByText(/仅包含泛化词/)).toBeInTheDocument();
+    expect(screen.getByText(/连续两轮新增率低于阈值/)).toBeInTheDocument();
     expect(screen.getByText("独立证据")).toBeInTheDocument();
     expect(screen.getByText("执行轨迹（1 步）")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByText("search_library"));
@@ -323,9 +489,22 @@ describe("ResearchTasksPage", () => {
       expect(screen.getByText("已存在")).toBeInTheDocument();
       expect(screen.getByText(/拒绝原因：仅包含泛化词/)).toBeInTheDocument();
       expect(screen.getByText("直接支持 · 强")).toBeInTheDocument();
+      expect(screen.getByText(/停止原因：/)).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
     }
+  });
+
+  it("shows pause, resume, and cancel controls for durable runtime states", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: "暂停" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消任务" })).toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(researchApi.getResearchTask).mockResolvedValue({ ...task, status: "Researching", paused: true });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "继续" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消任务" })).toBeInTheDocument();
   });
 
   it("creates a bounded task from the single task page", async () => {

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/research-runtime-8c.md","reason":"Backend Runtime contracts match the implemented migration, repository, tool, budget, and recovery behavior."}
+{"file":".trellis/spec/frontend/research-center-8c.md","reason":"Frontend Research Center contracts match the implemented Zod fields, cards, controls, and 390px coverage."}

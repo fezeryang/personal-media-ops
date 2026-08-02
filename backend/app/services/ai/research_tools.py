@@ -116,6 +116,16 @@ class ResearchToolService:
                         "platform": {"type": "string"},
                         "keywords": {"type": "string"},
                         "requested_count": {"type": "integer"},
+                        "reason": {"type": "string"},
+                        "query_type": {"type": "string"},
+                        "parent_query_id": {"type": "string"},
+                        "source_content_id": {"type": "string"},
+                        "source_finding_id": {"type": "string"},
+                        "research_task_id": {"type": "string"},
+                        "expected_evidence_role": {
+                            "type": "string",
+                            "enum": ["direct", "contextual", "contradictory", "background"],
+                        },
                     },
                     "required": ["platform", "keywords"],
                 },
@@ -461,6 +471,17 @@ class ResearchToolService:
         if int(task["consumed_crawl_count"]) >= int(task["budget_crawl_limit"]):
             raise ResearchTaskConflict("crawl budget is exhausted")
         query_id = arguments.get("_research_query_id")
+        supplied_task_id = arguments.get("research_task_id")
+        if supplied_task_id is not None and supplied_task_id != str(task["id"]):
+            raise ResearchTaskConflict("research_task_id does not match the active task")
+        expected_role = arguments.get("expected_evidence_role")
+        if expected_role is not None and expected_role not in {
+            "direct",
+            "contextual",
+            "contradictory",
+            "background",
+        }:
+            raise ResearchTaskConflict("expected_evidence_role is invalid")
         identifier = self.crawler.new_id()
         requested = arguments.get(
             "requested_count",
@@ -518,7 +539,11 @@ class ResearchToolService:
                 source_content_id=source_content_id,
                 source_finding_id=None,
                 parent_query_id=parent_query_id,
-                generation_reason="从已有 search_library 结果触发补充采集",
+                generation_reason=(
+                    self._string(arguments, "reason", max_length=500)
+                    if isinstance(arguments.get("reason"), str)
+                    else "从已有 search_library 结果触发补充采集"
+                ),
                 specificity_score=quality.specificity_score,
                 novelty_score=quality.novelty_score,
                 noise_risk_score=quality.noise_risk_score,
@@ -534,6 +559,9 @@ class ResearchToolService:
                 ),
                 status="candidate" if quality.accepted else "rejected",
                 rejection_reason=quality.rejection_reason,
+                expected_evidence_role=(
+                    str(expected_role) if isinstance(expected_role, str) else "direct"
+                ),
             )
             if not quality.accepted:
                 raise ResearchTaskConflict(quality.rejection_reason or "query rejected")

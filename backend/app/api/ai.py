@@ -48,6 +48,14 @@ ProviderType = Literal[
     "custom_anthropic",
     "custom_openai",
 ]
+BillingMode = Literal[
+    "subscription_fixed",
+    "pay_as_you_go",
+    "prepaid_balance",
+    "quota_bundle",
+    "relay",
+    "unknown",
+]
 CheckKind = Literal["text", "streaming", "tools", "thinking"]
 
 PROVIDER_TEMPLATES = (
@@ -130,6 +138,11 @@ class ProviderWriteBase(BaseModel):
     timeout_seconds: float = Field(default=60, ge=1, le=600)
     max_retries: int = Field(default=1, ge=0, le=5)
     concurrency_limit: int = Field(default=1, ge=1, le=20)
+    vendor: str | None = Field(default=None, max_length=100)
+    instance_label: str | None = Field(default=None, max_length=200)
+    billing_mode: BillingMode | None = None
+    billing_profile_id: str | None = Field(default=None, max_length=100)
+    relay_metadata: str = Field(default="{}", max_length=10_000)
 
     @field_validator("name")
     @classmethod
@@ -169,6 +182,8 @@ class ProviderView(ProviderWriteBase):
     last_health_checked_at: str | None
     created_at: str
     updated_at: str
+    tool_capability_status: str = "unknown"
+    tool_capability_tested_at: str | None = None
 
 
 class ModelWrite(BaseModel):
@@ -190,6 +205,8 @@ class ModelWrite(BaseModel):
     input_price_per_million: Decimal | None = Field(default=None, ge=0)
     output_price_per_million: Decimal | None = Field(default=None, ge=0)
     cached_input_price_per_million: Decimal | None = Field(default=None, ge=0)
+    cache_write_price_per_million: Decimal | None = Field(default=None, ge=0)
+    price_source: str | None = Field(default=None, max_length=500)
     price_currency: str | None = Field(default=None, min_length=3, max_length=12)
     price_effective_at: str | None = Field(default=None, max_length=40)
 
@@ -201,6 +218,7 @@ class ModelWrite(BaseModel):
                 self.input_price_per_million,
                 self.output_price_per_million,
                 self.cached_input_price_per_million,
+                self.cache_write_price_per_million,
             )
         )
         if configured != (
@@ -249,6 +267,38 @@ class DebugWrite(BaseModel):
         return normalized
 
 
+class BillingProfileWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    vendor: str = Field(min_length=1, max_length=100)
+    billing_mode: BillingMode
+    package_name: str | None = Field(default=None, max_length=200)
+    purchase_amount: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=12)
+    starts_at: str | None = Field(default=None, max_length=40)
+    ends_at: str | None = Field(default=None, max_length=40)
+    quota_description: str | None = Field(default=None, max_length=2_000)
+    token_quota: int | None = Field(default=None, ge=0)
+    call_limit: int | None = Field(default=None, ge=0)
+    concurrency_limit: int | None = Field(default=None, ge=1, le=20)
+
+
+class ProviderPriceVersionWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: str = Field(min_length=1, max_length=100)
+    model_record_id: str | None = Field(default=None, max_length=100)
+    model_id: str = Field(min_length=1, max_length=200)
+    input_price_per_million: Decimal | None = Field(default=None, ge=0)
+    output_price_per_million: Decimal | None = Field(default=None, ge=0)
+    cached_input_price_per_million: Decimal | None = Field(default=None, ge=0)
+    cache_write_price_per_million: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=12)
+    effective_at: str = Field(min_length=1, max_length=40)
+    source: str = Field(min_length=1, max_length=500)
+
+
 def _repository(request: Request) -> AIRepository:
     return request.app.state.ai_repository
 
@@ -277,6 +327,46 @@ def _http_error(error: Exception) -> HTTPException:
 @router.get("/provider-templates", response_model=list[ProviderTemplateView])
 def list_provider_templates(_: OwnerSession) -> tuple[dict[str, object], ...]:
     return PROVIDER_TEMPLATES
+
+
+@router.get("/billing-profiles")
+def list_billing_profiles(request: Request, _: OwnerSession) -> list[dict[str, object]]:
+    return _repository(request).list_billing_profiles()
+
+
+@router.post("/billing-profiles", status_code=201)
+def create_billing_profile(
+    payload: BillingProfileWrite,
+    request: Request,
+    _: OwnerSession,
+) -> dict[str, object]:
+    try:
+        values = payload.model_dump(mode="json")
+        if values.get("currency") is not None:
+            values["currency"] = str(values["currency"]).upper()
+        return _repository(request).create_billing_profile(**values)
+    except Exception as error:
+        raise _http_error(error) from error
+
+
+@router.get("/provider-prices")
+def list_provider_prices(request: Request, _: OwnerSession) -> list[dict[str, object]]:
+    return _repository(request).list_provider_price_versions()
+
+
+@router.post("/provider-prices", status_code=201)
+def create_provider_price(
+    payload: ProviderPriceVersionWrite,
+    request: Request,
+    _: OwnerSession,
+) -> dict[str, object]:
+    try:
+        values = payload.model_dump(mode="json")
+        if values.get("currency") is not None:
+            values["currency"] = str(values["currency"]).upper()
+        return _repository(request).create_provider_price_version(**values)
+    except Exception as error:
+        raise _http_error(error) from error
 
 
 @router.get("/providers", response_model=list[ProviderView])
@@ -334,6 +424,9 @@ def update_provider(
             else None
         )
         values = payload.model_dump(exclude={"api_key", "clear_api_key"})
+        for optional_field in ("vendor", "instance_label", "billing_mode", "billing_profile_id"):
+            if values.get(optional_field) is None:
+                values.pop(optional_field, None)
         repository.update_provider(provider_id, **values)
         if secret is not None:
             repository.set_provider_secret(provider_id, secret)

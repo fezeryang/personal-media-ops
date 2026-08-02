@@ -2,10 +2,14 @@ from app.services.ai.research_quality import (
     classify_query,
     evaluate_query,
     expected_value_score,
+    marginal_stop_decision,
     noise_risk_score,
     normalize_query,
     novelty_score,
     parse_relevance_batch,
+    parse_structured_json,
+    platform_query_variants,
+    query_priority_score,
     specificity_score,
 )
 
@@ -114,3 +118,54 @@ def test_query_quality_covers_empty_reason_and_query_type_rules() -> None:
         source_type="user_goal",
         historical_queries=[],
     ).noise_risk_score >= 0.45
+
+
+def test_platform_strategy_priority_and_marginal_stop_are_deterministic() -> None:
+    assert platform_query_variants("WorkBuddy", "zhihu")[:2] == [
+        "WorkBuddy 深度分析",
+        "WorkBuddy 需求讨论",
+    ]
+    assert platform_query_variants("WorkBuddy", "tieba", negative=True)[:3] == [
+        "WorkBuddy 问题",
+        "WorkBuddy 缺点",
+        "WorkBuddy 不好用",
+    ]
+    assert query_priority_score(
+        relevance_score=0.9,
+        specificity_score=0.8,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        expected_value_score=0.72,
+        entity_diversity_bonus=0.8,
+        platform_diversity_bonus=0.8,
+        negative_evidence_bonus=0.8,
+    ) > query_priority_score(
+        relevance_score=0.9,
+        specificity_score=0.8,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        expected_value_score=0.72,
+    )
+    assert marginal_stop_decision(
+        rounds_below_threshold=2,
+        threshold=0.1,
+        round_limit=2,
+        has_new_entity=False,
+        has_negative_evidence=False,
+    ) == "skipped_saturation"
+    assert marginal_stop_decision(
+        rounds_below_threshold=2,
+        threshold=0.2,
+        round_limit=2,
+        has_new_entity=True,
+        has_negative_evidence=False,
+    ) is None
+
+
+def test_structured_output_has_one_bounded_repair_path() -> None:
+    assert parse_structured_json('{"ok": true}').strategy == "strict_json"
+    assert parse_structured_json("```json\n{\"ok\": true}\n```").strategy == "tool_schema"
+    repaired = parse_structured_json("not json", repair_value='["fixed"]')
+    assert repaired.strategy == "json_repair_once"
+    assert repaired.value == ["fixed"]
+    assert parse_structured_json("still not json").strategy == "failed"

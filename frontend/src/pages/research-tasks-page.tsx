@@ -70,7 +70,7 @@ const statusVariant: Record<ResearchTaskSummary["status"], "neutral" | "info" | 
 };
 
 const defaultBudget: ResearchTaskInput["budget"] = {
-    crawl_limit: 2,
+    crawl_limit: 6,
     content_limit: 100,
     duration_seconds: 3_600,
     token_limit: 50_000,
@@ -83,6 +83,14 @@ function createInitialForm(platforms: string[]): ResearchTaskInput {
     objective: "",
     platforms,
     budget: { ...defaultBudget },
+    coverage: {
+      target_platform_count: Math.min(3, platforms.length || 3),
+      target_entity_count: 3,
+      target_negative_evidence_count: 1,
+      max_single_entity_evidence_ratio: 0.6,
+      target_independent_evidence_count: 5,
+      target_new_content_count: 5,
+    },
   };
 }
 
@@ -167,7 +175,7 @@ export function ResearchTasksPage() {
   return (
     <div className="space-y-7">
       <PageHeader
-        eyebrow="AI Runtime · Phase 8B"
+        eyebrow="AI Runtime · Phase 8C"
         title="AI 研究任务"
         description="围绕一个目标创建可中断、可恢复、证据可追溯的研究任务。采集、模型调用和每次状态流转都保留在任务轨迹中。"
         action={
@@ -379,11 +387,142 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
       {task.failure_reason ? <div className="flex gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger"><ShieldAlert className="size-5 shrink-0" /><span>{task.failure_reason}</span></div> : null}
       {task.result ? <ResearchResultCard task={task} /> : null}
       <QueryTrajectoryCard queries={task.queries ?? []} />
+      <CoverageCard task={task} />
+      <EvidencePoolCard task={task} />
+      <BudgetTraceCard task={task} />
 
       <div className="grid gap-5 lg:grid-cols-2"><FindingsCard task={task} /><ActionsCard taskId={task.id} actions={task.actions} busy={busy} onDecide={(actionId, decision) => decide.mutate({ taskId: task.id, actionId, decision })} /></div>
       <TraceCard trace={task.trace} />
       <Card><CardHeader><p className="section-kicker">Plan & context</p><h3 className="mt-1 font-display text-xl font-semibold">执行上下文</h3></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.plan, null, 2)}</pre><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.context, null, 2)}</pre></CardContent></Card>
     </div>
+  );
+}
+
+function CoverageCard({ task }: { task: ResearchTaskDetail }) {
+  const coverage = task.coverage;
+  const platforms = task.platform_coverage ?? [];
+  const entities = task.entity_coverage ?? [];
+  const targetPlatforms = coverage?.target_platform_count ?? task.platforms.length;
+  const targetEntities = coverage?.target_entity_count ?? 3;
+  const targetNegative = coverage?.target_negative_evidence_count ?? 1;
+  const targetIndependent = coverage?.target_independent_evidence_count ?? 5;
+  const targetNew = coverage?.target_new_content_count ?? 5;
+  const actualPlatforms = platforms.filter((item) => item.status === "completed" && item.result_count > 0).length;
+  const negativeEvidence = task.result?.negative_evidence_count ?? platforms.reduce((sum, item) => sum + item.negative_evidence_count, 0);
+  const independentEvidence = task.result?.independent_evidence_count ?? 0;
+  const newContent = task.result?.new_content_count ?? 0;
+  const target = (actual: number, expected: number) => `${actual} / ${expected} ${actual >= expected ? "✓" : "·"}`;
+  return (
+    <Card>
+      <CardHeader>
+        <p className="section-kicker">Coverage plan</p>
+        <h3 className="mt-1 font-display text-xl font-semibold">平台计划与实体覆盖</h3>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-5">
+          <Metric label="平台" value={target(actualPlatforms, targetPlatforms)} />
+          <Metric label="实体" value={target(entities.length, targetEntities)} />
+          <Metric label="反向证据" value={target(negativeEvidence, targetNegative)} />
+          <Metric label="独立来源" value={target(independentEvidence, targetIndependent)} />
+          <Metric label="新增内容" value={target(newContent, targetNew)} />
+        </div>
+        <div className="space-y-2">
+          {platforms.length === 0 ? <p className="text-sm text-muted">尚无平台回归记录。</p> : platforms.map((platform) => (
+            <div key={platform.id ?? platform.platform} className="rounded-xl border border-line p-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold">{platform.platform}</span>
+                <Badge variant={platform.status === "completed" ? "success" : platform.status === "failed" ? "danger" : "warning"}>{platform.status}</Badge>
+              </div>
+              <p className="mt-2 text-muted">查询 {platform.actual_query_count} · 结果 {platform.result_count} · 新增 {platform.new_content_count} · 独立证据 {platform.independent_evidence_count}</p>
+              {platform.failure_reason ? <p className="mt-1 text-danger">失败原因：{platform.failure_reason}</p> : null}
+            </div>
+          ))}
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">已发现实体</p>
+          {entities.length === 0 ? <p className="text-sm text-muted">尚未发现明确实体。</p> : entities.map((entity) => (
+            <div key={`${entity.entity_type}-${entity.canonical_name}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-paper p-3 text-xs">
+              <span className="min-w-0 break-words font-semibold">{entity.canonical_name} <span className="font-normal text-muted">· {entity.entity_type}</span></span>
+              <span className="text-muted">证据 {entity.entity_evidence_count} · 平台 {entity.entity_platform_count} · 占比 {(entity.entity_coverage_ratio * 100).toFixed(0)}%{entity.saturated ? " · 饱和" : ""}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs leading-5 text-muted">停止原因：{task.stop_reason ?? coverage?.stop_reason ?? "尚未停止"} · 单一实体上限 {(coverage?.max_single_entity_evidence_ratio ?? 0.6) * 100}%</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EvidencePoolCard({ task }: { task: ResearchTaskDetail }) {
+  const decisions = task.content_decisions ?? [];
+  const adopted = decisions.filter((item) => item.decision === "adopted");
+  const notAdopted = decisions.filter((item) => item.decision === "not_adopted");
+  const reposts = decisions.filter((item) => item.is_repost);
+  return (
+    <Card>
+      <CardHeader>
+        <p className="section-kicker">Evidence pool</p>
+        <h3 className="mt-1 font-display text-xl font-semibold">证据池与未采用内容</h3>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Metric label="采集结果" value={String(decisions.length)} />
+          <Metric label="最终采用" value={String(adopted.length)} />
+          <Metric label="未采用" value={String(notAdopted.length)} />
+          <Metric label="转载标记" value={String(reposts.length)} />
+        </div>
+        {decisions.length === 0 ? <p className="text-sm text-muted">暂无内容决策记录。</p> : (
+          <div className="space-y-2">
+            {decisions.map((item) => (
+              <div key={item.content_id} className="rounded-xl border border-line p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Link to={`/library/contents/${encodeURIComponent(item.content_id)}`} className="font-semibold hover:text-signal">{item.content_id}</Link>
+                  <span className="text-muted">{item.decision}{item.is_repost ? " · 转载" : ""}</span>
+                </div>
+                <p className="mt-1 text-muted">来源独立性：{item.source_independence} · 完整度：{item.content_completeness} · 质量：{item.evidence_quality}</p>
+                {item.not_adopted_reason ? <p className="mt-1 text-danger">未采用原因：{item.not_adopted_reason}</p> : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BudgetTraceCard({ task }: { task: ResearchTaskDetail }) {
+  const usage = task.step_usage ?? [];
+  const consumption = task.consumption;
+  const modeLabel: Record<string, string> = {
+    subscription_fixed: "年度套餐",
+    pay_as_you_go: "按量",
+    relay: "中转",
+    prepaid_balance: "预付余额",
+    quota_bundle: "额度包",
+    unknown: "未知价格",
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <p className="section-kicker">Resource budget</p>
+        <h3 className="mt-1 font-display text-xl font-semibold">预算分类与模型轨迹</h3>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Metric label="总 Token" value={`${(consumption.input_tokens + consumption.output_tokens).toLocaleString()} / ${task.budget.token_limit.toLocaleString()}`} />
+          <Metric label="模型调用" value={`${consumption.model_call_count ?? usage.length} / ${task.budget.max_model_calls ?? "—"}`} />
+          <Metric label="采集任务" value={`${consumption.crawl_count} / ${task.budget.crawl_limit}`} />
+          <Metric label="按量金额" value={formatCost(consumption.estimated_cost, consumption.cost_currency)} />
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl bg-paper p-3 text-xs"><p className="font-semibold">MiniMax / GLM 套餐</p><p className="mt-1 text-muted">{(consumption.subscription_calls ?? 0).toLocaleString()} 次 · {(consumption.subscription_tokens ?? 0).toLocaleString()} Token · 单次金额不适用</p></div>
+          <div className="rounded-xl bg-paper p-3 text-xs"><p className="font-semibold">DeepSeek / 按量</p><p className="mt-1 text-muted">{(consumption.payg_calls ?? 0).toLocaleString()} 次 · {(consumption.payg_tokens ?? 0).toLocaleString()} Token · {formatCost(consumption.estimated_cost, consumption.cost_currency)}</p></div>
+          <div className="rounded-xl bg-paper p-3 text-xs"><p className="font-semibold">中转 / 未知</p><p className="mt-1 text-muted">{(consumption.relay_calls ?? 0).toLocaleString()} 次中转 · {(consumption.uncosted_call_count ?? 0).toLocaleString()} 次不可计算</p></div>
+        </div>
+        {usage.length === 0 ? <p className="text-sm text-muted">尚无步骤级模型用量。</p> : <div className="space-y-2">{usage.map((item) => <div key={`${item.sequence}-${item.step}`} className="rounded-xl border border-line p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">#{item.sequence} · {item.step}</span><span className="text-muted">{item.vendor ?? "未知厂商"} / {item.model ?? "未知模型"}</span></div><p className="mt-1 text-muted">{modeLabel[item.billing_mode ?? "unknown"]} · 输入 {item.input_tokens ?? 0} · 输出 {item.output_tokens ?? 0} · {item.latency_ms ?? "—"} ms · 费用 {item.estimated_cost === null || item.estimated_cost === undefined ? "不适用/不可计算" : `${item.estimated_cost} ${item.currency ?? ""}`.trim()}{item.fallback_reason ? ` · Fallback：${item.fallback_reason}` : ""}</p></div>)}</div>}
+        <p className="text-xs leading-5 text-muted">Context Compactor：{typeof task.context.compaction_stats === "object" && task.context.compaction_stats !== null ? JSON.stringify(task.context.compaction_stats) : "尚未运行"}</p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -441,8 +580,9 @@ function ResearchResultCard({ task }: { task: ResearchTaskDetail }) {
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-xl bg-paper p-3"><p className="text-xs text-muted">{label}</p><p className="mt-1 break-words text-sm font-semibold">{value}</p></div>; }
 
 function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDetail["queries"]> }) {
-  const rejected = queries.filter((query) => query.status === "rejected");
-  const executed = queries.filter((query) => query.status !== "rejected");
+  const lifecycle = (query: (typeof queries)[number]) => query.lifecycle_status ?? query.status;
+  const rejected = queries.filter((query) => lifecycle(query).startsWith("rejected"));
+  const executed = queries.filter((query) => !lifecycle(query).startsWith("rejected"));
   const sourceLabel = (query: (typeof queries)[number]) => {
     if (query.parent_query_id) {
       const parent = queries.find((candidate) => candidate.id === query.parent_query_id);
@@ -451,20 +591,25 @@ function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDet
     if (query.source_content_id) return `来源内容：${query.source_content_id}`;
     return query.source_type === "user_goal" ? "用户目标" : query.source_type;
   };
-  const row = (query: (typeof queries)[number]) => <article key={query.id} className="rounded-xl border border-line p-4">
-    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm font-semibold">{query.query}</p><p className="mt-1 text-xs text-muted">{query.query_type} · {sourceLabel(query)}</p></div><Badge variant={query.status === "rejected" ? "danger" : query.status === "completed" ? "success" : "info"}>{query.status}</Badge></div>
+  const row = (query: (typeof queries)[number]) => {
+    const currentLifecycle = lifecycle(query);
+    const isUnexecuted = !query.crawler_task_id && !["completed", "failed", "cancelled"].includes(currentLifecycle);
+    return <article key={query.id} className="rounded-xl border border-line p-4">
+    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm font-semibold">{query.query}</p><p className="mt-1 text-xs text-muted">{query.query_type} · {sourceLabel(query)} · {query.platform}</p></div><Badge variant={currentLifecycle.startsWith("rejected") ? "danger" : currentLifecycle === "completed" ? "success" : currentLifecycle.startsWith("skipped") ? "warning" : "info"}>{currentLifecycle}</Badge></div>
     <p className="mt-2 text-xs leading-5 text-muted">生成理由：{query.generation_reason}</p>
-    <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><Metric label="相关性" value={query.relevance_score === null ? "—" : query.relevance_score.toFixed(2)} /><Metric label="具体性" value={query.specificity_score.toFixed(2)} /><Metric label="新颖性" value={query.novelty_score.toFixed(2)} /><Metric label="噪声风险" value={query.noise_risk_score.toFixed(2)} /></div>
+    <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><Metric label="相关性" value={query.relevance_score === null ? "—" : query.relevance_score.toFixed(2)} /><Metric label="具体性" value={query.specificity_score.toFixed(2)} /><Metric label="新颖性" value={query.novelty_score.toFixed(2)} /><Metric label="新增率" value={query.new_content_rate === null || query.new_content_rate === undefined ? "—" : `${(query.new_content_rate * 100).toFixed(0)}%`} /><Metric label="边际价值" value={query.marginal_value_score === null || query.marginal_value_score === undefined ? "—" : query.marginal_value_score.toFixed(2)} /></div>
     {query.rejection_reason ? <p className="mt-3 rounded-lg bg-danger/5 px-3 py-2 text-xs leading-5 text-danger">拒绝原因：{query.rejection_reason}</p> : null}
+    {isUnexecuted && query.unexecuted_reason ? <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">未执行原因：{query.unexecuted_reason}</p> : null}
     <p className="mt-3 text-xs text-muted">结果 {query.result_count} · 新增 {query.new_content_count} · 已存在 {query.existing_content_count} · 已更新 {query.updated_content_count} · 重复证据 {query.duplicate_evidence_count}</p>
   </article>;
+  };
   return <Card><CardHeader><p className="section-kicker">Query quality gate</p><h3 className="mt-1 font-display text-xl font-semibold">查询轨迹与质量闸门</h3></CardHeader><CardContent className="space-y-4">{queries.length === 0 ? <p className="text-sm text-muted">暂无查询轨迹（历史任务兼容）。</p> : <><div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">已执行 / 通过</p><div className="space-y-2">{executed.map(row)}</div></div>{rejected.length > 0 ? <div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-danger">已拒绝（全部保留）</p><div className="space-y-2">{rejected.map(row)}</div></div> : null}</>}</CardContent></Card>;
 }
 
 function FindingsCard({ task }: { task: ResearchTaskDetail }) {
   const supportLabel = (value: string | undefined) => ({ direct: "直接支持", contextual: "上下文", contradictory: "反证", background: "背景" }[value ?? "background"] ?? "背景");
   const strengthLabel = (value: string | undefined) => ({ strong: "强", medium: "中", weak: "弱" }[value ?? "weak"] ?? "弱");
-  return <Card><CardHeader><div className="flex items-center justify-between"><div><p className="section-kicker">Evidence</p><h3 className="mt-1 font-display text-xl font-semibold">结论与证据</h3></div><FileSearch className="size-5 text-signal" /></div></CardHeader><CardContent className="space-y-4">{task.findings.length === 0 ? <p className="text-sm text-muted">尚无证据绑定结论。</p> : task.findings.map((finding) => <article key={finding.id} className="rounded-xl border border-line p-4"><div className="flex flex-wrap items-center gap-2"><Badge variant={finding.kind === "fact" ? "info" : "warning"}>{finding.kind === "fact" ? "事实" : "推测 / inference"}</Badge><span className="text-xs text-muted">第 {finding.round_number} 轮</span></div><p className="mt-3 text-sm leading-6">{finding.statement}</p>{finding.derivation ? <p className="mt-2 text-xs leading-5 text-muted">推导：{finding.derivation}</p> : null}{finding.kind === "inference" ? <p className="mt-2 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">反证：{finding.counterevidence_explanation ?? "历史任务未记录反证状态。"}</p> : null}<div className="mt-3 space-y-2">{finding.evidence.map((evidence) => <details key={evidence.content_id} className="rounded-lg bg-paper px-3 py-2 text-xs"><summary className="cursor-pointer list-none"><Link to={`/library/contents/${encodeURIComponent(evidence.content_id)}`} className="font-semibold hover:text-signal">{evidence.title ?? evidence.content_id}</Link><span className="ml-2 inline-flex gap-1"><Badge variant={evidence.support_type === "contradictory" ? "danger" : evidence.support_type === "direct" ? "info" : "neutral"}>{supportLabel(evidence.support_type)} · {strengthLabel(evidence.support_strength)}</Badge></span></summary><p className="mt-2 leading-5 text-muted">支持说明：{evidence.support_explanation ?? "历史任务未记录支持说明。"}</p><p className="mt-1 text-muted">{evidence.platform ?? "未知平台"} · {evidence.author_name ?? "未知作者"} · 采集 {evidence.collected_at ?? "未知"}</p>{evidence.occurrences && evidence.occurrences.length > 0 ? <p className="mt-2 text-muted">发现 {evidence.occurrences.reduce((total, occurrence) => total + occurrence.occurrence_count, 0)} 次 · 涉及 {evidence.occurrences.length} 条发现记录</p> : null}</details>)}</div></article>)}</CardContent></Card>;
+  return <Card><CardHeader><div className="flex items-center justify-between"><div><p className="section-kicker">Evidence</p><h3 className="mt-1 font-display text-xl font-semibold">结论与证据</h3></div><FileSearch className="size-5 text-signal" /></div></CardHeader><CardContent className="space-y-4">{task.findings.length === 0 ? <p className="text-sm text-muted">尚无证据绑定结论。</p> : task.findings.map((finding) => <article key={finding.id} className="rounded-xl border border-line p-4"><div className="flex flex-wrap items-center gap-2"><Badge variant={finding.kind === "fact" ? "info" : "warning"}>{finding.kind === "fact" ? "事实" : "推测 / inference"}</Badge><span className="text-xs text-muted">第 {finding.round_number} 轮</span></div><p className="mt-3 text-sm leading-6">{finding.statement}</p>{finding.derivation ? <p className="mt-2 text-xs leading-5 text-muted">推导：{finding.derivation}</p> : null}{finding.kind === "inference" ? <p className="mt-2 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">反证：{finding.counterevidence_explanation ?? "历史任务未记录反证状态。"}</p> : null}<div className="mt-3 space-y-2">{finding.evidence.map((evidence) => <details key={evidence.content_id} className="rounded-lg bg-paper px-3 py-2 text-xs"><summary className="cursor-pointer list-none"><Link to={`/library/contents/${encodeURIComponent(evidence.content_id)}`} className="font-semibold hover:text-signal">{evidence.title ?? evidence.content_id}</Link><span className="ml-2 inline-flex gap-1"><Badge variant={evidence.support_type === "contradictory" ? "danger" : evidence.support_type === "direct" ? "info" : "neutral"}>{supportLabel(evidence.support_type)} · {strengthLabel(evidence.support_strength)}</Badge></span></summary><p className="mt-2 leading-5 text-muted">支持说明：{evidence.support_explanation ?? "历史任务未记录支持说明。"}</p><p className="mt-1 text-muted">{evidence.platform ?? "未知平台"} · {evidence.author_name ?? "未知作者"} · 采集 {evidence.collected_at ?? "未知"}</p>{evidence.occurrences && evidence.occurrences.length > 0 ? <div className="mt-2 space-y-1 text-muted"><p>发现 {evidence.occurrences.reduce((total, occurrence) => total + occurrence.occurrence_count, 0)} 次 · 涉及 {evidence.occurrences.length} 条发现记录</p>{evidence.occurrences.map((occurrence) => <p key={occurrence.id}>查询：{occurrence.source_query_ids?.join("、") || occurrence.research_query_id || "—"} · 采集：{occurrence.source_crawler_task_ids?.join("、") || occurrence.crawler_task_id || "—"}</p>)}</div> : null}</details>)}</div></article>)}</CardContent></Card>;
 }
 
 function ActionsCard({ actions, busy, onDecide }: { taskId: string; actions: ResearchTaskDetail["actions"]; busy: boolean; onDecide: (actionId: string, decision: "approve" | "reject") => void }) {

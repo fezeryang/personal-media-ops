@@ -245,6 +245,57 @@ modes. Runs link ordinary crawler tasks and report new, existing, and
 metric-changed contents independently. Trend and brief semantics are defined
 in [intelligence-engine.md](intelligence-engine.md).
 
+## Research Runtime 8C
+
+Research endpoints are owner-session protected and browser writes require the
+same-origin CSRF header:
+
+```text
+GET  /api/research/tasks
+POST /api/research/tasks
+GET  /api/research/tasks/{task_id}
+POST /api/research/tasks/{task_id}/pause
+POST /api/research/tasks/{task_id}/resume
+POST /api/research/tasks/{task_id}/cancel
+POST /api/research/tasks/{task_id}/rerun
+POST /api/research/tasks/{task_id}/complete
+GET  /api/research/tasks/{task_id}/events
+POST /api/research/tasks/{task_id}/actions/{action_id}/approve
+POST /api/research/tasks/{task_id}/actions/{action_id}/reject
+```
+
+The create payload accepts `objective`, an optional capability-derived
+`platforms` list, a `budget`, and a `coverage` plan. Budget fields include
+`max_input_tokens`, `max_output_tokens`, `max_total_tokens`, `max_model_calls`,
+`max_crawl_tasks`, `max_runtime_seconds`, `max_new_contents`,
+`max_payg_amount`, `currency`, and `route_policy`. Coverage fields include
+platform/entity/negative-evidence/independent-evidence/new-content targets and
+the single-entity ratio cap. The detail response exposes `coverage`,
+`platform_coverage`, `entity_coverage`, `content_decisions`, `queries`,
+`step_usage`, `budget_events`, `findings`, `trace`, and result counts.
+
+Query lifecycle and unexecuted reasons are returned verbatim. Evidence
+occurrences retain the normalized content ID, occurrence count, source query
+IDs and source crawler IDs. `summary_html` is derived from `summary_markdown`
+and must still be sanitized by the browser.
+
+## Model billing endpoints
+
+The owner-only Model Center contract additionally exposes:
+
+```text
+GET  /api/ai/billing-profiles
+POST /api/ai/billing-profiles
+GET  /api/ai/provider-prices
+POST /api/ai/provider-prices
+```
+
+Billing profiles describe a package or balance without exposing credentials.
+Provider price versions are scoped to a provider instance and model ID; a
+missing price remains unknown/null. Subscription-fixed calls record tokens and
+latency but are not rendered as zero cost. Provider instances carry vendor,
+instance label, billing mode, relay metadata and tool-capability test state.
+
 ## Safety and rendering
 
 The API uses stable application UUIDs while retaining string source IDs and

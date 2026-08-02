@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Access, Automation, and Intelligence](./access-automation-intelligence.md) | Owner auth, scoped keys, scheduling, snapshots, trends, briefs, and Agent tools | Active |
 | [AI Model Gateway](./ai-model-gateway.md) | Unified provider protocol, encrypted credentials, routing, fallback, and invocation audit | Active |
 | [Research Quality](./research-quality.md) | Query gates, four-way content counts, evidence occurrences, and support contracts | Active |
+| [Research Runtime 8C](./research-runtime-8c.md) | Cross-platform coverage, durable controls, step usage, billing, and recovery | Active |
 | [Error Handling](./error-handling.md) | API and worker failure handling | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards and testing | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Crawler subprocess logging | Active |

@@ -23,6 +23,7 @@ workbench.
 | [Type Safety](./type-safety.md) | Type patterns, validation and API contract | Active |
 | [Intelligence Workbench](./intelligence-workbench.md) | Authenticated shell, real intelligence views, and responsive design tokens | Active |
 | [AI Model Center](./ai-model-center.md) | Provider/model forms, route editing, usage semantics, and bounded gateway diagnostics | Active |
+| [Research Center 8C](./research-center-8c.md) | Platform coverage, evidence decisions, budget trace, and durable controls | Active |
 
 ---
 

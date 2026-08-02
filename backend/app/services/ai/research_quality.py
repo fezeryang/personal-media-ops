@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -71,6 +72,13 @@ ENTITY_TERMS = {
     "b站",
     "bilibili",
 }
+PLATFORM_EVIDENCE_STRATEGIES: dict[str, tuple[str, ...]] = {
+    "bili": ("教程", "演示", "使用体验", "工作流案例"),
+    "zhihu": ("深度分析", "需求讨论", "产品评价", "反向观点"),
+    "wb": ("即时发布", "传播变化", "产品动态", "争议"),
+    "tieba": ("真实问题", "负面体验", "长期用户反馈", "故障 使用障碍"),
+    "xhs": ("实际使用体验", "消费决策", "场景反馈", "易用性", "普通用户评价"),
+}
 QUERY_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{1,}|[\u4e00-\u9fff]{2,8}")
 
 
@@ -86,6 +94,36 @@ class QueryQuality:
     @property
     def accepted(self) -> bool:
         return self.rejection_reason is None
+
+
+@dataclass(frozen=True)
+class StructuredOutputResult:
+    value: object | None
+    strategy: str
+    error: str | None = None
+
+
+def parse_structured_json(
+    value: str,
+    *,
+    repair_value: str | None = None,
+) -> StructuredOutputResult:
+    """Decode JSON with one bounded repair attempt and no retry loop."""
+    candidates = [(value, "strict_json")]
+    stripped = value.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        lines = stripped.splitlines()
+        candidates.append(("\n".join(lines[1:-1]).strip(), "tool_schema"))
+    if repair_value is not None:
+        candidates.append((repair_value, "json_repair_once"))
+    for candidate, strategy in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, (dict, list)):
+            return StructuredOutputResult(parsed, strategy)
+    return StructuredOutputResult(None, "failed", "structured JSON could not be decoded")
 
 
 def normalize_query(query: str) -> str:
@@ -179,6 +217,76 @@ def expected_value_score(
     return round(max(0.0, min(1.0, relevance_score)) * specificity * novelty, 4)
 
 
+def platform_query_variants(
+    entity_or_objective: str,
+    platform: str,
+    *,
+    negative: bool = False,
+    limit: int = 5,
+) -> list[str]:
+    """Build deterministic, platform-native query variants for one branch."""
+    subject = " ".join(entity_or_objective.strip().split())
+    if not subject:
+        return []
+    normalized_platform = platform.casefold()
+    terms = PLATFORM_EVIDENCE_STRATEGIES.get(
+        normalized_platform,
+        ("使用体验", "产品评价", "问题"),
+    )
+    if negative:
+        terms = tuple(
+            term for term in ("问题", "缺点", "不好用", "失败", "替代", "负面体验")
+        )
+    return list(dict.fromkeys(f"{subject} {term}" for term in terms))[:limit]
+
+
+def query_priority_score(
+    *,
+    relevance_score: float | None,
+    specificity_score: float,
+    novelty_score: float,
+    noise_risk_score: float,
+    expected_value_score: float | None,
+    entity_diversity_bonus: float = 0,
+    platform_diversity_bonus: float = 0,
+    negative_evidence_bonus: float = 0,
+    estimated_resource_use: float = 0,
+) -> float:
+    """Return one explainable [0,1] scheduler score."""
+    base = expected_value_score
+    if base is None:
+        base = (relevance_score or 0) * specificity_score * novelty_score
+    score = (
+        base * 0.45
+        + specificity_score * 0.12
+        + novelty_score * 0.12
+        + max(0.0, 1.0 - noise_risk_score) * 0.08
+        + max(0.0, min(1.0, entity_diversity_bonus)) * 0.10
+        + max(0.0, min(1.0, platform_diversity_bonus)) * 0.08
+        + max(0.0, min(1.0, negative_evidence_bonus)) * 0.08
+        - max(0.0, estimated_resource_use) * 0.05
+    )
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def marginal_stop_decision(
+    *,
+    rounds_below_threshold: int,
+    threshold: float,
+    round_limit: int,
+    has_new_entity: bool,
+    has_negative_evidence: bool,
+) -> str | None:
+    if (
+        rounds_below_threshold >= round_limit
+        and threshold >= 0
+        and not has_new_entity
+        and not has_negative_evidence
+    ):
+        return "skipped_saturation" if threshold <= 0.1 else "skipped_low_marginal_value"
+    return None
+
+
 def evaluate_query(
     query: str,
     *,
@@ -224,15 +332,9 @@ def evaluate_query(
 def parse_relevance_batch(value: str, count: int) -> list[float] | None:
     """Parse one model batch response without allowing malformed scores through."""
 
-    import json
-
-    candidate = value.strip()
-    if candidate.startswith("```") and candidate.endswith("```"):
-        lines = candidate.splitlines()
-        candidate = "\n".join(lines[1:-1]).strip()
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
+    parsed_result = parse_structured_json(value)
+    parsed = parsed_result.value
+    if parsed is None:
         return None
     values = parsed.get("relevance_scores") if isinstance(parsed, dict) else parsed
     if not isinstance(values, list) or len(values) != count:

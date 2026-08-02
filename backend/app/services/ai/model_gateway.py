@@ -119,10 +119,23 @@ class ModelGateway:
             raise RuntimeError("Model tool capability is not enabled")
 
     @staticmethod
+    def _fallback_compatible(
+        request: ModelRequest,
+        model: dict[str, object],
+    ) -> bool:
+        return not (
+            request.tools and model.get("supports_tools") is not True
+            or request.stream and model.get("supports_streaming") is not True
+        )
+
+    @staticmethod
     def _cost(
         model: dict[str, object],
         usage: ModelUsage | None,
+        billing_mode: str | None = None,
     ) -> tuple[Decimal | None, str | None, str | None]:
+        if billing_mode == "subscription_fixed":
+            return None, None, None
         if usage is None:
             return None, None, None
         input_tokens = usage.input_tokens
@@ -218,7 +231,12 @@ class ModelGateway:
                     await self._retry_delay(local_attempt)
                     continue
                 return None, error, attempt_number
-            cost, currency, effective_at = self._cost(model, response.usage)
+            priced_model = self.repository.effective_pricing_model(model, str(provider["id"]))
+            cost, currency, effective_at = self._cost(
+                priced_model,
+                response.usage,
+                str(provider.get("billing_mode") or "unknown"),
+            )
             usage = response.usage
             self.repository.finish_invocation(
                 invocation_id,
@@ -230,6 +248,7 @@ class ModelGateway:
                 estimated_cost=cost,
                 price_currency=currency,
                 pricing_effective_at=effective_at,
+                price_source=priced_model.get("price_source"),
             )
             return response, None, attempt_number
         raise AssertionError("bounded provider attempt loop did not return")
@@ -279,6 +298,14 @@ class ModelGateway:
             raise error
         if fallback_model["id"] == model["id"]:
             raise error
+        if not self._fallback_compatible(request, fallback_model):
+            raise ProviderError(
+                code="fallback_incompatible",
+                safe_summary=(
+                    "Fallback model does not support the capabilities required by this request"
+                ),
+                retryable=False,
+            ) from error
         fallback_response, fallback_error, _ = await self._generate_target(
             provider=fallback_provider,
             model=fallback_model,
@@ -406,9 +433,14 @@ class ModelGateway:
                         continue
                     primary_error = error
                     break
-                cost, currency, effective_at = self._cost(
+                priced_model = self.repository.effective_pricing_model(
                     current_model,
+                    str(current_provider["id"]),
+                )
+                cost, currency, effective_at = self._cost(
+                    priced_model,
                     completed.usage,
+                    str(current_provider.get("billing_mode") or "unknown"),
                 )
                 usage = completed.usage
                 self.repository.finish_invocation(
@@ -421,6 +453,7 @@ class ModelGateway:
                     estimated_cost=cost,
                     price_currency=currency,
                     pricing_effective_at=effective_at,
+                    price_source=priced_model.get("price_source"),
                 )
                 return
             assert primary_error is not None
@@ -438,6 +471,14 @@ class ModelGateway:
                 raise primary_error
             if fallback_model["id"] == model["id"]:
                 raise primary_error
+            if not self._fallback_compatible(request, fallback_model):
+                raise ProviderError(
+                    code="fallback_incompatible",
+                    safe_summary=(
+                        "Fallback model does not support the capabilities required by this stream"
+                    ),
+                    retryable=False,
+                ) from primary_error
             current_provider = fallback_provider
             current_model = fallback_model
             is_fallback = True

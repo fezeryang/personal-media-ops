@@ -32,6 +32,12 @@ MODEL_PRICE_FIELDS = {
     "output_price_per_million",
     "cached_input_price_per_million",
     "estimated_cost",
+    "cache_write_price_per_million",
+}
+KNOWN_VENDORS = {
+    "minimax": ("MiniMax", "subscription_fixed"),
+    "deepseek": ("DeepSeek", "pay_as_you_go"),
+    "glm": ("GLM", "subscription_fixed"),
 }
 
 
@@ -124,6 +130,12 @@ class AIRepository:
         concurrency_limit: int,
         secret: EncryptedProviderSecret | None = None,
         provider_id: str | None = None,
+        vendor: str | None = None,
+        instance_label: str | None = None,
+        billing_mode: str | None = None,
+        billing_profile_id: str | None = None,
+        relay_metadata: str = "{}",
+        tool_capability_status: str = "unknown",
     ) -> dict[str, object]:
         identifier = provider_id or str(uuid.uuid4())
         now = _utc_now()
@@ -134,8 +146,9 @@ class AIRepository:
                 INSERT INTO ai_providers (
                     id, name, provider_type, protocol, base_url, enabled,
                     timeout_seconds, max_retries, concurrency_limit,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    vendor, instance_label, billing_mode, billing_profile_id,
+                    relay_metadata, tool_capability_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -147,6 +160,12 @@ class AIRepository:
                     timeout_seconds,
                     max_retries,
                     concurrency_limit,
+                    vendor or KNOWN_VENDORS.get(provider_type, ("unknown", "unknown"))[0],
+                    instance_label or name,
+                    billing_mode or KNOWN_VENDORS.get(provider_type, ("unknown", "unknown"))[1],
+                    billing_profile_id,
+                    relay_metadata,
+                    tool_capability_status,
                     now,
                     now,
                 ),
@@ -205,6 +224,82 @@ class AIRepository:
                 (provider_id,),
             )
 
+    def list_billing_profiles(self) -> list[dict[str, object]]:
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                "SELECT * FROM ai_billing_profiles ORDER BY vendor, name"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_billing_profile(self, **values: object) -> dict[str, object]:
+        identifier = str(uuid.uuid4())
+        now = _utc_now()
+        fields = [
+            "name", "vendor", "billing_mode", "package_name",
+            "purchase_amount", "currency", "starts_at", "ends_at",
+            "quota_description", "token_quota", "call_limit",
+            "concurrency_limit",
+        ]
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                f"INSERT INTO ai_billing_profiles (id, {', '.join(fields)}, created_at, updated_at) "
+                f"VALUES ({', '.join('?' for _ in range(len(fields) + 3))})",
+                (
+                    identifier,
+                    *(values.get(field) for field in fields),
+                    now,
+                    now,
+                ),
+            )
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT * FROM ai_billing_profiles WHERE id = ?", (identifier,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("billing profile could not be read")
+        return dict(row)
+
+    def list_provider_price_versions(
+        self,
+        *,
+        provider_id: str | None = None,
+        model_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        query = "SELECT * FROM ai_provider_price_versions WHERE 1 = 1"
+        values: list[object] = []
+        if provider_id is not None:
+            query += " AND provider_id = ?"
+            values.append(provider_id)
+        if model_id is not None:
+            query += " AND model_id = ?"
+            values.append(model_id)
+        query += " ORDER BY effective_at DESC, id DESC"
+        with connect_database(self.database_path) as connection:
+            return [dict(row) for row in connection.execute(query, values).fetchall()]
+
+    def create_provider_price_version(self, **values: object) -> dict[str, object]:
+        identifier = str(uuid.uuid4())
+        now = _utc_now()
+        fields = [
+            "provider_id", "model_record_id", "model_id",
+            "input_price_per_million", "output_price_per_million",
+            "cached_input_price_per_million", "cache_write_price_per_million",
+            "currency", "effective_at", "source",
+        ]
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                f"INSERT INTO ai_provider_price_versions (id, {', '.join(fields)}, created_at) "
+                f"VALUES ({', '.join('?' for _ in range(len(fields) + 2))})",
+                (identifier, *(values.get(field) for field in fields), now),
+            )
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT * FROM ai_provider_price_versions WHERE id = ?", (identifier,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("provider price version could not be read")
+        return dict(row)
+
     def get_provider_secret(self, provider_id: str) -> dict[str, object] | None:
         with connect_database(self.database_path) as connection:
             row = connection.execute(
@@ -226,6 +321,13 @@ class AIRepository:
             "timeout_seconds",
             "max_retries",
             "concurrency_limit",
+            "vendor",
+            "instance_label",
+            "billing_mode",
+            "billing_profile_id",
+            "relay_metadata",
+            "tool_capability_status",
+            "tool_capability_tested_at",
         }
         invalid = set(changes) - allowed
         if invalid:
@@ -328,6 +430,51 @@ class AIRepository:
         result["provider_enabled"] = bool(result["provider_enabled"])
         return result
 
+    def effective_pricing_model(
+        self,
+        model: dict[str, object],
+        provider_id: str,
+    ) -> dict[str, object]:
+        """Overlay the latest provider-instance price without guessing a price.
+
+        Model defaults remain useful for legacy records, while a versioned
+        provider price is authoritative for an explicitly configured instance.
+        Missing values stay missing so cost accounting remains ``unknown``.
+        """
+        model_id = str(model.get("model_id") or "")
+        record_id = str(model.get("id") or "")
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT input_price_per_million, output_price_per_million,
+                       cached_input_price_per_million, cache_write_price_per_million,
+                       currency, effective_at, source
+                FROM ai_provider_price_versions
+                WHERE provider_id = ?
+                  AND (model_record_id = ? OR (model_record_id IS NULL AND model_id = ?))
+                ORDER BY CASE WHEN model_record_id = ? THEN 0 ELSE 1 END,
+                         effective_at DESC, id DESC
+                LIMIT 1
+                """,
+                (provider_id, record_id, model_id, record_id),
+            ).fetchone()
+        if row is None:
+            return model
+        enriched = dict(model)
+        mapping = {
+            "input_price_per_million": "input_price_per_million",
+            "output_price_per_million": "output_price_per_million",
+            "cached_input_price_per_million": "cached_input_price_per_million",
+            "cache_write_price_per_million": "cache_write_price_per_million",
+            "currency": "price_currency",
+            "effective_at": "price_effective_at",
+            "source": "price_source",
+        }
+        for source, target in mapping.items():
+            if row[source] is not None:
+                enriched[target] = _decimal_string(row[source]) if source.endswith("price_per_million") else row[source]
+        return enriched
+
     def create_model(self, **values: object) -> dict[str, object]:
         identifier = str(uuid.uuid4())
         now = _utc_now()
@@ -348,13 +495,16 @@ class AIRepository:
             "input_price_per_million",
             "output_price_per_million",
             "cached_input_price_per_million",
+            "cache_write_price_per_million",
+            "price_source",
             "price_currency",
             "price_effective_at",
         ]
-        missing = set(fields) - set(values)
+        required_fields = set(fields) - {"cache_write_price_per_million", "price_source"}
+        missing = required_fields - set(values)
         if missing:
             raise ValueError(f"Missing model fields: {sorted(missing)}")
-        encoded = [self._encode_model_value(field, values[field]) for field in fields]
+        encoded = [self._encode_model_value(field, values.get(field)) for field in fields]
         with connect_database(self.database_path) as connection:
             connection.execute(
                 f"""
@@ -394,6 +544,8 @@ class AIRepository:
             "input_price_per_million",
             "output_price_per_million",
             "cached_input_price_per_million",
+            "cache_write_price_per_million",
+            "price_source",
             "price_currency",
             "price_effective_at",
         }
@@ -463,6 +615,7 @@ class AIRepository:
                 SELECT r.role, r.model_id AS model_record_id, r.updated_at,
                        m.model_id, m.display_name, m.enabled,
                        p.id AS provider_id, p.name AS provider_name,
+                       p.vendor, p.billing_mode,
                        p.enabled AS provider_enabled
                 FROM ai_model_routes r
                 LEFT JOIN ai_models m ON m.id = r.model_id
@@ -619,14 +772,21 @@ class AIRepository:
     ) -> str:
         identifier = str(uuid.uuid4())
         with connect_database(self.database_path) as connection:
+            provider_row = connection.execute(
+                "SELECT vendor, billing_profile_id, billing_mode FROM ai_providers WHERE id = ?",
+                (provider_id,),
+            ).fetchone()
             connection.execute(
                 """
                 INSERT INTO ai_model_invocations (
                     id, provider_id, model_record_id, model_id, route_role,
                     status, started_at, request_correlation_id, attempt_number,
                     is_fallback, research_task_id, fallback_from_provider_id,
-                    fallback_from_model_id, fallback_reason
-                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
+                    fallback_from_model_id, fallback_reason, vendor,
+                    provider_instance_id, billing_profile_id, billing_mode,
+                    estimated_cost_kind
+                ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -642,6 +802,17 @@ class AIRepository:
                     fallback_from_provider_id,
                     fallback_from_model_id,
                     fallback_reason,
+                    provider_row["vendor"] if provider_row is not None else None,
+                    provider_id,
+                    provider_row["billing_profile_id"] if provider_row is not None else None,
+                    provider_row["billing_mode"] if provider_row is not None else None,
+                    (
+                        "not_applicable"
+                        if provider_row is not None and provider_row["billing_mode"] == "subscription_fixed"
+                        else "unavailable"
+                        if provider_row is None or provider_row["billing_mode"] in {"unknown", None}
+                        else "estimated"
+                    ),
                 ),
             )
         return identifier
@@ -655,9 +826,11 @@ class AIRepository:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
         estimated_cost: Decimal | None = None,
         price_currency: str | None = None,
         pricing_effective_at: str | None = None,
+        price_source: str | None = None,
         error_code: str | None = None,
         error_summary: str | None = None,
     ) -> None:
@@ -667,8 +840,15 @@ class AIRepository:
                 UPDATE ai_model_invocations SET
                     status = ?, finished_at = ?, latency_ms = ?,
                     input_tokens = ?, output_tokens = ?, cached_tokens = ?,
+                    cache_write_tokens = ?,
                     estimated_cost = ?, price_currency = ?,
-                    pricing_effective_at = ?, error_code = ?, error_summary = ?
+                    pricing_effective_at = ?, price_source = ?,
+                    estimated_cost_kind = CASE
+                        WHEN billing_mode = 'subscription_fixed' THEN 'not_applicable'
+                        WHEN ? IS NULL THEN 'unavailable'
+                        ELSE 'estimated'
+                    END,
+                    error_code = ?, error_summary = ?
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -678,9 +858,12 @@ class AIRepository:
                     input_tokens,
                     output_tokens,
                     cached_tokens,
+                    cache_write_tokens,
                     str(estimated_cost) if estimated_cost is not None else None,
                     price_currency,
                     pricing_effective_at,
+                    price_source,
+                    str(estimated_cost) if estimated_cost is not None else None,
                     error_code,
                     error_summary,
                     invocation_id,
@@ -715,6 +898,36 @@ class AIRepository:
         if row is None or row["total_cost"] is None:
             return None
         return Decimal(str(row["total_cost"]))
+
+    def invocation_billing(
+        self,
+        *,
+        request_correlation_id: str,
+        research_task_id: str,
+    ) -> dict[str, object]:
+        """Return the durable billing labels for one logical gateway call."""
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT SUM(estimated_cost) AS estimated_cost,
+                       MAX(CASE WHEN status = 'succeeded' THEN price_currency END)
+                           AS currency,
+                       MAX(CASE WHEN status = 'succeeded' THEN price_source END)
+                           AS price_source
+                FROM ai_model_invocations
+                WHERE request_correlation_id = ? AND research_task_id = ?
+                """,
+                (request_correlation_id, research_task_id),
+            ).fetchone()
+        if row is None:
+            return {"estimated_cost": None, "currency": None, "price_source": None}
+        return {
+            "estimated_cost": _decimal_string(row["estimated_cost"])
+            if row["estimated_cost"] is not None
+            else None,
+            "currency": row["currency"],
+            "price_source": row["price_source"],
+        }
 
     def list_invocations(self, limit: int = 100) -> list[dict[str, object]]:
         with connect_database(self.database_path) as connection:
@@ -751,7 +964,9 @@ class AIRepository:
                     COALESCE(SUM(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
                     SUM(CASE
-                        WHEN status = 'succeeded' AND estimated_cost IS NULL
+                        WHEN status = 'succeeded'
+                         AND estimated_cost IS NULL
+                         AND COALESCE(billing_mode, 'unknown') != 'subscription_fixed'
                         THEN 1 ELSE 0 END
                     ) AS uncosted_invocation_count,
                     SUM(CASE WHEN estimated_cost IS NOT NULL THEN 1 ELSE 0 END)

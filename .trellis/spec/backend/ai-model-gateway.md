@@ -22,9 +22,11 @@ class ModelProvider:
 
 Owner API signatures are `/api/ai/providers`, `/api/ai/models`,
 `/api/ai/routes`, `/api/ai/usage`, `/api/ai/health`, and `/api/ai/debug`, plus
-provider detail/test/refresh endpoints. Alembic head `0010_ai_model_gateway`
-owns `ai_providers`, `ai_provider_secrets`, `ai_models`, `ai_model_routes`,
-`ai_provider_health_checks`, and `ai_model_invocations`.
+provider detail/test/refresh endpoints. Alembic `0010_ai_model_gateway` owns
+the original provider/model/route/health/invocation tables; later migrations
+extend invocation snapshots with provider-instance billing semantics and
+versioned pricing. The 8C cross-layer contract is in
+`research-runtime-8c.md`.
 
 ### 3. Contracts
 

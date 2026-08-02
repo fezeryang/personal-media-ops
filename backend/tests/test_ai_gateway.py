@@ -213,6 +213,91 @@ def test_gateway_does_not_fake_cost_and_rejects_disabled_route(tmp_path: Path) -
         asyncio.run(run_once())
 
 
+def test_provider_instance_price_version_and_billing_mode_are_snapshotted(
+    tmp_path: Path,
+) -> None:
+    repository, cipher = _setup(tmp_path)
+    provider = _provider(repository, cipher, "deepseek-official", retries=0)
+    repository.update_provider(
+        str(provider["id"]),
+        vendor="DeepSeek",
+        instance_label="DeepSeek 官方",
+        billing_mode="pay_as_you_go",
+    )
+    model = _model(repository, str(provider["id"]), "deepseek-chat")
+    repository.create_provider_price_version(
+        provider_id=str(provider["id"]),
+        model_record_id=str(model["id"]),
+        model_id="deepseek-chat",
+        input_price_per_million="1.00",
+        output_price_per_million="2.00",
+        cached_input_price_per_million="0.50",
+        cache_write_price_per_million=None,
+        currency="USD",
+        effective_at="2026-08-01T00:00:00Z",
+        source="official-price-config",
+    )
+    repository.replace_routes({"default": str(model["id"])})
+
+    async def run() -> None:
+        gateway = ModelGateway(
+            repository=repository,
+            secret_cipher=cipher,
+            provider_factory=lambda *_: FakeProvider("deepseek", [_response("deepseek")]),
+        )
+        await gateway.generate(
+            ModelRequest(
+                messages=[ModelMessage(role="user", content="price test")],
+                max_tokens=20,
+            ),
+            route_role="default",
+        )
+
+    asyncio.run(run())
+    invocation = repository.list_invocations(limit=1)[0]
+    assert invocation["billing_mode"] == "pay_as_you_go"
+    assert invocation["vendor"] == "DeepSeek"
+    assert invocation["price_source"] == "official-price-config"
+    assert invocation["estimated_cost_kind"] == "estimated"
+    assert invocation["estimated_cost"] == "0.0000125"
+
+
+def test_subscription_invocation_is_not_reported_as_zero_or_uncosted(
+    tmp_path: Path,
+) -> None:
+    repository, cipher = _setup(tmp_path)
+    provider = _provider(repository, cipher, "minimax-subscription", retries=0)
+    repository.update_provider(
+        str(provider["id"]),
+        vendor="MiniMax",
+        billing_mode="subscription_fixed",
+    )
+    model = _model(repository, str(provider["id"]), "MiniMax-M3")
+    repository.replace_routes({"default": str(model["id"])})
+
+    async def run() -> None:
+        gateway = ModelGateway(
+            repository=repository,
+            secret_cipher=cipher,
+            provider_factory=lambda *_: FakeProvider("minimax", [_response("minimax")]),
+        )
+        await gateway.generate(
+            ModelRequest(
+                messages=[ModelMessage(role="user", content="subscription test")],
+                max_tokens=20,
+            ),
+            route_role="default",
+        )
+
+    asyncio.run(run())
+    invocation = repository.list_invocations(limit=1)[0]
+    assert invocation["billing_mode"] == "subscription_fixed"
+    assert invocation["estimated_cost"] is None
+    assert invocation["estimated_cost_kind"] == "not_applicable"
+    usage = repository.usage_summary()
+    assert usage["totals"]["uncosted_invocation_count"] == 0  # type: ignore[index]
+
+
 def test_stream_never_falls_back_after_content_was_emitted(tmp_path: Path) -> None:
     repository, cipher = _setup(tmp_path)
     primary_provider = _provider(repository, cipher, "primary", retries=0)

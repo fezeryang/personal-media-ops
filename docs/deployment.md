@@ -98,6 +98,12 @@ JSONL。`0004_content_modes` 保留原任务列和记录，增加五模式目标
 有序专题；`0009_metrics_and_intelligence` 新增创作者监控、指标快照、趋势、简报
 和每日简报调度；`0010_ai_model_gateway` 新增 AI Provider、认证加密凭证、模型、
 角色路由、能力健康检查与调用审计表。
+`0011_research_quality_foundation` 增加查询来源链、查询质量闸门、Finding 支持类型与
+证据发生记录；`0012_research_quality_foundation` 保留并校验既有研究质量数据。
+`0013_cross_platform_research_completion` 增加跨平台 Coverage Plan、查询生命周期与
+边际收益、内容采用/转载判定、Runtime checkpoint、步骤级用量、预算事件、Billing
+Profile 和 Provider 价格版本；该迁移会为既有 Provider/Invocation 快照补齐账务语义，
+不会改写原始 JSONL。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
 资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
 revision，不会静默执行迁移。
@@ -117,6 +123,14 @@ uv run python -m app.cli create-owner --username owner
 前端构建 → `alembic upgrade head` → 受限 helper 激活 → 健康检查 → 必要时交互式
 创建所有者并验证登录。数据库恢复属于
 破坏性 root 操作，本仓库不会自动执行。
+
+阶段 8C 的 `0013_cross_platform_research_completion` 发布前必须确认生产仍在
+`0012_research_quality_foundation`，先执行 SQLite 一致性备份并记录备份目录与
+SHA-256，再使用 `--allow-migrations` 发布。迁移后必须核对 Alembic head 为
+`0013_cross_platform_research_completion`、`PRAGMA integrity_check` 为 `ok`，并确认
+既有 Research、Finding、Evidence 和 AI Invocation 行数未减少。若迁移或应用验证失败，
+保持新 schema，优先回滚应用代码或提交前向修复；不得执行未经审查的 downgrade 或
+替换生产数据库。
 
 ## Frontend Build
 

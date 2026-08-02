@@ -81,6 +81,14 @@ def _validated_platforms(
 
 
 def _consumption(task: dict[str, object]) -> dict[str, object]:
+    billing = task.get("billing_summary")
+    billing = billing if isinstance(billing, dict) else {}
+    subscription = billing.get("subscription_fixed")
+    subscription = subscription if isinstance(subscription, dict) else {}
+    payg = billing.get("pay_as_you_go")
+    payg = payg if isinstance(payg, dict) else {}
+    relay = billing.get("relay")
+    relay = relay if isinstance(relay, dict) else {}
     return {
         "crawl_count": task["consumed_crawl_count"],
         "content_count": task["consumed_content_count"],
@@ -90,7 +98,19 @@ def _consumption(task: dict[str, object]) -> dict[str, object]:
         "cached_tokens": task["cached_tokens"],
         "estimated_cost": task.get("estimated_cost"),
         "cost_enabled": task["budget_cost_enabled"],
-        "cost_currency": task.get("budget_cost_currency"),
+        "cost_currency": task.get("budget_cost_currency") or task.get("budget_currency"),
+        "model_call_count": task.get("consumed_model_call_count", 0),
+        "subscription_calls": subscription.get("calls", 0),
+        "subscription_tokens": subscription.get("tokens", 0),
+        "payg_calls": payg.get("calls", 0),
+        "payg_tokens": payg.get("tokens", 0),
+        "relay_calls": relay.get("calls", 0),
+        "relay_tokens": relay.get("tokens", 0),
+        "uncosted_call_count": sum(
+            int(item.get("uncosted_calls", 0))
+            for item in billing.values()
+            if isinstance(item, dict)
+        ),
     }
 
 
@@ -112,6 +132,7 @@ def _summary(task: dict[str, object]) -> dict[str, object]:
         "updated_at": task["updated_at"],
         "finished_at": task.get("finished_at"),
         "failure_reason": task.get("failure_reason"),
+        "stop_reason": task.get("stop_reason"),
     }
 
 
@@ -123,6 +144,16 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         "token_limit": task["budget_token_limit"],
         "cost_limit": task.get("budget_cost_limit"),
         "cost_currency": task.get("budget_cost_currency"),
+        "max_input_tokens": task.get("budget_max_input_tokens"),
+        "max_output_tokens": task.get("budget_max_output_tokens"),
+        "max_model_calls": task.get("budget_max_model_calls", 100),
+        "route_policy": task.get("route_policy", "balanced"),
+        "max_total_tokens": task.get("budget_max_total_tokens", task.get("budget_token_limit")),
+        "max_crawl_tasks": task.get("budget_max_crawl_tasks", task.get("budget_crawl_limit")),
+        "max_new_contents": task.get("budget_max_new_contents", task.get("budget_content_limit")),
+        "max_runtime_seconds": task.get("budget_max_runtime_seconds", task.get("budget_duration_seconds")),
+        "max_payg_amount": task.get("budget_max_payg_amount"),
+        "currency": task.get("budget_currency", task.get("budget_cost_currency")),
     }
     return {
         **_summary(task),
@@ -131,6 +162,12 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         "result": _result_with_formats(task.get("result")),
         "route_snapshot": task.get("route_snapshot", {}),
         "budget": budget,
+        "coverage": task.get("coverage", {}),
+        "platform_coverage": task.get("platform_coverage", []),
+        "entity_coverage": task.get("entity_coverage", []),
+        "content_decisions": task.get("content_decisions", []),
+        "step_usage": task.get("step_usage", []),
+        "budget_events": task.get("budget_events", []),
         "trace": task.get("execution_trace", []),
         "findings": task.get("findings", []),
         "queries": task.get("queries", []),
@@ -176,6 +213,17 @@ def create_task(
             token_limit=payload.budget.token_limit,
             cost_limit=payload.budget.cost_limit,
             cost_currency=payload.budget.cost_currency,
+            coverage=payload.coverage.model_dump(),
+            max_input_tokens=payload.budget.max_input_tokens,
+            max_output_tokens=payload.budget.max_output_tokens,
+            max_model_calls=payload.budget.max_model_calls,
+            route_policy=payload.budget.route_policy,
+            max_total_tokens=payload.budget.max_total_tokens,
+            max_crawl_tasks=payload.budget.max_crawl_tasks,
+            max_new_contents=payload.budget.max_new_contents,
+            max_runtime_seconds=payload.budget.max_runtime_seconds,
+            max_payg_amount=payload.budget.max_payg_amount,
+            budget_currency=payload.budget.currency,
         )
     except Exception as error:
         raise _conflict(error) from error
