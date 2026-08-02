@@ -1705,6 +1705,7 @@ class ResearchRuntime:
             else context
         )
         self.research.finalize_content_decisions(task_id)
+        self.research.finalize_platform_coverage(task_id)
         quality = self.research.quality_summary(task_id)
         coverage_review = self.research.coverage_summary(task_id)
         self.research.record_step_usage(task_id, step="coverage_review")

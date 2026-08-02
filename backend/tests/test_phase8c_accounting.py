@@ -161,6 +161,72 @@ def test_entity_platform_coverage_counts_distinct_platforms(tmp_path: Path) -> N
     assert detail["entity_coverage"][0]["entity_platform_count"] == 2  # type: ignore[index]
 
 
+def test_entity_concentration_uses_unique_adopted_content(tmp_path: Path) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(
+        database,
+        owner_id,
+        platforms=["bili"],
+        coverage={
+            "target_platform_count": 1,
+            "target_entity_count": 2,
+            "max_single_entity_evidence_ratio": 0.6,
+        },
+    )
+    task_id = str(task["id"])
+    first = _ingest_content(
+        database,
+        tmp_path,
+        platform="bili",
+        source_content_id="concentration-1",
+        title="Codex and WorkBuddy comparison",
+        description="Codex is mentioned alongside WorkBuddy.",
+    )
+    second = _ingest_content(
+        database,
+        tmp_path,
+        platform="bili",
+        source_content_id="concentration-2",
+        title="Codex workflow",
+        description="A separate Codex workflow.",
+    )
+    repository.upsert_entity_coverage(task_id, "Codex", platform="bili")
+    repository.upsert_entity_coverage(task_id, "WorkBuddy", platform="bili")
+    repository.save_finding(
+        task_id=task_id,
+        round_number=1,
+        kind="fact",
+        statement="The two contents mention Codex, while one also mentions WorkBuddy.",
+        derivation=None,
+        content_ids=[first, second],
+        evidence_links=[
+            {
+                "content_id": first,
+                "support_type": "direct",
+                "support_strength": "strong",
+                "support_explanation": "The comparison directly names both products.",
+            },
+            {
+                "content_id": second,
+                "support_type": "direct",
+                "support_strength": "strong",
+                "support_explanation": "The workflow directly names Codex.",
+            },
+        ],
+    )
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    entities = {
+        item["canonical_name"]: item for item in detail["entity_coverage"]  # type: ignore[index]
+    }
+    assert entities["Codex"]["entity_evidence_count"] == 2
+    assert entities["Codex"]["entity_coverage_ratio"] == 1.0
+    assert entities["Codex"]["saturated"] is True
+    assert entities["WorkBuddy"]["entity_evidence_count"] == 1
+    assert entities["WorkBuddy"]["entity_coverage_ratio"] == 0.5
+
+
 def test_occurrences_aggregate_repeated_discovery_and_preserve_sources(tmp_path: Path) -> None:
     database, owner_id = setup_database(tmp_path)
     repository = ResearchTaskRepository(database)

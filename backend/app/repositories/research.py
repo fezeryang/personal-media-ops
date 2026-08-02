@@ -1184,6 +1184,99 @@ class ResearchTaskRepository:
                     (int(independent or 0), int(negative or 0), now, task_id, platform),
                 )
 
+            # Concentration is measured against unique adopted, non-repost
+            # content IDs, not against the sum of entity mentions. One
+            # content item may mention several products; using the mention
+            # sum would dilute every entity's share.
+            entity_rows = connection.execute(
+                """
+                SELECT canonical_name, entity_new_content_count
+                FROM research_entity_coverage
+                WHERE research_task_id = ?
+                """,
+                (task_id,),
+            ).fetchall()
+            adopted_rows = connection.execute(
+                """
+                SELECT DISTINCT c.id, c.platform, c.title, c.description
+                FROM research_content_decisions cd
+                JOIN library_contents c ON c.id = cd.content_id
+                WHERE cd.research_task_id = ?
+                  AND cd.decision = 'adopted'
+                  AND cd.is_repost = 0
+                """,
+                (task_id,),
+            ).fetchall()
+            independent_count = len(adopted_rows)
+            threshold_row = connection.execute(
+                """
+                SELECT max_single_entity_evidence_ratio
+                FROM research_coverage_plans
+                WHERE research_task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            threshold = float(threshold_row[0]) if threshold_row is not None else 0.6
+            for entity in entity_rows:
+                canonical_name = str(entity["canonical_name"])
+                normalized_entity = _normalized_text(canonical_name)
+                matched = [
+                    row
+                    for row in adopted_rows
+                    if normalized_entity
+                    in _normalized_text(f"{row['title'] or ''} {row['description'] or ''}")
+                ]
+                matched_ids = {str(row["id"]) for row in matched}
+                matched_platforms = sorted(
+                    {str(row["platform"]) for row in matched if row["platform"]}
+                )
+                ratio = (
+                    len(matched_ids) / independent_count
+                    if independent_count
+                    else 0.0
+                )
+                connection.execute(
+                    """
+                    UPDATE research_entity_coverage
+                    SET entity_evidence_count = ?,
+                        entity_new_content_count = MIN(entity_new_content_count, ?),
+                        entity_platform_count = ?,
+                        platforms_json = ?,
+                        entity_coverage_ratio = ?,
+                        saturated = ?,
+                        updated_at = ?
+                    WHERE research_task_id = ? AND canonical_name = ?
+                    """,
+                    (
+                        len(matched_ids),
+                        len(matched_ids),
+                        len(matched_platforms),
+                        _dump(matched_platforms),
+                        ratio,
+                        int(ratio >= threshold and independent_count > 0),
+                        utc_now(),
+                        task_id,
+                        canonical_name,
+                    ),
+                )
+
+    def finalize_platform_coverage(self, task_id: str) -> None:
+        """Close platform rows after the task has no pending crawler work."""
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                UPDATE research_platform_coverage
+                SET status = CASE
+                        WHEN failure_reason IS NOT NULL THEN 'failed'
+                        WHEN result_count > 0 THEN 'completed'
+                        ELSE status
+                    END,
+                    updated_at = ?
+                WHERE research_task_id = ?
+                """,
+                (utc_now(), task_id),
+            )
+
     def record_finding_entity_coverage(
         self,
         task_id: str,

@@ -53,6 +53,10 @@ Content decisions distinguish collected, new, candidate, adopted, and not
 adopted results. Reposts remain visible and preserve query/task provenance but
 do not increase independent evidence. Evidence cards always retain
 `content_id`, `source_url`, `platform`, `published_at`, and `evidence_role`.
+Entity concentration uses unique adopted, non-repost content IDs over the
+unique independent evidence denominator. A single content item may match more
+than one entity, but entity mention multiplicity must not make a concentrated
+study appear diverse.
 
 Step usage covers planning, query generation/review, tool evaluation, entity
 extraction, evidence selection, finding generation, coverage review, and final

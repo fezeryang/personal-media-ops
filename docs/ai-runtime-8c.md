@@ -81,6 +81,11 @@ The same query is not copied mechanically to every platform. Saturated
 entities receive a lower diversity bonus; alternatives, competitors and
 negative queries are preferred. Reports must state when evidence is still
 concentrated on one entity and must not call that a market-wide trend.
+Entity concentration is calculated as the number of unique adopted,
+non-repost `content_id` values mentioning the entity divided by the total
+unique independent adopted evidence count. A content item mentioning several
+entities is counted once for each matching entity, but it does not dilute the
+single-entity ratio through a mention-sum denominator.
 
 ## Evidence decisions and provenance
 
