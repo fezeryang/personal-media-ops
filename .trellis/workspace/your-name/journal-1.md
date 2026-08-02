@@ -654,3 +654,36 @@ Diagnosed the Research detail HTTP 500 on production 8C tasks to a response-mode
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Fix research detail budget-event format
+
+**Date**: 2026-08-02
+**Task**: Fix research detail budget-event format
+**Branch**: `main`
+
+### Summary
+
+Diagnosed the frontend response-format error after the HTTP 500 fix: SQLite numeric affinity exposed research budget event amounts as JSON numbers while the strict frontend schema requires strings. Normalized amount and estimated_cost at the backend projection boundary, added a regression test, passed backend 395 and frontend lint/56 tests/build, deployed without migration, and verified both supplied production task payloads. Preserved the unrelated UX planning task and CLAUDE.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `920d86e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
