@@ -584,3 +584,40 @@ integrity_check=ok，API/Worker active，无活动采集、研究任务或浏览
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Phase 8C cross-platform research completion
+
+**Date**: 2026-08-02
+**Task**: Phase 8C cross-platform research completion
+**Branch**: `main`
+
+### Summary
+
+Completed Phase 8C cross-platform research, coverage controls, evidence provenance, mixed billing semantics, capability-aware fallback, pause/resume/cancel, restart recovery, frontend surfaces, migration 0013, production validation, deployment, and final evidence report. Three-platform acceptance reached platform/entity/independent/new-content targets; live negative-evidence shortfall was recorded as not_found without fabrication.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf6b26c` | (see git log) |
+| `ffb57a5` | (see git log) |
+| `b324216` | (see git log) |
+| `d7a530a` | (see git log) |
+| `d85b125` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
