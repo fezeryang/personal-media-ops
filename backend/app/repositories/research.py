@@ -273,6 +273,442 @@ class ResearchTaskRepository:
             raise RuntimeError("created research task could not be read")
         return task
 
+    def save_intent(
+        self,
+        task_id: str,
+        contract: dict[str, object],
+        *,
+        change_reason: str = "intent_interpreted",
+    ) -> dict[str, object]:
+        """Persist one auditable Intent Contract and its version snapshot."""
+        now = utc_now()
+        encoded_fields = {
+            "secondary_intents_json": contract.get("secondary_intents", []),
+            "subject_json": contract.get("subject", {}),
+            "known_entities_json": contract.get("known_entities", []),
+            "known_constraints_json": contract.get("known_constraints", []),
+            "unknowns_to_discover_json": contract.get("unknowns_to_discover", []),
+            "time_scope_json": contract.get("time_scope", {}),
+            "platform_preferences_json": contract.get("platform_preferences", []),
+            "evidence_requirements_json": contract.get("evidence_requirements", []),
+            "negative_evidence_requirements_json": contract.get("negative_evidence_requirements", []),
+            "exclusions_json": contract.get("exclusions", []),
+            "desired_output_json": contract.get("desired_output", []),
+            "success_criteria_json": contract.get("success_criteria", []),
+            "ambiguities_json": contract.get("ambiguities", []),
+            "assumptions_json": contract.get("assumptions", []),
+            "intent_revisions_json": contract.get("intent_revisions", []),
+        }
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            task = connection.execute(
+                "SELECT objective FROM research_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise ResearchTaskNotFound(task_id)
+            existing = connection.execute(
+                "SELECT id, version FROM research_intents WHERE research_task_id = ?",
+                (task_id,),
+            ).fetchone()
+            version = max(1, int(contract.get("version") or 1))
+            if existing is not None:
+                version = max(int(existing["version"]) + 1, version)
+            contract = dict(contract)
+            contract.update(
+                {
+                    "original_request": str(contract.get("original_request") or task["objective"]),
+                    "original_intent": str(contract.get("original_intent") or task["objective"]),
+                    "version": version,
+                    "created_at": str(contract.get("created_at") or now),
+                    "updated_at": now,
+                }
+            )
+            intent_id = str(existing["id"]) if existing is not None else self.new_id()
+            values = {
+                "id": intent_id,
+                "task_id": task_id,
+                "original_request": contract["original_request"],
+                "original_intent": contract["original_intent"],
+                "interpreted_goal": str(contract.get("interpreted_goal") or contract["original_request"]),
+                "primary_intent": str(contract.get("primary_intent") or "discovery"),
+                "target_audience": contract.get("target_audience"),
+                "current_research_hypothesis": str(
+                    contract.get("current_research_hypothesis")
+                    or contract.get("interpreted_goal")
+                    or contract["original_request"]
+                ),
+                "intent_source": str(contract.get("intent_source") or "fallback_default"),
+                "version": version,
+                "confidence": max(0.0, min(1.0, float(contract.get("confidence") or 0))),
+                "created_at": str(contract["created_at"]),
+                "updated_at": now,
+            }
+            values.update({key: _dump(value) for key, value in encoded_fields.items()})
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO research_intents (
+                        id, research_task_id, original_request, original_intent,
+                        interpreted_goal, primary_intent, secondary_intents_json,
+                        subject_json, known_entities_json, known_constraints_json,
+                        unknowns_to_discover_json, time_scope_json,
+                        platform_preferences_json, target_audience,
+                        evidence_requirements_json, negative_evidence_requirements_json,
+                        exclusions_json, desired_output_json, success_criteria_json,
+                        confidence, ambiguities_json, assumptions_json,
+                        current_research_hypothesis, intent_revisions_json,
+                        intent_source, version, created_at, updated_at
+                    ) VALUES (
+                        :id, :task_id, :original_request, :original_intent,
+                        :interpreted_goal, :primary_intent, :secondary_intents_json,
+                        :subject_json, :known_entities_json, :known_constraints_json,
+                        :unknowns_to_discover_json, :time_scope_json,
+                        :platform_preferences_json, :target_audience,
+                        :evidence_requirements_json, :negative_evidence_requirements_json,
+                        :exclusions_json, :desired_output_json, :success_criteria_json,
+                        :confidence, :ambiguities_json, :assumptions_json,
+                        :current_research_hypothesis, :intent_revisions_json,
+                        :intent_source, :version, :created_at, :updated_at
+                    )
+                    """,
+                    values,
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE research_intents SET
+                        original_request = :original_request,
+                        original_intent = :original_intent,
+                        interpreted_goal = :interpreted_goal,
+                        primary_intent = :primary_intent,
+                        secondary_intents_json = :secondary_intents_json,
+                        subject_json = :subject_json,
+                        known_entities_json = :known_entities_json,
+                        known_constraints_json = :known_constraints_json,
+                        unknowns_to_discover_json = :unknowns_to_discover_json,
+                        time_scope_json = :time_scope_json,
+                        platform_preferences_json = :platform_preferences_json,
+                        target_audience = :target_audience,
+                        evidence_requirements_json = :evidence_requirements_json,
+                        negative_evidence_requirements_json = :negative_evidence_requirements_json,
+                        exclusions_json = :exclusions_json,
+                        desired_output_json = :desired_output_json,
+                        success_criteria_json = :success_criteria_json,
+                        confidence = :confidence,
+                        ambiguities_json = :ambiguities_json,
+                        assumptions_json = :assumptions_json,
+                        current_research_hypothesis = :current_research_hypothesis,
+                        intent_revisions_json = :intent_revisions_json,
+                        intent_source = :intent_source,
+                        version = :version,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                    """,
+                    values,
+                )
+                connection.execute(
+                    "UPDATE research_intent_assumptions SET status = 'superseded' WHERE research_task_id = ? AND status = 'active'",
+                    (task_id,),
+                )
+            connection.execute(
+                """
+                INSERT INTO research_intent_versions (
+                    id, research_task_id, version, contract_json, change_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (self.new_id(), task_id, version, _dump(contract), change_reason, now),
+            )
+            for assumption in contract.get("assumptions", []):
+                if not isinstance(assumption, str) or not assumption.strip():
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO research_intent_assumptions (
+                        id, research_task_id, intent_version, assumption, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (self.new_id(), task_id, version, assumption.strip(), now),
+                )
+            for priority, unknown in enumerate(contract.get("unknowns_to_discover", [])):
+                if not isinstance(unknown, str) or not unknown.strip():
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO research_unknowns (
+                        id, research_task_id, unknown, priority, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(research_task_id, unknown) DO UPDATE SET
+                        priority = excluded.priority, updated_at = excluded.updated_at
+                    """,
+                    (self.new_id(), task_id, unknown.strip(), priority, now, now),
+                )
+            self._append_trace_connection(
+                connection,
+                task_id,
+                event="intent_interpreted",
+                status=None,
+                reason=change_reason,
+                round_number=0,
+                step="intent_interpretation",
+                tool_arguments={
+                    "intent_id": intent_id,
+                    "primary_intent": values["primary_intent"],
+                    "confidence": values["confidence"],
+                    "version": version,
+                    "intent_source": values["intent_source"],
+                },
+            )
+        return self.get_intent(task_id)
+
+    def get_intent(self, task_id: str) -> dict[str, object]:
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT * FROM research_intents WHERE research_task_id = ?", (task_id,)
+            ).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(task_id)
+        item = dict(row)
+        for field, default in (
+            ("secondary_intents_json", []),
+            ("subject_json", {}),
+            ("known_entities_json", []),
+            ("known_constraints_json", []),
+            ("unknowns_to_discover_json", []),
+            ("time_scope_json", {}),
+            ("platform_preferences_json", []),
+            ("evidence_requirements_json", []),
+            ("negative_evidence_requirements_json", []),
+            ("exclusions_json", []),
+            ("desired_output_json", []),
+            ("success_criteria_json", []),
+            ("ambiguities_json", []),
+            ("assumptions_json", []),
+            ("intent_revisions_json", []),
+        ):
+            item[field.removesuffix("_json")] = _json(item.get(field), default)
+            item.pop(field, None)
+        item["clarification_question"] = (
+            item.get("ambiguities", [None])[0]
+            if float(item.get("confidence") or 0) < 0.45
+            and isinstance(item.get("ambiguities"), list)
+            and item.get("ambiguities")
+            else None
+        )
+        return item
+
+    def record_information_utility(
+        self,
+        *,
+        task_id: str,
+        content_id: str,
+        utility_type: str,
+        rationale: str,
+        confidence: float = 0.5,
+        query_id: str | None = None,
+        finding_id: str | None = None,
+    ) -> dict[str, object]:
+        allowed = {
+            "core_evidence", "discovery_seed", "background_context", "event_signal",
+            "counterevidence", "memory_update", "action_trigger", "noise", "duplicate",
+        }
+        if utility_type not in allowed:
+            raise ValueError("unsupported information utility")
+        if not rationale.strip():
+            raise ValueError("information utility rationale is required")
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO content_research_utilities (
+                    id, research_task_id, content_id, utility_type, rationale,
+                    confidence, research_query_id, source_finding_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(research_task_id, content_id, utility_type) DO UPDATE SET
+                    rationale = excluded.rationale,
+                    confidence = MAX(content_research_utilities.confidence, excluded.confidence),
+                    research_query_id = COALESCE(excluded.research_query_id, content_research_utilities.research_query_id),
+                    source_finding_id = COALESCE(excluded.source_finding_id, content_research_utilities.source_finding_id)
+                """,
+                (
+                    self.new_id(), task_id, content_id, utility_type, rationale[:500],
+                    max(0.0, min(1.0, confidence)), query_id, finding_id, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM content_research_utilities WHERE research_task_id = ? AND content_id = ? AND utility_type = ?",
+                (task_id, content_id, utility_type),
+            ).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(content_id)
+        return dict(row)
+
+    def save_entity_candidate(
+        self,
+        *,
+        task_id: str,
+        entity_type: str,
+        normalized_name: str,
+        source_content_id: str | None,
+        relevance_to_intent: float,
+        novelty: float,
+        confidence: float,
+        suggested_next_action: str | None,
+    ) -> dict[str, object]:
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO research_entity_candidates (
+                    id, research_task_id, entity_type, normalized_name,
+                    source_content_id, relevance_to_intent, novelty, confidence,
+                    suggested_next_action, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(research_task_id, normalized_name, entity_type) DO UPDATE SET
+                    source_content_id = COALESCE(excluded.source_content_id, research_entity_candidates.source_content_id),
+                    relevance_to_intent = MAX(research_entity_candidates.relevance_to_intent, excluded.relevance_to_intent),
+                    novelty = MAX(research_entity_candidates.novelty, excluded.novelty),
+                    confidence = MAX(research_entity_candidates.confidence, excluded.confidence),
+                    suggested_next_action = COALESCE(excluded.suggested_next_action, research_entity_candidates.suggested_next_action),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    self.new_id(), task_id, entity_type, normalized_name.strip(), source_content_id,
+                    max(0.0, min(1.0, relevance_to_intent)), max(0.0, min(1.0, novelty)),
+                    max(0.0, min(1.0, confidence)), suggested_next_action, now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM research_entity_candidates WHERE research_task_id = ? AND normalized_name = ? AND entity_type = ?",
+                (task_id, normalized_name.strip(), entity_type),
+            ).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(normalized_name)
+        return dict(row)
+
+    def save_event_candidate(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        title: str,
+        summary: str,
+        source_content_id: str | None,
+        confidence: float,
+    ) -> dict[str, object]:
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT id FROM research_event_candidates WHERE research_task_id = ? AND title = ? AND source_content_id IS ?",
+                (task_id, title, source_content_id),
+            ).fetchone()
+            identifier = str(row["id"]) if row is not None else self.new_id()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO research_event_candidates (
+                        id, research_task_id, event_type, title, summary,
+                        source_content_id, confidence, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (identifier, task_id, event_type, title[:300], summary[:1_000], source_content_id, max(0.0, min(1.0, confidence)), now, now),
+                )
+            else:
+                connection.execute(
+                    "UPDATE research_event_candidates SET summary = ?, confidence = MAX(confidence, ?), updated_at = ? WHERE id = ?",
+                    (summary[:1_000], max(0.0, min(1.0, confidence)), now, identifier),
+                )
+            saved = connection.execute("SELECT * FROM research_event_candidates WHERE id = ?", (identifier,)).fetchone()
+        if saved is None:
+            raise ResearchTaskNotFound(title)
+        return dict(saved)
+
+    def save_memory_item(
+        self,
+        *,
+        task_id: str,
+        memory_type: str,
+        memory_key: str,
+        value: object,
+        confidence: float,
+        content_id: str | None = None,
+        query_id: str | None = None,
+        finding_id: str | None = None,
+    ) -> dict[str, object]:
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                "UPDATE research_memory_items SET is_current = 0, updated_at = ? WHERE research_task_id = ? AND memory_type = ? AND memory_key = ? AND is_current = 1",
+                (now, task_id, memory_type, memory_key),
+            )
+            identifier = self.new_id()
+            connection.execute(
+                """
+                INSERT INTO research_memory_items (
+                    id, research_task_id, memory_type, memory_key, value_json,
+                    source_content_id, source_query_id, source_finding_id,
+                    confidence, is_current, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (identifier, task_id, memory_type, memory_key, _dump(value), content_id, query_id, finding_id, max(0.0, min(1.0, confidence)), now, now),
+            )
+            row = connection.execute("SELECT * FROM research_memory_items WHERE id = ?", (identifier,)).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(memory_key)
+        item = dict(row)
+        item["value"] = _json(item.pop("value_json"), None)
+        item["is_current"] = bool(item["is_current"])
+        return item
+
+    def list_memory_keys(self, *, exclude_task_id: str | None = None) -> list[str]:
+        with connect_database(self.database_path) as connection:
+            if exclude_task_id is None:
+                rows = connection.execute(
+                    "SELECT DISTINCT memory_key FROM research_memory_items WHERE is_current = 1"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT DISTINCT memory_key FROM research_memory_items
+                    WHERE is_current = 1 AND research_task_id != ?
+                    """,
+                    (exclude_task_id,),
+                ).fetchall()
+        return [str(row["memory_key"]) for row in rows if row["memory_key"]]
+
+    def save_alignment_review(
+        self,
+        *,
+        task_id: str,
+        alignment_score: float,
+        covered_requirements: list[str],
+        missing_requirements: list[str],
+        scope_drift: dict[str, object],
+        recommended_next_step: str | None,
+        review_status: str,
+    ) -> dict[str, object]:
+        now = utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO research_alignment_reviews (
+                    id, research_task_id, alignment_score, covered_requirements_json,
+                    missing_requirements_json, scope_drift_json, recommended_next_step,
+                    review_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (self.new_id(), task_id, max(0.0, min(1.0, alignment_score)), _dump(covered_requirements), _dump(missing_requirements), _dump(scope_drift), recommended_next_step, review_status, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM research_alignment_reviews WHERE research_task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            raise ResearchTaskNotFound(task_id)
+        item = dict(row)
+        for field, default in (("covered_requirements_json", []), ("missing_requirements_json", []), ("scope_drift_json", {})):
+            item[field.removesuffix("_json")] = _json(item.pop(field), default)
+        return item
+
     def _select_base(self) -> str:
         return """
             SELECT t.*,
@@ -338,8 +774,8 @@ class ResearchTaskRepository:
                 self._attach_runtime_detail(connection, task, task_id)
         return task
 
-    @staticmethod
     def _attach_runtime_detail(
+        self,
         connection: sqlite3.Connection,
         task: dict[str, object],
         task_id: str,
@@ -441,6 +877,127 @@ class ResearchTaskRepository:
         task["billing_summary"] = ResearchTaskRepository._billing_summary_connection(
             connection, task_id
         )
+        try:
+            task["intent_contract"] = ResearchTaskRepository(
+                Path(self.database_path)
+            ).get_intent(task_id)
+        except ResearchTaskNotFound:
+            task["intent_contract"] = None
+        task["intent_versions"] = [
+            {
+                **dict(row),
+                "contract": _json(row["contract_json"], {}),
+            }
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, version, contract_json,
+                       change_reason, created_at
+                FROM research_intent_versions
+                WHERE research_task_id = ? ORDER BY version, created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        for item in task["intent_versions"]:
+            item.pop("contract_json", None)
+        task["intent_assumptions"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, intent_version, assumption,
+                       status, created_at, resolved_at
+                FROM research_intent_assumptions
+                WHERE research_task_id = ? ORDER BY created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        task["unknowns"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, unknown, priority, status, evidence_count,
+                       resolution, created_at, updated_at
+                FROM research_unknowns
+                WHERE research_task_id = ? ORDER BY priority, created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        task["information_utilities"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, content_id, utility_type, rationale, confidence,
+                       research_query_id, source_finding_id, created_at
+                FROM content_research_utilities
+                WHERE research_task_id = ? ORDER BY created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        task["entity_candidates"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, entity_type, normalized_name, source_content_id,
+                       relevance_to_intent, novelty, confidence,
+                       suggested_next_action, status, created_at, updated_at
+                FROM research_entity_candidates
+                WHERE research_task_id = ? ORDER BY confidence DESC, created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        task["event_candidates"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, event_type, title, summary, source_content_id,
+                       confidence, status, created_at, updated_at
+                FROM research_event_candidates
+                WHERE research_task_id = ? ORDER BY created_at, id
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        memory_items = []
+        for row in connection.execute(
+            """
+            SELECT id, memory_type, memory_key, value_json, source_content_id,
+                   source_query_id, source_finding_id, confidence, is_current,
+                   created_at, updated_at
+            FROM research_memory_items
+            WHERE research_task_id = ? ORDER BY updated_at DESC, id DESC
+            """,
+            (task_id,),
+        ).fetchall():
+            item = dict(row)
+            item["value"] = _json(item.pop("value_json"), None)
+            item["is_current"] = bool(item["is_current"])
+            memory_items.append(item)
+        task["memory_items"] = memory_items
+        alignment = connection.execute(
+            """
+            SELECT id, research_task_id, alignment_score, covered_requirements_json,
+                   missing_requirements_json, scope_drift_json,
+                   recommended_next_step, review_status, created_at
+            FROM research_alignment_reviews
+            WHERE research_task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+        if alignment is None:
+            task["alignment_review"] = None
+        else:
+            item = dict(alignment)
+            for field, default in (
+                ("covered_requirements_json", []),
+                ("missing_requirements_json", []),
+                ("scope_drift_json", {}),
+            ):
+                item[field.removesuffix("_json")] = _json(item.pop(field), default)
+            task["alignment_review"] = item
 
     @staticmethod
     def _billing_summary_connection(
@@ -507,6 +1064,11 @@ class ResearchTaskRepository:
         self,
         *,
         task_id: str,
+        intent_id: str | None = None,
+        record_type: str = "execution_query",
+        gate_status: str = "pending",
+        decision: str = "allow",
+        query_role: str = "seed_discovery",
         query: str,
         normalized_query: str,
         query_type: str,
@@ -550,7 +1112,8 @@ class ResearchTaskRepository:
             connection.execute(
                 """
                 INSERT INTO research_queries (
-                    id, research_task_id, query, normalized_query, query_type,
+                    id, research_task_id, intent_id, record_type, gate_status,
+                    decision, query_role, query, normalized_query, query_type,
                     platform, source_type, source_content_id, source_finding_id,
                     parent_query_id, generation_reason, relevance_score,
                     specificity_score, novelty_score, noise_risk_score,
@@ -558,11 +1121,16 @@ class ResearchTaskRepository:
                     lifecycle_status, unexecuted_reason, entity_diversity_bonus,
                     platform_diversity_bonus, negative_evidence_bonus,
                     estimated_resource_use, expected_evidence_role, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
                     task_id,
+                    intent_id,
+                    record_type,
+                    gate_status,
+                    decision,
+                    query_role,
                     query,
                     normalized_query,
                     query_type,
@@ -602,6 +1170,10 @@ class ResearchTaskRepository:
                     "query_id": identifier,
                     "query": query[:500],
                     "status": status,
+                    "record_type": record_type,
+                    "gate_status": gate_status,
+                    "decision": decision,
+                    "query_role": query_role,
                     "lifecycle_status": resolved_lifecycle,
                     "rejection_reason": rejection_reason,
                     "unexecuted_reason": unexecuted_reason,
@@ -643,7 +1215,7 @@ class ResearchTaskRepository:
                 UPDATE research_queries
                 SET relevance_score = ?, expected_value_score = ?, status = ?,
                     rejection_reason = ?, lifecycle_status = ?,
-                    unexecuted_reason = ?, updated_at = ?
+                    unexecuted_reason = ?, gate_status = ?, decision = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -653,6 +1225,8 @@ class ResearchTaskRepository:
                     rejection_reason,
                     resolved_lifecycle,
                     unexecuted_reason,
+                    "reject" if status.startswith("rejected") or status == "rejected" else "allow",
+                    "reject" if status.startswith("rejected") or status == "rejected" else "allow",
                     utc_now(),
                     query_id,
                 ),
@@ -662,7 +1236,7 @@ class ResearchTaskRepository:
     def attach_query_crawler(self, query_id: str, crawler_task_id: str) -> None:
         with connect_database(self.database_path) as connection:
             connection.execute(
-                "UPDATE research_queries SET crawler_task_id = ?, status = 'running', lifecycle_status = 'executing', unexecuted_reason = NULL, updated_at = ? WHERE id = ?",
+                "UPDATE research_queries SET crawler_task_id = ?, status = 'running', lifecycle_status = 'executing', gate_status = 'allow', decision = 'allow', unexecuted_reason = NULL, updated_at = ? WHERE id = ?",
                 (crawler_task_id, utc_now(), query_id),
             )
 
@@ -684,7 +1258,7 @@ class ResearchTaskRepository:
                 SET status = ?, executed_at = ?, result_count = ?,
                     new_content_count = ?, existing_content_count = ?,
                     updated_content_count = ?, duplicate_evidence_count = ?,
-                    lifecycle_status = ?, unexecuted_reason = NULL,
+                    lifecycle_status = ?, gate_status = 'completed', decision = 'allow', unexecuted_reason = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -757,10 +1331,19 @@ class ResearchTaskRepository:
             connection.execute(
                 """
                 UPDATE research_queries
-                SET lifecycle_status = ?, unexecuted_reason = ?, updated_at = ?
+                SET lifecycle_status = ?, unexecuted_reason = ?,
+                    gate_status = CASE
+                        WHEN ? IN ('skipped_budget', 'skipped_saturation', 'skipped_low_marginal_value', 'superseded') THEN 'hold'
+                        WHEN ? IN ('rejected_generic', 'rejected_duplicate', 'rejected_low_relevance', 'rejected_low_value', 'cancelled') THEN 'reject'
+                        ELSE gate_status END,
+                    decision = CASE
+                        WHEN ? IN ('skipped_budget', 'skipped_saturation', 'skipped_low_marginal_value', 'superseded') THEN 'hold'
+                        WHEN ? IN ('rejected_generic', 'rejected_duplicate', 'rejected_low_relevance', 'rejected_low_value', 'cancelled') THEN 'reject'
+                        ELSE decision END,
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (lifecycle_status, reason, utc_now(), query_id),
+                (lifecycle_status, reason, lifecycle_status, lifecycle_status, lifecycle_status, lifecycle_status, utc_now(), query_id),
             )
 
     def skip_pending_queries(
@@ -1348,17 +1931,36 @@ class ResearchTaskRepository:
                 (task_id,),
             ).fetchall()
             for row in rows:
+                utility_types = {
+                    str(item["utility_type"])
+                    for item in connection.execute(
+                        """
+                        SELECT utility_type FROM content_research_utilities
+                        WHERE research_task_id = ? AND content_id = ?
+                        """,
+                        (task_id, row["content_id"]),
+                    ).fetchall()
+                }
                 if row["is_repost"]:
-                    reason = "重复转载"
-                elif row["content_completeness"] == "missing":
-                    reason = "正文缺失"
-                elif row["content_completeness"] == "partial":
-                    reason = "内容过短"
+                    reason = "not_used_duplicate"
+                elif row["content_completeness"] in {"missing", "partial"}:
+                    reason = "not_used_incomplete"
                 elif row["evidence_quality"] == "low":
-                    reason = "来源质量不足"
+                    reason = "not_used_low_relevance"
                 else:
                     text = f"{row['title'] or ''} {row['description'] or ''}".casefold()
-                    reason = "营销内容" if any(term in text for term in ("购买", "优惠", "扫码", "推广")) else "无事实增量"
+                    if any(term in text for term in ("购买", "优惠", "扫码", "推广")):
+                        reason = "not_used_marketing"
+                    elif "discovery_seed" in utility_types:
+                        reason = "not_used_as_evidence_but_seed"
+                    elif "background_context" in utility_types:
+                        reason = "not_used_as_evidence_but_background"
+                    elif "memory_update" in utility_types:
+                        reason = "not_used_as_evidence_but_memory_update"
+                    elif "noise" in utility_types:
+                        reason = "not_used_no_factual_increment"
+                    else:
+                        reason = "not_used_no_factual_increment"
                 connection.execute(
                     "UPDATE research_content_decisions SET decision = 'not_adopted', not_adopted_reason = ?, updated_at = ? WHERE id = ?",
                     (reason, utc_now(), row["id"]),

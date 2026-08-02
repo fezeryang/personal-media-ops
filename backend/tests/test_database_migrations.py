@@ -380,6 +380,96 @@ def test_upgrade_from_0012_preserves_query_lifecycle_history(tmp_path: Path) -> 
     assert integrity == "ok"
 
 
+def test_upgrade_from_0013_backfills_legacy_intent_without_reexecuting(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "research-8c-compatibility.db"
+    run_alembic_command(database_path, "upgrade", "0013_cross_platform_research_completion")
+    now = "2026-08-02T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, username, password_hash, is_active, failed_login_count,
+                created_at, updated_at
+            ) VALUES ('legacy-intent-owner', 'legacy-intent-owner', 'hash', 1, 0, ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_tasks (
+                id, user_id, task_type, objective, platforms, status,
+                plan, context, execution_trace, proposed_actions,
+                route_snapshot, budget_crawl_limit, budget_content_limit,
+                budget_duration_seconds, budget_token_limit,
+                budget_cost_enabled, created_at, updated_at
+            ) VALUES (
+                'legacy-intent-task', 'legacy-intent-owner', 'research',
+                'Preserve this 8C research goal', '["bili"]', 'Done',
+                '{}', '{}', '[]', '[]', '{}', 2, 100, 3600, 50000,
+                0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_queries (
+                id, research_task_id, query, normalized_query, query_type,
+                platform, source_type, generation_reason, specificity_score,
+                novelty_score, noise_risk_score, expected_value_score, status,
+                result_count, new_content_count, existing_content_count,
+                updated_content_count, duplicate_evidence_count, created_at, updated_at
+            ) VALUES (
+                'legacy-user-goal', 'legacy-intent-task',
+                'Preserve this 8C research goal', 'preserve this 8c research goal',
+                'generic_topic', 'bili', 'goal', 'legacy goal', 0.4, 1, 0.4,
+                NULL, 'generated', 0, 0, 0, 0, 0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_queries (
+                id, research_task_id, query, normalized_query, query_type,
+                platform, source_type, generation_reason, specificity_score,
+                novelty_score, noise_risk_score, expected_value_score, status,
+                result_count, new_content_count, existing_content_count,
+                updated_content_count, duplicate_evidence_count, created_at, updated_at
+            ) VALUES (
+                'legacy-execution', 'legacy-intent-task', '具体产品体验',
+                '具体产品体验', 'product', 'bili', 'content_entity',
+                'legacy execution', 0.8, 1, 0.1, 0.7, 'completed',
+                2, 1, 1, 0, 0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+
+    run_alembic_command(database_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        intent = connection.execute(
+            "SELECT intent_source, confidence FROM research_intents WHERE research_task_id = ?",
+            ("legacy-intent-task",),
+        ).fetchone()
+        queries = connection.execute(
+            """
+            SELECT record_type, gate_status, intent_id
+            FROM research_queries WHERE research_task_id = ? ORDER BY id
+            """,
+            ("legacy-intent-task",),
+        ).fetchall()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    assert intent == ("legacy_migrated", 0.0)
+    assert queries[0][0:2] == ("execution_query", "completed")
+    assert queries[1][0:2] == ("user_goal", "not_applicable")
+    assert queries[0][2] == queries[1][2]
+    assert integrity == "ok"
+
+
 def test_upgrade_from_0009_preserves_existing_product_data(tmp_path: Path) -> None:
     database_path = tmp_path / "stage-seven.db"
     run_alembic_command(database_path, "upgrade", STAGE_SEVEN_REVISION)

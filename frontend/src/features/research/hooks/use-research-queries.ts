@@ -9,6 +9,7 @@ import {
   listResearchTasks,
   pauseResearchTask,
   rerunResearchTask,
+  reviseResearchIntent,
   resumeResearchTask,
   type ResearchTaskInput,
 } from "../../../api/research";
@@ -78,6 +79,8 @@ function updateCaches(
           updated_at: task.updated_at,
           finished_at: task.finished_at,
           failure_reason: task.failure_reason,
+          primary_intent: task.primary_intent,
+          intent_confidence: task.intent_confidence,
         },
         ...without,
       ];
@@ -89,6 +92,15 @@ export function useCreateResearchTaskMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ResearchTaskInput) => createResearchTask(input),
+    onSuccess: (task) => updateCaches(queryClient, task),
+  });
+}
+
+export function useReviseResearchIntentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { taskId: string; request: string }) =>
+      reviseResearchIntent(input.taskId, input.request),
     onSuccess: (task) => updateCaches(queryClient, task),
   });
 }

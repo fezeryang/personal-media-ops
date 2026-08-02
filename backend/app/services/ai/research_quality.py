@@ -296,6 +296,9 @@ def evaluate_query(
     parent_query_id: str | None = None,
     source_content_id: str | None = None,
     source_finding_id: str | None = None,
+    record_type: str = "execution_query",
+    query_role: str = "entity_expansion",
+    intent_bound: bool = False,
 ) -> QueryQuality:
     normalized = normalize_query(query)
     tokens = query_tokens(normalized)
@@ -308,16 +311,35 @@ def evaluate_query(
         reason = "query 过短或为空"
     elif not generation_reason or not generation_reason.strip():
         reason = "缺少 generation_reason"
-    elif source_type != "user_goal" and (
+    elif record_type == "execution_query" and query_role not in {
+        "seed_discovery",
+        "cross_platform_validation",
+        "counterevidence",
+        "competitor_scan",
+        "trend_probe",
+        "creator_scan",
+        "pain_point_probe",
+    } and source_type != "user_goal" and (
         parent_query_id is None
         or (source_content_id is None and source_finding_id is None)
     ):
         reason = "后续查询必须绑定 parent_query_id 与来源内容或 Finding"
-    elif tokens and set(tokens).issubset(GENERIC_TERMS):
+    elif record_type == "execution_query" and query_role == "seed_discovery" and not intent_bound:
+        reason = "seed_discovery 查询必须绑定 Intent Contract"
+    elif record_type == "execution_query" and query_role in {
+        "cross_platform_validation",
+        "counterevidence",
+        "competitor_scan",
+        "trend_probe",
+        "creator_scan",
+        "pain_point_probe",
+    } and not intent_bound and source_type != "user_goal":
+        reason = "语义角色查询必须绑定 Intent Contract"
+    elif record_type == "execution_query" and tokens and set(tokens).issubset(GENERIC_TERMS):
         reason = "仅包含泛化词，必须与具体实体或限定场景组合"
-    elif novelty == 0.0:
+    elif record_type == "execution_query" and novelty == 0.0:
         reason = "与本任务或历史任务查询重复"
-    elif noise >= 0.85:
+    elif record_type == "execution_query" and noise >= 0.85:
         reason = "通用词占比过高，噪声风险过高"
     return QueryQuality(
         normalized_query=normalized,

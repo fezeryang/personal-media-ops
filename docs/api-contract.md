@@ -279,6 +279,34 @@ occurrences retain the normalized content ID, occurrence count, source query
 IDs and source crawler IDs. `summary_html` is derived from `summary_markdown`
 and must still be sanitized by the browser.
 
+## Research Intent and Information Utility 8D-0
+
+The 8D-0 detail response adds `intent_contract`, `intent_versions`,
+`intent_assumptions`, `unknowns`, `research_plan`, `information_utilities`,
+`entity_candidates`, `event_candidates`, `memory_items`, and
+`alignment_review`. Query rows expose `record_type`, `gate_status`, `decision`,
+`intent_id`, and `query_role`.
+
+`record_type=user_goal` is an audit-only original request and uses
+`gate_status=not_applicable`. Only `record_type=execution_query` is submitted
+to a platform gate. Execution decisions are `allow`, `transform`, `hold`, or
+`reject`.
+
+Before a task starts, the owner may revise its understanding without deleting
+the original request:
+
+```text
+POST /api/research/tasks/{task_id}/intent/revise
+```
+
+```json
+{"request":"比较两个已知产品在长期记忆和自动化任务方面的差异。"}
+```
+
+The endpoint is available only while the task is still `Draft`; the revision
+is stored as a new intent version and the runtime is woken with the revised
+contract.
+
 ## Model billing endpoints
 
 The owner-only Model Center contract additionally exposes:

@@ -16,6 +16,160 @@ const statusSchema = z.enum([
   "Cancelled",
 ]);
 
+const intentTypeSchema = z.enum([
+  "discovery",
+  "verification",
+  "comparison",
+  "trend_tracking",
+  "pain_point_research",
+  "competitor_scan",
+  "creator_scan",
+  "content_opportunity",
+  "market_mapping",
+  "product_opportunity",
+  "monitoring",
+]);
+
+const intentContractSchema = z.object({
+  id: z.string().nullable().optional(),
+  research_task_id: z.string().nullable().optional(),
+  original_request: z.string(),
+  original_intent: z.string(),
+  interpreted_goal: z.string(),
+  primary_intent: intentTypeSchema,
+  secondary_intents: z.array(intentTypeSchema),
+  subject: z.record(z.string(), z.unknown()),
+  known_entities: z.array(z.unknown()),
+  known_constraints: z.array(z.unknown()),
+  unknowns_to_discover: z.array(z.string()),
+  time_scope: z.record(z.string(), z.unknown()),
+  platform_preferences: z.array(z.string()),
+  target_audience: z.string().nullable(),
+  evidence_requirements: z.array(z.string()),
+  negative_evidence_requirements: z.array(z.string()),
+  exclusions: z.array(z.string()),
+  desired_output: z.array(z.string()),
+  success_criteria: z.array(z.string()),
+  confidence: z.number().min(0).max(1),
+  ambiguities: z.array(z.string()),
+  assumptions: z.array(z.string()),
+  current_research_hypothesis: z.string(),
+  intent_revisions: z.array(z.record(z.string(), z.unknown())),
+  intent_source: z.enum(["model", "fallback_default", "legacy_migrated", "owner_revised"]),
+  clarification_question: z.string().nullable().optional(),
+  version: z.number().int().positive(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const intentVersionSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  version: z.number().int().positive(),
+  contract: z.record(z.string(), z.unknown()),
+  change_reason: z.string(),
+  created_at: z.string(),
+});
+
+const intentAssumptionSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  intent_version: z.number().int().positive(),
+  assumption: z.string(),
+  status: z.string(),
+  created_at: z.string(),
+  resolved_at: z.string().nullable(),
+});
+
+const unknownSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  unknown: z.string(),
+  priority: z.number().int().nonnegative(),
+  status: z.enum(["open", "discovered", "verified", "unresolved"]),
+  evidence_count: z.number().int().nonnegative(),
+  resolution: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const alignmentReviewSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  alignment_score: z.number().min(0).max(1),
+  covered_requirements: z.array(z.string()),
+  missing_requirements: z.array(z.string()),
+  scope_drift: z.record(z.string(), z.unknown()),
+  recommended_next_step: z.string().nullable(),
+  review_status: z.enum(["passed", "needs_more_research", "partial_completion"]),
+  created_at: z.string(),
+});
+
+const informationUtilitySchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  content_id: z.string(),
+  utility_type: z.enum([
+    "core_evidence",
+    "discovery_seed",
+    "background_context",
+    "event_signal",
+    "counterevidence",
+    "memory_update",
+    "action_trigger",
+    "noise",
+    "duplicate",
+  ]),
+  rationale: z.string(),
+  confidence: z.number().min(0).max(1),
+  research_query_id: z.string().nullable(),
+  source_finding_id: z.string().nullable(),
+  created_at: z.string(),
+});
+
+const entityCandidateSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  entity_type: z.string(),
+  normalized_name: z.string(),
+  source_content_id: z.string().nullable(),
+  relevance_to_intent: z.number().min(0).max(1),
+  novelty: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  suggested_next_action: z.string().nullable(),
+  status: z.enum(["candidate_discovery", "accepted", "dismissed"]),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const eventCandidateSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  event_type: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  source_content_id: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+  status: z.enum(["candidate", "accepted", "dismissed"]),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const memoryItemSchema = z.object({
+  id: z.string(),
+  research_task_id: z.string(),
+  memory_type: z.string(),
+  memory_key: z.string(),
+  value: z.unknown(),
+  source_content_id: z.string().nullable(),
+  source_query_id: z.string().nullable(),
+  source_finding_id: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+  is_current: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 const consumptionSchema = z.object({
   crawl_count: z.number().int().nonnegative(),
   content_count: z.number().int().nonnegative(),
@@ -245,6 +399,14 @@ const researchResultSchema = z
     discovery_count: z.number().int().nonnegative().optional(),
     repost_count: z.number().int().nonnegative().optional(),
     negative_evidence_count: z.number().int().nonnegative().optional(),
+    information_utility_counts: z.record(z.string(), z.number().int().nonnegative()).optional(),
+    discovery_seed_count: z.number().int().nonnegative().optional(),
+    core_evidence_count: z.number().int().nonnegative().optional(),
+    background_context_count: z.number().int().nonnegative().optional(),
+    event_signal_count: z.number().int().nonnegative().optional(),
+    noise_count: z.number().int().nonnegative().optional(),
+    duplicate_count: z.number().int().nonnegative().optional(),
+    alignment_review: alignmentReviewSchema.optional(),
   })
   .passthrough();
 
@@ -266,6 +428,8 @@ export const researchTaskSummarySchema = z.object({
   finished_at: z.string().nullable(),
   failure_reason: z.string().nullable(),
   stop_reason: z.string().nullable().optional(),
+  primary_intent: intentTypeSchema.nullable().optional(),
+  intent_confidence: z.number().min(0).max(1).nullable().optional(),
 });
 
 export const researchTaskDetailSchema = researchTaskSummarySchema.extend({
@@ -280,12 +444,36 @@ export const researchTaskDetailSchema = researchTaskSummarySchema.extend({
   content_decisions: z.array(contentDecisionSchema).optional(),
   step_usage: z.array(stepUsageSchema).optional(),
   budget_events: z.array(budgetEventSchema).optional(),
+  research_plan: z.record(z.string(), z.unknown()).optional(),
+  intent_contract: intentContractSchema.nullable().optional(),
+  intent_versions: z.array(intentVersionSchema).optional(),
+  intent_assumptions: z.array(intentAssumptionSchema).optional(),
+  unknowns: z.array(unknownSchema).optional(),
+  alignment_review: alignmentReviewSchema.nullable().optional(),
+  information_utilities: z.array(informationUtilitySchema).optional(),
+  entity_candidates: z.array(entityCandidateSchema).optional(),
+  event_candidates: z.array(eventCandidateSchema).optional(),
+  memory_items: z.array(memoryItemSchema).optional(),
   trace: z.array(traceSchema),
   findings: z.array(findingSchema),
   queries: z.array(
     z.object({
       id: z.string(),
       research_task_id: z.string(),
+      intent_id: z.string().nullable().optional(),
+      record_type: z.enum(["user_goal", "execution_query"]).optional(),
+      gate_status: z.enum(["not_applicable", "pending", "allow", "transform", "hold", "reject", "completed"]).optional(),
+      decision: z.enum(["allow", "transform", "hold", "reject"]).optional(),
+      query_role: z.enum([
+        "seed_discovery",
+        "entity_expansion",
+        "cross_platform_validation",
+        "counterevidence",
+        "competitor_scan",
+        "trend_probe",
+        "creator_scan",
+        "pain_point_probe",
+      ]).optional(),
       query: z.string(),
       normalized_query: z.string(),
       query_type: z.enum([
@@ -418,6 +606,18 @@ export function createResearchTask(input: ResearchTaskInput) {
     headers: jsonHeaders,
     body: JSON.stringify(input),
   });
+}
+
+export function reviseResearchIntent(taskId: string, request: string) {
+  return requestJson(
+    `/api/research/tasks/${encodeURIComponent(taskId)}/intent/revise`,
+    researchTaskDetailSchema,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ request }),
+    },
+  );
 }
 
 function controlTask(taskId: string, action: "pause" | "resume" | "cancel" | "rerun") {

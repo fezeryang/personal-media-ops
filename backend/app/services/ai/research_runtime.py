@@ -7,12 +7,27 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from app.models.ai import ModelMessage, ModelRequest, ModelRouteRole
+from app.models.research_intent import ResearchIntentContract
 from app.repositories.ai import AIRepository
 from app.repositories.research import (
     ResearchTaskConflict,
+    ResearchTaskNotFound,
     ResearchTaskRepository,
 )
 from app.services.ai.context_compactor import compact_research_context
+from app.services.ai.information_value import (
+    classify_information_utility,
+    event_type_for_content,
+)
+from app.services.ai.intent_interpreter import (
+    build_default_intent,
+    execution_query_directions,
+    interpret_model_text,
+)
+from app.services.ai.intent_interpreter import model_request as intent_model_request
+from app.services.ai.intent_interpreter import (
+    repair_model_request as intent_repair_model_request,
+)
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.providers import ProviderError
 from app.services.ai.research_quality import (
@@ -192,7 +207,7 @@ class ResearchRuntime:
         if bool(task["paused"]):
             return
         self.research.record_duration(task_id)
-        task = self.research.get_for_runtime(task_id) or task
+        task = self.research.get_for_runtime(task_id, detail=True) or task
         task = self._clear_stale_completed_crawl_marker(task)
         budget_reason = self._budget_reason(task)
         if budget_reason is not None and str(task["status"]) not in {
@@ -425,20 +440,71 @@ class ResearchRuntime:
                     break
         self.research.set_cost_enabled(task_id, cost_enabled)
         snapshot["cost_enabled"] = cost_enabled
-        request = ModelRequest(
-            system=(
-                "You are the planning stage of a bounded research task. "
-                "Return JSON with a search_terms array containing three or more "
-                "concrete search terms not copied verbatim from the objective. "
-                "Do not claim facts."
-            ),
-            messages=[ModelMessage(role="user", content=str(task["objective"]))],
-            max_tokens=400,
-            tools=None,
-            tool_choice="none",
-            metadata={"runtime_step": "planning"},
-            timeout=45,
+        existing_contract = task.get("intent_contract")
+        modern_intent = (
+            isinstance(existing_contract, dict)
+            and bool(existing_contract)
+            and existing_contract.get("intent_source") != "legacy_migrated"
         )
+        intent: ResearchIntentContract | None = None
+        intent_directions: list[dict[str, object]] = []
+        if modern_intent:
+            intent = await self._interpret_intent(
+                task,
+                primary_model_id=str(primary["model_record_id"]),
+                platforms=[
+                    str(platform)
+                    for platform in task.get("platforms", [])
+                    if isinstance(platform, str)
+                ],
+            )
+            intent_directions = execution_query_directions(intent)
+            request = ModelRequest(
+                system=(
+                    "You are the Research Planner, separate from Intent Interpreter. "
+                    "Use the supplied Intent Contract to produce a bounded research plan, "
+                    "not a new interpretation. Return JSON with search_terms (at least three "
+                    "concrete platform execution query directions), query_roles, stages, and "
+                    "coverage_gaps. Do not copy the user goal as a platform query and do not claim facts."
+                ),
+                messages=[
+                    ModelMessage(
+                        role="user",
+                        content=json.dumps(
+                            {
+                                "intent_contract": intent.model_dump(mode="json"),
+                                "deterministic_seed_directions": intent_directions,
+                            },
+                            ensure_ascii=False,
+                        )[:16_000],
+                    )
+                ],
+                temperature=0.1,
+                max_tokens=600,
+                tools=None,
+                tool_choice="none",
+                metadata={"runtime_step": "planning"},
+                timeout=45,
+            )
+        else:
+            # Tasks created before 8D-0 have no executable intent contract.
+            # Keep their planner call and trajectory stable; migration provides
+            # a read-only legacy intent for display, but must not re-run it as a
+            # modern interpretation or silently change its research behavior.
+            request = ModelRequest(
+                system=(
+                    "You are the planning stage of a bounded research task. "
+                    "Return JSON with a search_terms array containing three or more "
+                    "concrete search terms not copied verbatim from the objective. "
+                    "Do not claim facts."
+                ),
+                messages=[ModelMessage(role="user", content=str(task["objective"]))],
+                max_tokens=400,
+                tools=None,
+                tool_choice="none",
+                metadata={"runtime_step": "planning"},
+                timeout=45,
+            )
         if not self._step_is_allowed(task_id):
             return
         response = await self._generate(
@@ -452,21 +518,54 @@ class ResearchRuntime:
         text = response.response.content or ""
         derived_keywords = self._plan_keywords(text, str(task["objective"]))
         if len(derived_keywords) < 3:
-            raise ResearchTaskConflict(
-                "planner returned fewer than three novel search terms"
-            )
+            if modern_intent:
+                derived_keywords = [item["query"] for item in intent_directions[:8]]
+            else:
+                raise ResearchTaskConflict("planner returned fewer than three novel search terms")
+        if len(derived_keywords) < 3:
+            raise ResearchTaskConflict("planner could not produce bounded execution query directions")
+        planner_payload = parse_structured_json(text).value
+        query_roles: list[str] = []
+        if isinstance(planner_payload, dict) and isinstance(planner_payload.get("query_roles"), list):
+            query_roles = [str(item) for item in planner_payload["query_roles"] if isinstance(item, str)]
+        if not query_roles:
+            query_roles = [item["query_role"] for item in intent_directions]
         plan = {
             "objective": str(task["objective"]),
             "model_plan": text[:8_000],
-            "steps": [
-                "search existing library",
-                "collect missing evidence when necessary",
-                "deduplicate and save evidence-bound findings",
-                "summarize facts, inferences, and proposed actions",
-            ],
-            "initial_query": str(task["objective"])[:500],
+            "steps": (
+                [
+                    "scan the category and discover concrete entities",
+                    "select representative content and validate across planned platforms",
+                    "probe counterevidence, limitations, and unresolved unknowns",
+                    "classify information utility and save evidence-bound findings",
+                    "review intent alignment before summarizing",
+                ]
+                if modern_intent
+                else [
+                    "search existing library",
+                    "collect missing evidence when necessary",
+                    "deduplicate and save evidence-bound findings",
+                    "summarize facts, inferences, and proposed actions",
+                ]
+            ),
+            "initial_query": (
+                derived_keywords[0][:500]
+                if modern_intent
+                else str(task["objective"])[:500]
+            ),
             "derived_keywords": derived_keywords,
         }
+        if modern_intent and intent is not None:
+            plan.update(
+                {
+                    "intent_id": (self.research.get_intent(task_id) or {}).get("id"),
+                    "intent_contract": intent.model_dump(mode="json"),
+                    "execution_query_directions": intent_directions,
+                    "query_roles": query_roles,
+                    "unknowns_to_discover": intent.unknowns_to_discover,
+                }
+            )
         self.research.save_plan(task_id, plan=plan, route_snapshot=snapshot, round_number=1)
         context = task.get("context")
         if not isinstance(context, dict):
@@ -487,6 +586,8 @@ class ResearchRuntime:
                 "stop_reason": None,
             }
         )
+        if modern_intent and intent is not None:
+            context["intent_contract"] = intent.model_dump(mode="json")
         self.research.update_context(task_id, context, step="research_round", round_number=1)
         self.research.record_step_usage(task_id, step="initial_query_generation")
         self.research.save_checkpoint(
@@ -502,6 +603,87 @@ class ResearchRuntime:
             step="research_round",
             round_number=1,
         )
+
+    async def _interpret_intent(
+        self,
+        task: dict[str, object],
+        *,
+        primary_model_id: str,
+        platforms: list[str],
+    ):
+        """Interpret the user goal once, with a bounded provider fallback."""
+        task_id = str(task["id"])
+        fallback = build_default_intent(str(task["objective"]), platforms)
+        try:
+            response = await self._generate(
+                task_id=task_id,
+                request=intent_model_request(str(task["objective"]), platforms),
+                route_role="tool_calling",
+                model_record_id=primary_model_id,
+            )
+            raw = response.response.content or ""
+            intent = interpret_model_text(str(task["objective"]), raw, platforms)
+            if intent.intent_source == "fallback_default":
+                repaired = await self._generate(
+                    task_id=task_id,
+                    request=intent_repair_model_request(
+                        str(task["objective"]),
+                        raw,
+                        platforms,
+                    ),
+                    route_role="tool_calling",
+                    model_record_id=primary_model_id,
+                )
+                repaired_intent = interpret_model_text(
+                    str(task["objective"]),
+                    repaired.response.content or "",
+                    platforms,
+                )
+                if repaired_intent.intent_source == "model":
+                    intent = repaired_intent
+                else:
+                    self.research.append_trace(
+                        task_id,
+                        event="intent_fallback",
+                        status="Planning",
+                        reason="structured intent response and one repair attempt were invalid",
+                        round_number=0,
+                        step="intent_interpretation",
+                    )
+            if intent.intent_source == "fallback_default":
+                self.research.append_trace(
+                    task_id,
+                    event="intent_fallback",
+                    status="Planning",
+                    reason="using deterministic default intent",
+                    round_number=0,
+                    step="intent_interpretation",
+                )
+                intent = fallback
+        except Exception as error:  # noqa: BLE001 - intent is explicitly fail-open
+            self.research.append_trace(
+                task_id,
+                event="intent_fallback",
+                status="Planning",
+                reason=self._safe_failure(error),
+                round_number=0,
+                step="intent_interpretation",
+            )
+            intent = fallback
+        saved = self.research.save_intent(
+            task_id,
+            intent.model_dump(mode="json"),
+            change_reason=(
+                "model_interpretation"
+                if intent.intent_source == "model"
+                else "model_interpretation_fallback"
+            ),
+        )
+        # The repository returns the same contract with its durable version.
+        try:
+            return type(intent).model_validate(saved)
+        except (TypeError, ValueError):
+            return intent
 
     @staticmethod
     def _plan_keywords(text: str, objective: str) -> list[str]:
@@ -716,12 +898,29 @@ class ResearchRuntime:
         task_id = str(task["id"])
         platform, platform_index = self._planned_crawl_platform(task, context)
         production_tool_service = isinstance(self.tools, ResearchToolService)
+        intent_contract = task.get("intent_contract")
+        if not isinstance(intent_contract, dict):
+            intent_contract = context.get("intent_contract")
+        modern_intent = (
+            isinstance(intent_contract, dict)
+            and bool(intent_contract)
+            and intent_contract.get("intent_source") != "legacy_migrated"
+        )
+        intent_id = (
+            str(intent_contract.get("id"))
+            if modern_intent and intent_contract.get("id")
+            else None
+        )
         if crawl_count == 0:
             query = str(plan.get("initial_query") or task["objective"])[:500]
-            source_type = "user_goal"
+            source_type = "user_goal" if not modern_intent else "intent_plan"
             source_content_id = None
             parent_query_id = None
-            reason = "由用户研究目标生成首轮查询"
+            reason = (
+                "由用户研究目标生成研究意图，再转换为平台执行查询"
+                if modern_intent
+                else "由用户研究目标生成首轮查询"
+            )
         else:
             term = self._quality_expansion_term(
                 context.get("entities"),
@@ -768,7 +967,30 @@ class ResearchRuntime:
             for item in current_queries
             if isinstance(item, dict) and item.get("normalized_query")
         )
-        raw_candidates: list[tuple[str, str]] = [(query, reason)]
+        raw_candidates: list[tuple[str, str, str]] = [(
+            query,
+            reason,
+            (
+                "seed_discovery"
+                if modern_intent and crawl_count == 0
+                else "entity_expansion"
+            ),
+        )]
+        if modern_intent and crawl_count == 0:
+            directions = plan.get("execution_query_directions")
+            if isinstance(directions, list):
+                raw_candidates = []
+                for item in directions[:10]:
+                    if isinstance(item, dict) and isinstance(item.get("query"), str):
+                        raw_candidates.append(
+                            (
+                                str(item["query"])[:500],
+                                f"研究计划基于 Intent Contract 的执行查询转换：{item.get('query_role', 'seed_discovery')}",
+                                str(item.get("query_role") or "seed_discovery"),
+                            )
+                        )
+                if raw_candidates:
+                    query = raw_candidates[0][0]
         plan_terms = plan.get("derived_keywords")
         if isinstance(plan_terms, list):
             for item in plan_terms[:8]:
@@ -777,16 +999,24 @@ class ResearchRuntime:
                 candidate = item.strip()[:500]
                 if candidate:
                     raw_candidates.append(
-                        (candidate, f"{reason}；研究计划候选")
+                        (
+                            candidate,
+                            f"{reason}；研究计划候选",
+                            (
+                                "seed_discovery"
+                                if modern_intent and crawl_count == 0
+                                else "entity_expansion"
+                            ),
+                        )
                     )
-        # Keep one deliberately broad control candidate so the generic-word
-        # gate remains observable in every round.  It is expected to be
-        # rejected and must never become an executed search.
-        raw_candidates.append(("agent", reason))
+        # Keep the legacy control candidate for pre-8D plans so old quality
+        # gate audit tests and historical task trajectories remain readable.
+        if not modern_intent:
+            raw_candidates.append(("agent", reason, "entity_expansion"))
         persisted: list[dict[str, object]] = []
         covered_entities = detail.get("entity_coverage", []) if isinstance(detail, dict) else []
         covered_entities = covered_entities if isinstance(covered_entities, list) else []
-        for candidate, candidate_reason in raw_candidates:
+        for candidate, candidate_reason, candidate_role in raw_candidates:
             quality = evaluate_query(
                 candidate,
                 generation_reason=candidate_reason,
@@ -794,6 +1024,9 @@ class ResearchRuntime:
                 historical_queries=historical,
                 parent_query_id=parent_query_id,
                 source_content_id=source_content_id,
+                record_type="execution_query",
+                query_role=candidate_role,
+                intent_bound=modern_intent,
             )
             candidate_normalized = str(quality.normalized_query).casefold()
             matching_entities = [
@@ -806,6 +1039,11 @@ class ResearchRuntime:
                 entity_bonus = 0.0
             row = self.research.create_query(
                 task_id=task_id,
+                intent_id=intent_id,
+                record_type="execution_query",
+                gate_status="reject" if not quality.accepted else "pending",
+                decision="reject" if not quality.accepted else "transform" if modern_intent and crawl_count == 0 else "allow",
+                query_role=candidate_role,
                 query=candidate,
                 normalized_query=quality.normalized_query,
                 query_type=quality.query_type,
@@ -835,7 +1073,8 @@ class ResearchRuntime:
                 estimated_resource_use=0.2,
                 expected_evidence_role=(
                     "contradictory"
-                    if "反向" in candidate_reason or "负面" in candidate_reason
+                    if candidate_role in {"counterevidence", "pain_point_probe"}
+                    or "反向" in candidate_reason or "负面" in candidate_reason
                     else "direct"
                 ),
             )
@@ -858,6 +1097,194 @@ class ResearchRuntime:
         context["last_query_id"] = str(selected["id"])
         context["last_query_query"] = str(selected["query"])
         return str(selected["query"]), str(selected["id"]), platform
+
+    def _classify_content_value(
+        self,
+        task: dict[str, object],
+        content_items: list[dict[str, object]],
+        *,
+        query_id: str | None,
+        entities: list[str],
+    ) -> None:
+        contract_data = task.get("intent_contract")
+        try:
+            contract = ResearchIntentContract.model_validate(contract_data)
+        except (TypeError, ValueError):
+            contract = build_default_intent(str(task.get("objective") or ""), task.get("platforms") if isinstance(task.get("platforms"), list) else [])
+        task_id = str(task["id"])
+        known_memory_keys = self.research.list_memory_keys(exclude_task_id=task_id)
+        for item in content_items:
+            content_id = item.get("id")
+            if not isinstance(content_id, str) or not content_id:
+                continue
+            try:
+                decision = self.research.record_content_decision(
+                    task_id=task_id,
+                    content_id=content_id,
+                    query_id=query_id,
+                    decision="candidate",
+                )
+                assessments = classify_information_utility(
+                    item,
+                    intent=contract,
+                    extracted_entities=entities,
+                    known_memory_keys=known_memory_keys,
+                    is_repost=bool(decision.get("is_repost")),
+                    adopted=decision.get("decision") == "adopted",
+                )
+                for assessment in assessments:
+                    self.research.record_information_utility(
+                        task_id=task_id,
+                        content_id=content_id,
+                        utility_type=assessment.utility_type,
+                        rationale=assessment.rationale,
+                        confidence=assessment.confidence,
+                        query_id=query_id,
+                    )
+                for entity in entities[:8]:
+                    if entity.casefold() in {"ai", "agent", "产品", "工具", "软件", "工作台"}:
+                        continue
+                    known = {
+                        str(value.get("name") or "").casefold()
+                        for value in contract.known_entities
+                        if isinstance(value, dict)
+                    }
+                    known.update(
+                        item.casefold()
+                        for item in known_memory_keys
+                        if item and item.strip()
+                    )
+                    self.research.save_entity_candidate(
+                        task_id=task_id,
+                        entity_type="product",
+                        normalized_name=entity,
+                        source_content_id=content_id,
+                        relevance_to_intent=0.8 if entity.casefold() not in known else 0.6,
+                        novelty=1.0 if entity.casefold() not in known else 0.2,
+                        confidence=0.72,
+                        suggested_next_action="绑定父查询进行实体扩展或跨平台验证",
+                    )
+                event_type = event_type_for_content(item)
+                if event_type:
+                    self.research.save_event_candidate(
+                        task_id=task_id,
+                        event_type=event_type,
+                        title=str(item.get("title") or content_id),
+                        summary=str(item.get("description") or item.get("title") or "")[:1_000],
+                        source_content_id=content_id,
+                        confidence=0.72,
+                    )
+                if entities:
+                    self.research.save_memory_item(
+                        task_id=task_id,
+                        memory_type="observed_entity",
+                        memory_key=entities[0],
+                        value={"content_id": content_id, "title": item.get("title")},
+                        confidence=0.65,
+                        content_id=content_id,
+                        query_id=query_id,
+                    )
+            except (ResearchTaskConflict, ResearchTaskNotFound, ValueError):
+                # A malformed third-party record must not erase the rest of a
+                # bounded batch; the content remains visible in the audit log.
+                continue
+
+    def _record_core_evidence_and_memory(self, task_id: str) -> None:
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        if not isinstance(detail, dict):
+            return
+        findings = detail.get("findings")
+        if not isinstance(findings, list):
+            return
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            finding_id = str(finding.get("id") or "")
+            for evidence in finding.get("evidence", []):
+                if not isinstance(evidence, dict) or not isinstance(evidence.get("content_id"), str):
+                    continue
+                content_id = str(evidence["content_id"])
+                try:
+                    self.research.record_information_utility(
+                        task_id=task_id,
+                        content_id=content_id,
+                        utility_type="core_evidence",
+                        rationale="内容已绑定到 Finding，直接支持或限制研究结论。",
+                        confidence=0.94,
+                        finding_id=finding_id or None,
+                    )
+                    self.research.save_memory_item(
+                        task_id=task_id,
+                        memory_type="confirmed_fact" if finding.get("kind") == "fact" else "inference",
+                        memory_key=str(finding.get("statement") or content_id)[:300],
+                        value={"statement": finding.get("statement"), "content_id": content_id},
+                        confidence=0.9 if finding.get("kind") == "fact" else 0.65,
+                        content_id=content_id,
+                        finding_id=finding_id or None,
+                    )
+                except (ResearchTaskConflict, ResearchTaskNotFound, ValueError):
+                    continue
+
+    def _intent_alignment_review(self, task_id: str, *, allow_more_research: bool) -> dict[str, object] | None:
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        if not isinstance(detail, dict):
+            return None
+        contract_data = detail.get("intent_contract")
+        try:
+            contract = ResearchIntentContract.model_validate(contract_data)
+        except (TypeError, ValueError):
+            return None
+        utilities = detail.get("information_utilities")
+        utilities = utilities if isinstance(utilities, list) else []
+        candidates = detail.get("entity_candidates")
+        candidates = candidates if isinstance(candidates, list) else []
+        findings = detail.get("findings")
+        findings = findings if isinstance(findings, list) else []
+        requirements = list(dict.fromkeys(contract.unknowns_to_discover + contract.desired_output[:]))
+        covered: list[str] = []
+        missing: list[str] = []
+        utility_types = {str(item.get("utility_type")) for item in utilities if isinstance(item, dict)}
+        if candidates:
+            covered.append("unknown_entities_or_topics")
+        if "core_evidence" in utility_types or findings:
+            covered.append("evidence_bound_findings")
+        if "counterevidence" in utility_types:
+            covered.append("negative_evidence_requirements")
+        if "event_signal" in utility_types:
+            covered.append("event_or_change_signals")
+        if "memory_update" in utility_types:
+            covered.append("long_term_memory_updates")
+        for requirement in requirements:
+            normalized = requirement.casefold()
+            if any(normalized in str(item).casefold() for item in covered):
+                continue
+            if requirement in {"supporting_evidence", "direct_evidence", "independent_evidence"} and ("core_evidence" in utility_types or findings):
+                covered.append(requirement)
+                continue
+            missing.append(requirement)
+        scope_drift: dict[str, object] = {"detected": False, "reason": None}
+        if candidates:
+            names = [str(item.get("normalized_name")) for item in candidates if isinstance(item, dict)]
+            if len(set(names)) == 1 and len(names) >= 1 and "discovery" in {contract.primary_intent, *contract.secondary_intents}:
+                scope_drift = {"detected": True, "reason": "当前证据集中于单一实体，尚未覆盖探索类目。", "dominant_entities": names[:1]}
+        total = max(1, len(requirements) + 4)
+        score = max(0.0, min(1.0, len(set(covered)) / total))
+        if scope_drift.get("detected"):
+            score = min(score, 0.65)
+        budget_remaining = int(detail.get("consumed_crawl_count") or 0) < int(detail.get("budget_max_crawl_tasks") or detail.get("budget_crawl_limit") or 0)
+        status = "passed" if score >= 0.75 and not missing and not scope_drift.get("detected") else "needs_more_research" if allow_more_research and budget_remaining else "partial_completion"
+        next_step = None
+        if status != "passed":
+            next_step = "补足：" + "、".join(missing[:3]) if missing else "扩大实体与平台覆盖并寻找反向证据"
+        return self.research.save_alignment_review(
+            task_id=task_id,
+            alignment_score=score,
+            covered_requirements=covered,
+            missing_requirements=missing,
+            scope_drift=scope_drift,
+            recommended_next_step=next_step,
+            review_status=status,
+        )
 
     async def _research_round(self, task: dict[str, object]) -> None:
         task_id = str(task["id"])
@@ -965,6 +1392,12 @@ class ResearchRuntime:
             for entity in extract_entities(content_items)
             if entity.casefold() not in {"ai", "agent", "产品", "工具", "软件", "工作台"}
         ]
+        self._classify_content_value(
+            task,
+            content_items,
+            query_id=query_id,
+            entities=list(dict.fromkeys(entities)),
+        )
         self.research.record_step_usage(task_id, step="entity_extraction")
         existing_detail = self.research.get_for_runtime(task_id, detail=True)
         known_entity_names = {
@@ -1041,6 +1474,7 @@ class ResearchRuntime:
             self.research.update_context(task_id, context, step="budget_review", round_number=round_number)
 
         await self._model_tool_loop(task, items, query, round_number)
+        self._record_core_evidence_and_memory(task_id)
         refreshed = self.research.get_for_runtime(task_id)
         if refreshed is not None:
             refreshed_context = refreshed.get("context")
@@ -1058,8 +1492,19 @@ class ResearchRuntime:
         latest = self.research.get_for_runtime(task_id)
         if latest is not None and str(latest["status"]) == "Researching" and not bool(latest.get("paused")):
             await self._ensure_research_artifacts(latest, query, round_number)
-            latest = self.research.get_for_runtime(task_id)
+        latest = self.research.get_for_runtime(task_id)
         if latest is not None and str(latest["status"]) == "Researching" and not bool(latest.get("paused")):
+            review = self._intent_alignment_review(task_id, allow_more_research=True)
+            if isinstance(review, dict) and review.get("review_status") == "needs_more_research":
+                self.research.append_trace(
+                    task_id,
+                    event="alignment_gap",
+                    status="Researching",
+                    reason=str(review.get("recommended_next_step") or "missing intent requirements"),
+                    round_number=round_number,
+                    step="coverage_review",
+                )
+                return
             self.research.transition(
                 task_id,
                 status="Summarizing",
@@ -1747,7 +2192,9 @@ class ResearchRuntime:
             raise ResearchTaskConflict("research task disappeared before summarizing")
         self.research.finalize_content_decisions(task_id)
         self.research.finalize_platform_coverage(task_id)
+        self._record_core_evidence_and_memory(task_id)
         detail = self.research.get_for_runtime(task_id, detail=True) or detail
+        alignment_review = self._intent_alignment_review(task_id, allow_more_research=False)
         findings = detail.get("findings") or []
         context = detail.get("context") or {}
         context = dict(context) if isinstance(context, dict) else {}
@@ -1800,6 +2247,13 @@ class ResearchRuntime:
             )
             self.research.set_stop_reason(task_id, stop_reason)
         quality_queries = detail.get("queries") or []
+        utility_rows = detail.get("information_utilities")
+        utility_rows = utility_rows if isinstance(utility_rows, list) else []
+        utility_counts: dict[str, int] = {}
+        for row in utility_rows:
+            if isinstance(row, dict) and isinstance(row.get("utility_type"), str):
+                key = str(row["utility_type"])
+                utility_counts[key] = utility_counts.get(key, 0) + 1
         prompt = {
             "objective": detail["objective"],
             "findings": findings,
@@ -1807,6 +2261,10 @@ class ResearchRuntime:
             "query_quality": quality_queries,
             "quality_counts": quality,
             "coverage_review": coverage_review,
+            "intent_contract": detail.get("intent_contract"),
+            "alignment_review": alignment_review,
+            "information_utility_counts": utility_counts,
+            "discovery_candidates": detail.get("entity_candidates", []),
             "step_usage": detail.get("step_usage", []),
             "billing_summary": detail.get("billing_summary", {}),
             "last_model_text": context.get("last_model_text") if isinstance(context, dict) else None,
@@ -1835,6 +2293,24 @@ class ResearchRuntime:
         result = {
             # Keep the historical key for existing consumers while exposing
             # explicit formats for the Research Center and future exporters.
+            "research_question": detail["objective"],
+            "intent_contract": detail.get("intent_contract"),
+            "research_scope": {
+                "platforms": detail.get("platforms", []),
+                "time_scope": (
+                    detail.get("intent_contract", {}).get("time_scope", {})
+                    if isinstance(detail.get("intent_contract"), dict)
+                    else {}
+                ),
+            },
+            "discovery_entities": detail.get("entity_candidates", []),
+            "event_candidates": detail.get("event_candidates", []),
+            "evidence_gaps": (
+                alignment_review.get("missing_requirements", [])
+                if isinstance(alignment_review, dict)
+                else []
+            ),
+            "recommended_next_actions": detail.get("proposed_actions", []),
             "summary": summary_markdown,
             "summary_markdown": summary_markdown,
             "summary_html": render_research_markdown(summary_markdown),
@@ -1849,6 +2325,14 @@ class ResearchRuntime:
             "discovery_count": quality["discovery_count"],
             "repost_count": quality.get("repost_count", 0),
             "negative_evidence_count": quality.get("negative_evidence_count", 0),
+            "information_utility_counts": utility_counts,
+            "discovery_seed_count": utility_counts.get("discovery_seed", 0),
+            "core_evidence_count": utility_counts.get("core_evidence", 0),
+            "background_context_count": utility_counts.get("background_context", 0),
+            "event_signal_count": utility_counts.get("event_signal", 0),
+            "noise_count": utility_counts.get("noise", 0),
+            "duplicate_count": utility_counts.get("duplicate", 0),
+            "alignment_review": alignment_review,
             "coverage_review": coverage_review,
             "stop_reason": stop_reason,
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

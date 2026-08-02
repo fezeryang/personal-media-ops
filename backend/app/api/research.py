@@ -17,6 +17,7 @@ from app.crawler.registry import (
 )
 from app.models.research import (
     ResearchAction,
+    ResearchIntentRevisionRequest,
     ResearchTaskControl,
     ResearchTaskCreate,
     ResearchTaskDetail,
@@ -28,6 +29,13 @@ from app.repositories.research import (
     ResearchTaskRepository,
 )
 from app.security.dependencies import AuthContext, require_owner_session
+from app.services.ai.intent_interpreter import build_default_intent
+from app.services.ai.research_quality import (
+    classify_query,
+    noise_risk_score,
+    normalize_query,
+    specificity_score,
+)
 from app.services.ai.research_rendering import render_research_markdown
 
 router = APIRouter(prefix="/research", tags=["research-runtime"])
@@ -115,6 +123,8 @@ def _consumption(task: dict[str, object]) -> dict[str, object]:
 
 
 def _summary(task: dict[str, object]) -> dict[str, object]:
+    intent = task.get("intent_contract")
+    intent = intent if isinstance(intent, dict) else {}
     return {
         "id": task["id"],
         "task_type": task["task_type"],
@@ -133,6 +143,8 @@ def _summary(task: dict[str, object]) -> dict[str, object]:
         "finished_at": task.get("finished_at"),
         "failure_reason": task.get("failure_reason"),
         "stop_reason": task.get("stop_reason"),
+        "primary_intent": intent.get("primary_intent"),
+        "intent_confidence": intent.get("confidence"),
     }
 
 
@@ -173,6 +185,16 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         "queries": task.get("queries", []),
         "events": task.get("events", []),
         "actions": task.get("proposed_actions", []),
+        "intent_contract": task.get("intent_contract"),
+        "intent_versions": task.get("intent_versions", []),
+        "intent_assumptions": task.get("intent_assumptions", []),
+        "unknowns": task.get("unknowns", []),
+        "alignment_review": task.get("alignment_review"),
+        "information_utilities": task.get("information_utilities", []),
+        "entity_candidates": task.get("entity_candidates", []),
+        "event_candidates": task.get("event_candidates", []),
+        "memory_items": task.get("memory_items", []),
+        "research_plan": task.get("plan", {}),
     }
 
 
@@ -225,6 +247,47 @@ def create_task(
             max_payg_amount=payload.budget.max_payg_amount,
             budget_currency=payload.budget.currency,
         )
+        # The understanding card is available immediately with a bounded
+        # deterministic interpretation.  The Runtime may later replace it
+        # with the configured model's structured interpretation, but creation
+        # never waits on or depends on a provider.
+        initial_intent = build_default_intent(payload.objective, platforms)
+        _repository(request).save_intent(
+            str(task["id"]),
+            initial_intent.model_dump(mode="json"),
+            change_reason="initial_understanding_card",
+        )
+        intent = _repository(request).get_intent(str(task["id"]))
+        normalized_goal = normalize_query(payload.objective)
+        _repository(request).create_query(
+            task_id=str(task["id"]),
+            intent_id=str(intent["id"]),
+            record_type="user_goal",
+            gate_status="not_applicable",
+            decision="allow",
+            query_role="seed_discovery",
+            query=payload.objective,
+            normalized_query=normalized_goal,
+            query_type=classify_query(normalized_goal),
+            platform=platforms[0],
+            source_type="user_goal",
+            source_content_id=None,
+            source_finding_id=None,
+            parent_query_id=None,
+            generation_reason="原始用户目标仅用于 Intent Interpreter，不提交平台搜索",
+            specificity_score=specificity_score(normalized_goal),
+            novelty_score=1.0,
+            noise_risk_score=noise_risk_score(normalized_goal),
+            status="candidate",
+            expected_evidence_role="background",
+        )
+        refreshed = _repository(request).get(
+            user_id=auth.user_id,
+            task_id=str(task["id"]),
+            detail=True,
+        )
+        if refreshed is not None:
+            task = refreshed
     except Exception as error:
         raise _conflict(error) from error
     request.app.state.research_runtime.wake()
@@ -241,6 +304,58 @@ def get_task(
     if task is None:
         raise _not_found()
     return _detail(task)
+
+
+@router.post("/tasks/{task_id}/intent/revise", response_model=ResearchTaskDetail)
+def revise_intent(
+    task_id: str,
+    payload: ResearchIntentRevisionRequest,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    repository = _repository(request)
+    task = repository.get(user_id=auth.user_id, task_id=task_id, detail=True)
+    if task is None:
+        raise _not_found()
+    if task.get("status") != "Draft":
+        raise _conflict(ResearchTaskConflict("研究已开始，不能静默修改原始意图；请创建新的研究分支"))
+    try:
+        current = repository.get_intent(task_id)
+        revised = build_default_intent(
+            payload.request,
+            [
+                str(platform)
+                for platform in task.get("platforms", [])
+                if isinstance(platform, str)
+            ],
+        ).model_dump(mode="json")
+        revisions = current.get("intent_revisions")
+        revisions = list(revisions) if isinstance(revisions, list) else []
+        revisions.append(
+            {
+                "from_version": current.get("version"),
+                "request": payload.request,
+                "reason": "owner_revised_before_start",
+                "created_at": revised.get("created_at"),
+            }
+        )
+        revised.update(
+            {
+                "original_request": current.get("original_request") or task["objective"],
+                "original_intent": current.get("original_intent") or task["objective"],
+                "intent_revisions": revisions,
+                "intent_source": "owner_revised",
+                "created_at": current.get("created_at") or revised.get("created_at"),
+            }
+        )
+        repository.save_intent(task_id, revised, change_reason="owner_revised_before_start")
+        refreshed = repository.get(user_id=auth.user_id, task_id=task_id, detail=True)
+        if refreshed is None:
+            raise ResearchTaskNotFound(task_id)
+    except Exception as error:
+        raise _conflict(error) from error
+    request.app.state.research_runtime.wake()
+    return _detail(refreshed)
 
 
 def _control(

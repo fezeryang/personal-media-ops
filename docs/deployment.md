@@ -104,6 +104,10 @@ JSONL。`0004_content_modes` 保留原任务列和记录，增加五模式目标
 边际收益、内容采用/转载判定、Runtime checkpoint、步骤级用量、预算事件、Billing
 Profile 和 Provider 价格版本；该迁移会为既有 Provider/Invocation 快照补齐账务语义，
 不会改写原始 JSONL。
+`0014_research_intent_and_information_utility` 增加 Research Intent Contract、意图版本与
+假设、未知项、查询 `record_type`/`decision`/`query_role`、信息价值分类、发现实体、
+事件候选、长期记忆和 Intent Alignment Review。它为历史 Research Task 建立只读
+`legacy_migrated` 意图投影，不重新执行旧任务，也不删除旧 Finding 或证据。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
 资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
 revision，不会静默执行迁移。
@@ -131,6 +135,14 @@ SHA-256，再使用 `--allow-migrations` 发布。迁移后必须核对 Alembic 
 既有 Research、Finding、Evidence 和 AI Invocation 行数未减少。若迁移或应用验证失败，
 保持新 schema，优先回滚应用代码或提交前向修复；不得执行未经审查的 downgrade 或
 替换生产数据库。
+
+阶段 8D-0 的 `0014_research_intent_and_information_utility` 发布前必须确认生产仍在
+`0013_cross_platform_research_completion`，先执行 SQLite 备份并记录备份路径与
+SHA-256，再审查迁移中的历史意图投影、查询 `user_goal` 标记和外键约束，使用
+`--allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
+`0014_research_intent_and_information_utility`、`PRAGMA integrity_check` 为 `ok`，
+并比较旧 Research、Finding、Evidence、Query、AI Invocation 行数没有减少。不要执行
+未经审查的 downgrade；数据库回滚只能通过前向修复或经授权的恢复操作完成。
 
 ## Frontend Build
 

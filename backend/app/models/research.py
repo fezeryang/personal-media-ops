@@ -4,6 +4,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.research_intent import (
+    ContentResearchUtility,
+    ResearchAlignmentReview,
+    ResearchEntityCandidate,
+    ResearchEventCandidate,
+    ResearchIntentContract,
+    ResearchMemoryItem,
+    ResearchUnknown,
+)
+
 ResearchTaskStatus = Literal[
     "Draft",
     "Planning",
@@ -51,6 +61,27 @@ ResearchQueryStatus = Literal[
     "running",
     "completed",
     "failed",
+]
+ResearchQueryRecordType = Literal["user_goal", "execution_query"]
+ResearchQueryGateStatus = Literal[
+    "not_applicable",
+    "pending",
+    "allow",
+    "transform",
+    "hold",
+    "reject",
+    "completed",
+]
+ResearchQueryDecision = Literal["allow", "transform", "hold", "reject"]
+ResearchQueryRole = Literal[
+    "seed_discovery",
+    "entity_expansion",
+    "cross_platform_validation",
+    "counterevidence",
+    "competitor_scan",
+    "trend_probe",
+    "creator_scan",
+    "pain_point_probe",
 ]
 SupportType = Literal["direct", "contextual", "contradictory", "background"]
 SupportStrength = Literal["strong", "medium", "weak"]
@@ -143,6 +174,20 @@ class ResearchTaskControl(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class ResearchIntentRevisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request: str = Field(min_length=5, max_length=10_000)
+
+    @field_validator("request")
+    @classmethod
+    def normalize_request(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or not normalized.isprintable():
+            raise ValueError("request must be printable and non-blank")
+        return normalized
+
+
 class ResearchEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -185,6 +230,11 @@ class ResearchQuery(BaseModel):
 
     id: str
     research_task_id: str
+    intent_id: str | None = None
+    record_type: ResearchQueryRecordType = "execution_query"
+    gate_status: ResearchQueryGateStatus = "pending"
+    decision: ResearchQueryDecision = "allow"
+    query_role: ResearchQueryRole = "seed_discovery"
     query: str
     normalized_query: str
     query_type: ResearchQueryType
@@ -399,6 +449,8 @@ class ResearchTaskSummary(BaseModel):
     finished_at: str | None
     failure_reason: str | None
     stop_reason: str | None = None
+    primary_intent: str | None = None
+    intent_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class ResearchTaskDetail(ResearchTaskSummary):
@@ -418,3 +470,13 @@ class ResearchTaskDetail(ResearchTaskSummary):
     queries: list[ResearchQuery]
     events: list[ResearchEvent]
     actions: list[ResearchAction]
+    intent_contract: ResearchIntentContract | None = None
+    intent_versions: list[dict[str, object]] = Field(default_factory=list)
+    intent_assumptions: list[dict[str, object]] = Field(default_factory=list)
+    unknowns: list[ResearchUnknown] = Field(default_factory=list)
+    alignment_review: ResearchAlignmentReview | None = None
+    information_utilities: list[ContentResearchUtility] = Field(default_factory=list)
+    entity_candidates: list[ResearchEntityCandidate] = Field(default_factory=list)
+    event_candidates: list[ResearchEventCandidate] = Field(default_factory=list)
+    memory_items: list[ResearchMemoryItem] = Field(default_factory=list)
+    research_plan: dict[str, object] = Field(default_factory=dict)
