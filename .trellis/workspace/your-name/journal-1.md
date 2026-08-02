@@ -548,3 +548,39 @@ integrity_check=ok，API/Worker active，无活动采集、研究任务或浏览
 恢复平台前先保留 bili 为基线；bili 已连续两轮采集出现 7 条新增，但 17/24 结果已存在，
 且第二轮有来源链，说明 bili 尚未采尽但边际收益下降，可在恢复平台时优先引入第二平台
 做差异化覆盖，不需要继续扩大 bili 采集规模。
+
+
+## Session 13: Session 16: 8C-1 production acceptance
+
+**Date**: 2026-08-02
+**Task**: Session 16: 8C-1 production acceptance
+**Branch**: `main`
+
+### Summary
+
+完成 8C-1 研究质量地基：0012 迁移、查询质量闸门、四类内容计数、证据 occurrences 与 Finding 支持约束已部署；修复两次生产回归并完成 bili 最终任务 dd7c83cf-c818-4daf-97e5-bb297afb768b。最终 2 次采集均 requested_count=12，new/existing/updated/duplicate=7/17/0/15，独立证据 5、原始发现 84；6 fact 均 direct，1 inference contextual，后端 377 passed/86.18%，前端 55 passed，任务 Done。生产 API/Worker 正常，数据库 integrity_check=ok，无活动采集或浏览器残留。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54fdda0` | (see git log) |
+| `b376762` | (see git log) |
+| `f156017` | (see git log) |
+| `c719f47` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
