@@ -3,6 +3,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -10,6 +11,7 @@ from app.core.config import Settings
 from app.crawler.adapters import DouyinAdapter
 from app.crawler.registry import CrawlerPlatformRegistry, platform_registry
 from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.library import LibraryRepository
 from app.workers.crawler_worker import (
     STREAM_READER_LIMIT_BYTES,
     CrawlerWorker,
@@ -119,6 +121,52 @@ print("crawler completed", flush=True)
     assert stored["actual_count"] == 2
     assert stored["pid"] is not None
     assert stored["finished_at"] is not None
+
+
+def test_worker_uses_mapping_count_from_ingestion_result(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "research_success_runner.py"
+    runner.write_text(
+        """
+from pathlib import Path
+
+result_dir = Path(__import__("sys").argv[__import__("sys").argv.index("--output-dir") + 1])
+result_dir = result_dir / "bilibili" / "jsonl"
+result_dir.mkdir(parents=True, exist_ok=True)
+(result_dir / "search_contents_test.jsonl").write_text(
+    '{"video_id": "1"}\\n',
+    encoding="utf-8",
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = worker_settings(test_settings, runner)
+    task = seed_task(repository, settings, requested_count=1)
+    library = LibraryRepository(settings.database_path)
+    research = Mock()
+    worker = CrawlerWorker(
+        repository,
+        settings,
+        library_repository=library,
+        research_repository=research,
+    )
+
+    asyncio.run(worker.run_once())
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "succeeded"
+    research.record_crawl_completion.assert_called_once_with(
+        str(task["id"]),
+        succeeded=True,
+        new_content_count=1,
+        existing_content_count=0,
+        updated_content_count=0,
+        result_count=1,
+    )
 
 
 def test_worker_redacts_sensitive_assignments_from_subprocess_logs(

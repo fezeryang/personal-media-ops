@@ -254,7 +254,7 @@ class CrawlerWorker:
                     new_content_count=ingestion.new_content_count,
                     existing_content_count=ingestion.existing_content_count,
                     updated_content_count=ingestion.updated_content_count,
-                    result_count=ingestion.contents,
+                    result_count=int(ingestion["contents"]),
                 )
             else:
                 failure = f"MediaCrawler exited with code {return_code}"
