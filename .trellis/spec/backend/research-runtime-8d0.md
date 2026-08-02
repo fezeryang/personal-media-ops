@@ -88,6 +88,8 @@ available and a material gap remains; otherwise it reaches
 
 | Condition | Required behavior |
 |---|---|
+| Platform crawler fails | Record the platform/query failure as a coverage fact, then reuse the next held execution direction on the next eligible platform |
+| Platform crawler fails and no held/new direction remains | Enter Summarizing/`partial_completion` with an explicit gap; do not convert the platform failure into a generic candidate-rejection failure |
 | Blank/meaningless user goal | Reject task input with a validation error |
 | User goal contains a broad word such as “工具” or “趋势” | Accept and interpret; never reject from a generic-term rule alone |
 | Unbound seed execution query | Hold/reject with an Intent Contract binding reason |
@@ -115,6 +117,13 @@ available and a material gap remains; otherwise it reaches
 - Bad: put the raw user goal through the execution-query generic-term gate,
   collapse the contract into `research_mode`, or discard a non-adopted item
   that is a useful discovery seed.
+
+Platform crawler failure is a coverage fact, not an automatic Research
+failure. The failed platform/query is recorded with its error, and a modern
+task first reuses the next held execution direction on the next eligible
+platform. If no held or newly valid direction remains, the task converges to
+an auditable summary/`partial_completion` with an explicit coverage gap rather
+than raising a generic “all research query candidates were rejected” failure.
 
 ## 6. Tests Required
 

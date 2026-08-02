@@ -1346,6 +1346,72 @@ class ResearchTaskRepository:
                 (lifecycle_status, reason, lifecycle_status, lifecycle_status, lifecycle_status, lifecycle_status, utc_now(), query_id),
             )
 
+    def claim_held_execution_query(
+        self,
+        task_id: str,
+        *,
+        platform: str,
+    ) -> dict[str, object] | None:
+        """Reuse the next durable plan direction on the next platform.
+
+        A failed or completed platform must not discard the other execution
+        directions generated from the Intent Contract. They were persisted as
+        held queries during the first round; claiming one here preserves its
+        audit identity while making the actual platform binding explicit.
+        """
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM research_queries
+                WHERE research_task_id = ?
+                  AND record_type = 'execution_query'
+                  AND status = 'approved'
+                  AND lifecycle_status = 'skipped_low_marginal_value'
+                ORDER BY CASE query_role
+                    WHEN 'cross_platform_validation' THEN 0
+                    WHEN 'counterevidence' THEN 1
+                    WHEN 'competitor_scan' THEN 2
+                    WHEN 'trend_probe' THEN 3
+                    WHEN 'creator_scan' THEN 4
+                    WHEN 'pain_point_probe' THEN 5
+                    ELSE 6
+                END, created_at, id
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return None
+            now = utc_now()
+            query_id = str(row["id"])
+            connection.execute(
+                """
+                UPDATE research_queries
+                SET platform = ?, lifecycle_status = 'executing',
+                    gate_status = 'allow', decision = 'allow',
+                    unexecuted_reason = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (platform, now, query_id),
+            )
+            self._append_trace_connection(
+                connection,
+                task_id,
+                event="query_reactivated",
+                status=None,
+                reason="下一平台继续执行 Intent Contract 已批准的查询方向",
+                step="query_gate",
+                tool_name=None,
+                tool_arguments={
+                    "query_id": query_id,
+                    "platform": platform,
+                    "query_role": row["query_role"],
+                },
+            )
+        return self.get_query(query_id)
+
     def skip_pending_queries(
         self,
         task_id: str,
@@ -2653,6 +2719,8 @@ class ResearchTaskRepository:
             context["last_crawl_platform"] = str(row["platform"])
             if not succeeded:
                 context["last_crawl_failure"] = error or "Crawler task failed"
+            else:
+                context.pop("last_crawl_failure", None)
             connection.execute(
                 """
                 UPDATE research_tasks SET status = ?, waiting_crawl_task_id = NULL,

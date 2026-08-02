@@ -324,6 +324,39 @@ def test_intent_and_8d0_artifacts_are_durable(tmp_path: Path) -> None:
     assert len(detail["intent_versions"]) == 2
     assert len(detail["unknowns"]) >= 1
 
+    held = repository.create_query(
+        task_id=task_id,
+        intent_id=str(saved["id"]),
+        record_type="execution_query",
+        gate_status="hold",
+        decision="hold",
+        query_role="cross_platform_validation",
+        query="NewTool 跨平台直接验证",
+        normalized_query="newtool 跨平台直接验证",
+        query_type="product",
+        platform="bili",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="held plan direction",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        relevance_score=0.9,
+        expected_value_score=0.8,
+        status="approved",
+        lifecycle_status="skipped_low_marginal_value",
+        unexecuted_reason="同轮已有更高预期价值查询",
+    )
+    claimed = repository.claim_held_execution_query(task_id, platform="xhs")
+    assert claimed is not None
+    assert claimed["id"] == held["id"]
+    assert claimed["platform"] == "xhs"
+    assert claimed["lifecycle_status"] == "executing"
+    assert claimed["gate_status"] == "allow"
+    assert repository.claim_held_execution_query(task_id, platform="zhihu") is None
+
     entity = repository.save_entity_candidate(
         task_id=task_id,
         entity_type="product",

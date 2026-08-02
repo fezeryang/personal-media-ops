@@ -2,7 +2,7 @@ import asyncio
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -145,7 +145,15 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
     # The ingestion count is not the content id; read the deterministic row.
     with repository_connection(database) as connection:
         content_id = str(connection.execute("SELECT id FROM library_contents LIMIT 1").fetchone()[0])
+    repository.update_context(
+        task_id,
+        {"crawl_requested": True, "last_crawl_failure": "previous platform failure"},
+        step="waiting_crawl",
+        round_number=1,
+    )
     repository.record_crawl_completion(str(crawler_task["id"]), succeeded=True, new_content_count=1)
+    refreshed_context = repository.get_for_runtime(task_id)["context"]
+    assert "last_crawl_failure" not in refreshed_context
     with repository_connection(database) as connection:
         metrics = connection.execute(
             """
@@ -1458,6 +1466,105 @@ def test_runtime_quality_gate_uses_plan_terms_after_history_rejects_initial_quer
     }
     assert len([item for item in queries if item["status"] == "approved"]) == 1
     assert len(gateway.requests) == 1
+
+
+def test_modern_runtime_reuses_held_direction_after_platform_round(
+    tmp_path: Path,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id, platforms=["bili", "xhs"])
+    task_id = str(task["id"])
+    from app.services.ai.intent_interpreter import build_default_intent
+
+    intent = build_default_intent("比较 Codex 与 WorkBuddy 的差异", ["bili", "xhs"])
+    saved_intent = repository.save_intent(task_id, intent.model_dump(mode="json"), change_reason="test")
+    held = repository.create_query(
+        task_id=task_id,
+        intent_id=str(saved_intent["id"]),
+        record_type="execution_query",
+        gate_status="hold",
+        decision="hold",
+        query_role="cross_platform_validation",
+        query="Codex WorkBuddy Skills 直接对比",
+        normalized_query="codex workbuddy skills 直接对比",
+        query_type="product",
+        platform="bili",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="held plan direction",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        relevance_score=0.9,
+        expected_value_score=0.8,
+        status="approved",
+        lifecycle_status="skipped_low_marginal_value",
+    )
+    repository.save_plan(
+        task_id,
+        plan={"initial_query": "Codex WorkBuddy 长期记忆 直接对比"},
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id, detail=True)
+    assert current is not None
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=Mock(supports_quality_queries=True),
+    )
+    context = {"next_crawl_platform_index": 1, "last_crawl_failure": "Bilibili unavailable"}
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=2,
+            context=context,
+            plan=current["plan"],  # type: ignore[arg-type]
+            crawl_count=1,
+        )
+    )
+    assert prepared == ("Codex WorkBuddy Skills 直接对比", str(held["id"]), "xhs")
+
+
+def test_platform_failure_with_no_remaining_queries_converges_to_summary() -> None:
+    research = Mock()
+    research.coverage_summary.return_value = {"actual_platform_count": 0}
+    runtime = ResearchRuntime(
+        research=research,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=Mock(supports_quality_queries=True),
+    )
+    runtime._prepare_quality_query = AsyncMock(return_value=None)
+    task = {
+        "id": "research-platform-failure",
+        "current_round": 1,
+        "plan": {"initial_query": "comparison"},
+        "context": {"last_crawl_failure": "platform unavailable"},
+        "consumed_crawl_count": 1,
+        "coverage": {
+            "low_marginal_value_threshold": 0.1,
+            "low_marginal_round_limit": 2,
+            "target_platform_count": 3,
+        },
+    }
+    asyncio.run(runtime._research_round(task))
+    research.set_stop_reason.assert_called_once_with(
+        "research-platform-failure",
+        "query_candidates_exhausted_after_platform_failure",
+    )
+    research.transition.assert_called_once_with(
+        "research-platform-failure",
+        status="Summarizing",
+        reason="query_candidates_exhausted_after_platform_failure",
+        step="summarizing",
+        round_number=1,
+    )
 
 
 def test_runtime_rotates_selected_platforms_for_bounded_crawls() -> None:

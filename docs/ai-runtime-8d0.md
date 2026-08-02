@@ -79,6 +79,17 @@ unknowns, desired output, evidence gaps and scope drift. A task can remain in
 research when budget allows, or finish as `partial_completion` when important
 requirements remain unresolved.
 
+### 平台失败恢复
+
+单个平台 crawler 失败只记录为该平台和该查询的覆盖事实，不自动把整项
+Research 标记为失败。现代任务会优先复用计划中已生成、暂缓执行的
+`Execution Query`，将其绑定到下一个可用平台继续覆盖；原查询身份和恢复
+轨迹都会保留。
+
+如果没有合法的 held 或新候选查询，运行时会进入可审计的
+`Summarizing`/`partial_completion` 路径，并明确记录覆盖缺口，而不是以
+笼统的 `all research query candidates were rejected` 结束任务。
+
 ## API and UI
 
 The existing task endpoints now return the contract, plan, query roles,

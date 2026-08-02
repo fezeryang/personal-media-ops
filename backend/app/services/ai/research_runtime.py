@@ -976,6 +976,15 @@ class ResearchRuntime:
                 else "entity_expansion"
             ),
         )]
+        if modern_intent and crawl_count > 0:
+            held = self.research.claim_held_execution_query(
+                task_id,
+                platform=platform,
+            )
+            if held is not None:
+                context["last_query_id"] = str(held["id"])
+                context["last_query_query"] = str(held["query"])
+                return str(held["query"]), str(held["id"]), platform
         if modern_intent and crawl_count == 0:
             directions = plan.get("execution_query_directions")
             if isinstance(directions, list):
@@ -1339,6 +1348,24 @@ class ResearchRuntime:
                 crawl_count=crawl_count,
             )
             if prepared is None:
+                if isinstance(context.get("last_crawl_failure"), str):
+                    stop_reason = "query_candidates_exhausted_after_platform_failure"
+                    context["stop_reason"] = stop_reason
+                    self.research.update_context(
+                        task_id,
+                        context,
+                        step="query_gate",
+                        round_number=round_number,
+                    )
+                    self.research.set_stop_reason(task_id, stop_reason)
+                    self.research.transition(
+                        task_id,
+                        status="Summarizing",
+                        reason=stop_reason,
+                        step="summarizing",
+                        round_number=round_number,
+                    )
+                    return
                 raise ResearchTaskConflict("all research query candidates were rejected")
             query, query_id, query_platform = prepared
         else:
