@@ -507,3 +507,44 @@ build 通过；`bash -n scripts/server/*.sh` 与 release script tests 通过。�
 
 提交并部署 0012（先备份 SQLite），完成最终 bili 单平台真实验收任务，核对全部 query、
 拒绝记录、四类计数、occurrences、事实/推测 Finding 支持和服务残留状态。
+
+## Session 16: 8C-1 生产修复与最终真实验收
+
+**Date**: 2026-08-02
+**Task**: 08-01-research-quality-foundation
+
+### 生产回归修复
+
+最终验收任务 `bf0dc56f-a6e5-4a12-8963-bf0be352ef06` 暴露 Worker 使用
+`IngestionResult.contents` 属性而不是已定义的字典键，导致采集成功后研究任务失败。
+提交 `b376762` 修复为映射键访问，并补充 Worker 回归测试；生产全量 376 passed 后发布。
+
+随后任务 `c45789cc-879e-44b8-bfeb-aa1645a88b61` 暴露第二个质量闸门缺口：历史去重拒绝
+首轮目标后，模型计划中已有的 `search_terms/derived_keywords` 没有进入候选集合，
+只剩泛词 `agent`，任务错误地以“all research query candidates were rejected”终止。
+提交 `f156017` 让计划候选统一落库并批量评分，补充历史去重后的回退测试；生产全量
+377 passed、覆盖率 86.18% 后发布。两次任务均按终态语义保留，未直接改写 SQLite。
+
+### 最终真实验收
+
+任务 `dd7c83cf-c818-4daf-97e5-bb297afb768b`（bili 单平台）最终 `Done`。两次真实采集
+均 requested_count=12、实际 12，耗时 69.017 s / 66.618 s；新增 5/2、已存在 7/10、
+updated 0。最终 new/existing/updated/duplicate_evidence 为 7/17/0/15，原始结果 24，
+独立证据 5，原始发现次数 84；occurrence 总行数 93（含 9 条 Finding 绑定）。
+
+共 26 条查询：2 completed、5 approved、19 rejected。所有后续查询均带
+parent_query_id 与 source_content_id；执行查询为首轮计划候选
+`personal AI workspace agent products 2026 comparison`，第二轮为 `codex`，来源链
+绑定内容 `5fe226b3-54d8-4716-ab7d-e0b887c91bf9`。拒绝包括 7 条历史重复、7 条泛化词、
+5 条低相关/低预期价值。实体包括 WorkBuddy、Codex、Claude、MCP、Skills。
+
+Finding 为 6 fact + 1 inference。事实证据全部 direct（6 strong、1 medium）；推测证据
+为 contextual/medium，保留 derivation 和 not_found counterevidence。唯一 proposed action
+为只读 `retrieve_evidence_summary`，保持 pending，未自动执行用户动作。
+
+任务总生命周期 298.368 s；模型调用 17 次，模型 elapsed 88.388 s；输入/输出/缓存
+token 31,108 / 6,909 / 83,072。生产 revision `0012_research_quality_foundation`，
+integrity_check=ok，API/Worker active，无活动采集、研究任务或浏览器残留。8C-2 建议
+恢复平台前先保留 bili 为基线；bili 已连续两轮采集出现 7 条新增，但 17/24 结果已存在，
+且第二轮有来源链，说明 bili 尚未采尽但边际收益下降，可在恢复平台时优先引入第二平台
+做差异化覆盖，不需要继续扩大 bili 采集规模。

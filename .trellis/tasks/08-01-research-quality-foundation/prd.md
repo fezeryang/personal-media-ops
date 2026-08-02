@@ -224,8 +224,8 @@ checkpoint，再由 Worker/Runtime 回写 query，避免研究层再次猜测 up
 * [x] 后端覆盖率 ≥86%；迁移新旧库、既有证据兼容和 integrity_check 通过（本地 86.16%）。
 * [x] 查询规范化、泛化词、来源链、评分、去重、四类计数、occurrences、支持类型约束有测试。
 * [x] 前端研究页展示查询、拒绝、评分、四类计数、独立证据/发现次数和支持类型，390px 通过。
-* [ ] 真实任务的所有后续查询有 parent_query_id 与 source_content_id/source_finding_id；至少一条泛词被拒绝且可见。
-* [ ] 真实任务所有事实型 Finding 有 direct 证据；inference 显式标记并展示推导依据及反证状态。
+* [x] 真实任务的所有后续查询有 parent_query_id 与 source_content_id/source_finding_id；至少一条泛词被拒绝且可见。最终任务 `dd7c83cf-c818-4daf-97e5-bb297afb768b` 共落库 26 条查询，后续查询均有父查询和来源内容；7 条泛化候选被拒绝并可在前端查看原因。
+* [x] 真实任务所有事实型 Finding 有 direct 证据；inference 显式标记并展示推导依据及反证状态。最终任务 6 条 fact 均为 direct（6 strong、1 medium 关联），1 条 inference 为 contextual/medium，并保留推导依据与 `not_found` 反证状态。
 * [x] 未执行任何用户动作；平台配置、登录态和 Worker 并发限制未改变。
 
 ## Definition of Done
@@ -265,10 +265,39 @@ Redis/Celery/PostgreSQL/S3/WebSocket/Kafka/Elasticsearch/Docker，以及任何 M
 3. 接入 Research Runtime/API/Worker，保持异步等待和 Model Gateway 边界。
 4. 扩展既有研究任务页与前端契约测试；完成全量质量门禁、生产发布与验收报告。
 
-## Implementation status before production migration
+## Final implementation and production acceptance
 
-本地实现已完成并通过全量门禁：后端 375 passed、覆盖率 86.16%；前端 22 个测试
-文件/54 个测试通过，lint/build 通过；`bash -n scripts/server/*.sh` 和发布脚本
-测试通过。迁移新增 `research_queries`、`evidence_occurrences`、Finding 支持/反证
-字段，以及 crawler ingestion recovery checkpoint。生产迁移、最终 commit 和 8C-1
-最终真实验收任务仍待完成，不能以此前的 `b376...` 缺陷复核任务代替最终验收。
+实现已完成并通过全量门禁：后端 377 passed、覆盖率 86.18%；前端 22 个测试文件/
+55 个测试通过，lint/build 通过；`bash -n scripts/server/*.sh` 和发布脚本测试通过。
+迁移新增 `research_queries`、`evidence_occurrences`、Finding 支持/反证字段，以及
+crawler ingestion recovery checkpoint。生产当前 revision 为
+`0012_research_quality_foundation`，`PRAGMA integrity_check=ok`。
+迁移发布前 SQLite 备份为 `/var/backups/mediaops/20260802T010343Z`，数据库 SHA-256 为
+`02e52f58053df142294a17c25716182ff33b08805c5b1e85e7317a1e0e690144`；对应
+`SHA256SUMS` SHA-256 为 `7dae2fa82babefd8bedc3aee4b8e1210f1ed425738ab80a3453fcbd0e8b7dcfa`。
+
+`dd7c83cf-c818-4daf-97e5-bb297afb768b` 是最终真实验收任务，平台仅为 bili，最终
+状态 `Done`。首轮/第二轮各执行一次真实采集，均 requested_count=12、实际 12 条，
+耗时分别 69.017 s / 66.618 s；研究侧分别新增 5/2、已存在 7/10，updated 均为 0。
+任务从创建到 Done 为 298.368 s，模型调用 17 次，模型 elapsed 合计 88.388 s，
+输入/输出/缓存 token 为 31,108 / 6,909 / 83,072。
+
+最终质量结果：new 7、existing 17、updated 0、duplicate_evidence 15；总原始查询
+结果 24，独立证据 5，原始发现次数 84（occurrence 总行数 93，其中包含 9 条
+Finding 绑定记录）。共 26 条 query：2 条 completed、5 条通过闸门但未执行、19 条
+被拒绝。首轮原始目标因历史去重拒绝，随后从模型计划候选中选择
+`personal AI workspace agent products 2026 comparison` 执行；第二轮执行
+`codex`，其 `parent_query_id=41255d25-93bf-4247-92a8-31c5b18d166e` 且
+`source_content_id=5fe226b3-54d8-4716-ab7d-e0b887c91bf9`，来源链完整。拒绝原因分布
+为历史/任务重复 7、泛化词 7、相关性或预期价值低 5。
+
+最终 Finding 为 6 条 fact + 1 条 inference。Fact 的支持分布为 direct/strong 6、
+direct/medium 1；inference 为 contextual/medium 2 条证据，明确列出推导依据，
+并标记未找到反证。识别实体包括 WorkBuddy、Codex、Claude、MCP、Skills；唯一
+`retrieve_evidence_summary` proposed action 保持 pending，未自动执行用户动作。
+
+最终代码发布 commit 为 `f156017573af3f9ba5d72fcd6ba875c2ed11746b`，已 push。
+此前 `b376762` 修复了 `IngestionResult` 计数属性回归；`f156017` 修复了模型计划
+候选未进入质量闸门、导致历史去重后任务无可执行查询的问题。两次修复均通过生产
+全量测试后发布。生产外部 observer 仍有 TLS reset，但 restricted helper、Nginx、
+API/Worker、localhost API 与生产 SNI loopback 均通过；按既定例外记录为非阻断。
