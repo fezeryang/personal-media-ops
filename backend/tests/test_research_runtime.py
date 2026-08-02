@@ -63,6 +63,21 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
     repository = ResearchTaskRepository(database)
     task = create_task(database, owner_id)
     task_id = str(task["id"])
+    query = repository.create_query(
+        task_id=task_id,
+        query="AI workbench",
+        normalized_query="ai workbench",
+        query_type="product",
+        platform="bili",
+        source_type="user_goal",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="test query",
+        specificity_score=0.8,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+    )
     repository.transition(task_id, status="Planning", reason="test", step="planning")
     repository.save_plan(
         task_id,
@@ -90,6 +105,7 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
         log_path=str(tmp_path / "logs" / "task.log"),
         qrcode_path=str(tmp_path / "qrcode.png"),
     )
+    repository.attach_query_crawler(str(query["id"]), str(crawler_task["id"]))
     repository.add_crawl_submission(task_id, str(crawler_task["id"]))
     assert crawler.claim_next() is not None
     repository.mark_waiting_login(str(crawler_task["id"]))
@@ -130,6 +146,24 @@ def test_research_task_state_and_evidence_are_durable(tmp_path: Path) -> None:
     with repository_connection(database) as connection:
         content_id = str(connection.execute("SELECT id FROM library_contents LIMIT 1").fetchone()[0])
     repository.record_crawl_completion(str(crawler_task["id"]), succeeded=True, new_content_count=1)
+    with repository_connection(database) as connection:
+        metrics = connection.execute(
+            """
+            SELECT new_content_rate, duplicate_rate, crawl_duration_ms,
+                   collected_result_count, marginal_value_score
+            FROM research_query_metrics
+            WHERE research_query_id = (
+                SELECT id FROM research_queries WHERE crawler_task_id = ?
+            )
+            """,
+            (str(crawler_task["id"]),),
+        ).fetchone()
+    assert metrics is not None
+    assert metrics["new_content_rate"] == 1.0
+    assert metrics["duplicate_rate"] == 0.0
+    assert metrics["crawl_duration_ms"] is not None
+    assert metrics["collected_result_count"] == 1
+    assert metrics["marginal_value_score"] == 1.0
     finding = repository.save_finding(
         task_id=task_id,
         round_number=1,

@@ -59,6 +59,17 @@ def _decimal(value: object) -> str | None:
     return format(Decimal(str(value)), "f")
 
 
+def _duration_millis(started_at: object, finished_at: object) -> int | None:
+    if not isinstance(started_at, str) or not isinstance(finished_at, str):
+        return None
+    try:
+        started = datetime.fromisoformat(started_at).astimezone(UTC)
+        finished = datetime.fromisoformat(finished_at).astimezone(UTC)
+    except ValueError:
+        return None
+    return max(0, int((finished - started).total_seconds() * 1000))
+
+
 def _row_to_task(row: sqlite3.Row) -> dict[str, object]:
     task = dict(row)
     for field, default in (
@@ -2007,7 +2018,7 @@ class ResearchTaskRepository:
             row = connection.execute(
                 """
                 SELECT t.id, t.status, t.context, c.actual_count,
-                       c.research_task_id, c.platform
+                       c.research_task_id, c.platform, c.started_at, c.finished_at
                 FROM research_tasks t
                 JOIN crawler_tasks c ON c.id = t.waiting_crawl_task_id
                 WHERE t.waiting_crawl_task_id = ?
@@ -2112,12 +2123,37 @@ class ResearchTaskRepository:
                 )
                 connection.execute(
                     """
-                    UPDATE research_query_metrics
-                    SET new_entity_count = ?, new_independent_evidence_count = 0,
-                        marginal_value_score = ?, measured_at = ?
-                    WHERE research_query_id = ?
+                    INSERT INTO research_query_metrics (
+                        id, research_query_id, new_content_rate,
+                        new_entity_count, new_independent_evidence_count,
+                        duplicate_rate, crawl_duration_ms,
+                        collected_result_count, candidate_evidence_count,
+                        adopted_evidence_count, not_adopted_count,
+                        marginal_value_score, measured_at
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, ?, ?)
+                    ON CONFLICT(research_query_id) DO UPDATE SET
+                        new_content_rate = excluded.new_content_rate,
+                        new_entity_count = excluded.new_entity_count,
+                        new_independent_evidence_count = excluded.new_independent_evidence_count,
+                        duplicate_rate = excluded.duplicate_rate,
+                        crawl_duration_ms = excluded.crawl_duration_ms,
+                        collected_result_count = excluded.collected_result_count,
+                        candidate_evidence_count = excluded.candidate_evidence_count,
+                        marginal_value_score = excluded.marginal_value_score,
+                        measured_at = excluded.measured_at
                     """,
-                    (new_entity_count, marginal_value, now, query_id),
+                    (
+                        self.new_id(),
+                        query_id,
+                        new_rate,
+                        new_entity_count,
+                        duplicate_rate,
+                        _duration_millis(row["started_at"], row["finished_at"]),
+                        max(0, result_count or 0),
+                        max(0, result_count or 0),
+                        marginal_value,
+                        now,
+                    ),
                 )
             connection.execute(
                 """
