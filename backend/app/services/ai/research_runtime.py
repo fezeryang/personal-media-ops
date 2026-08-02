@@ -603,12 +603,23 @@ class ResearchRuntime:
             for item in current_queries
             if isinstance(item, dict) and item.get("normalized_query")
         )
-        raw_candidates = [query, "agent"]
+        raw_candidates: list[tuple[str, str]] = [(query, reason)]
+        plan_terms = plan.get("derived_keywords")
+        if isinstance(plan_terms, list):
+            for item in plan_terms[:8]:
+                if not isinstance(item, str):
+                    continue
+                candidate = item.strip()[:500]
+                if candidate:
+                    raw_candidates.append(
+                        (candidate, f"{reason}；研究计划候选")
+                    )
+        raw_candidates.append(("agent", reason))
         persisted: list[dict[str, object]] = []
-        for candidate in raw_candidates:
+        for candidate, candidate_reason in raw_candidates:
             quality = evaluate_query(
                 candidate,
-                generation_reason=reason,
+                generation_reason=candidate_reason,
                 source_type=source_type,
                 historical_queries=historical,
                 parent_query_id=parent_query_id,
@@ -624,7 +635,7 @@ class ResearchRuntime:
                 source_content_id=source_content_id,
                 source_finding_id=None,
                 parent_query_id=parent_query_id,
-                generation_reason=reason,
+                generation_reason=candidate_reason,
                 specificity_score=quality.specificity_score,
                 novelty_score=quality.novelty_score,
                 noise_risk_score=quality.noise_risk_score,

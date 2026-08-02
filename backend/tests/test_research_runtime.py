@@ -21,6 +21,7 @@ from app.repositories.library import LibraryRepository
 from app.repositories.research import ResearchTaskConflict, ResearchTaskRepository
 from app.security.passwords import hash_password
 from app.services.ai.providers import ProviderError
+from app.services.ai.research_quality import normalize_query
 from app.services.ai.research_runtime import (
     ResearchRuntime,
     _elapsed_from,
@@ -1337,6 +1338,90 @@ def test_runtime_quality_gate_batches_scores_and_preserves_query_chain(
     assert expansion["parent_query_id"] == first_id
     assert expansion["source_content_id"] == source_content_id
     assert len(gateway.requests) == 2
+
+
+def test_runtime_quality_gate_uses_plan_terms_after_history_rejects_initial_query(
+    tmp_path: Path,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    previous = create_task(database, owner_id)
+    repository.create_query(
+        task_id=str(previous["id"]),
+        query="重复研究目标",
+        normalized_query=normalize_query("重复研究目标"),
+        query_type="product",
+        platform="bili",
+        source_type="user_goal",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="previous validation task",
+        specificity_score=0.7,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        status="approved",
+    )
+    task = create_task(database, owner_id)
+    task_id = str(task["id"])
+    repository.save_plan(
+        task_id,
+        plan={
+            "initial_query": "重复研究目标",
+            "derived_keywords": ["Claude Code 个人工作流"],
+        },
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id)
+    assert current is not None
+
+    ai_repository = Mock()
+    ai_repository.invocation_cost.return_value = None
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"relevance_scores":[0.9]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=5, output_tokens=3),
+            )
+        ]
+    )
+    tools = Mock()
+    tools.supports_quality_queries = True
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=tools,
+    )
+
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=1,
+            context={},
+            plan={
+                "initial_query": "重复研究目标",
+                "derived_keywords": ["Claude Code 个人工作流"],
+            },
+            crawl_count=0,
+        )
+    )
+
+    assert prepared is not None
+    assert prepared[0] == "Claude Code 个人工作流"
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    queries = detail["queries"]
+    assert {item["query"] for item in queries if item["status"] == "rejected"} == {
+        "重复研究目标",
+        "agent",
+    }
+    assert len([item for item in queries if item["status"] == "approved"]) == 1
+    assert len(gateway.requests) == 1
 
 
 def test_runtime_rotates_selected_platforms_for_bounded_crawls() -> None:
