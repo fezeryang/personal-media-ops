@@ -53,6 +53,8 @@ responses with Zod before returning inferred TypeScript types.
 | Abort | Preserve `AbortError` |
 | Invalid successful JSON | Throw response-format `ApiError(502)` |
 | QR 404 | Return `null` as not-ready |
+| QR task is `waiting_login` | Poll the QR endpoint and display the returned PNG; this is the only state that owns a live QR |
+| Terminal task failed because of login/QR/captcha timeout | Stop polling and explain that the QR is stale; direct the owner to rerun so the backend can create a fresh `waiting_login` task |
 | QR non-PNG | Throw QR-format `ApiError(502)` |
 | Non-HTTP(S) result URL | Zod rejects the response |
 | Disabled production-verified capability | Show `已生产验证，未启用`; never submit it |

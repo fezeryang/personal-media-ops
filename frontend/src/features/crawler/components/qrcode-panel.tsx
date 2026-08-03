@@ -1,9 +1,10 @@
-import { CheckCircle2, LoaderCircle, QrCode } from "lucide-react";
+import { AlertTriangle, CheckCircle2, LoaderCircle, QrCode } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { CrawlerTask } from "../../../api/crawler";
 import { ErrorState } from "../../../components/error-state";
 import { Card, CardContent, CardHeader } from "../../../components/ui/card";
+import { isLoginQrcodeFailure } from "../lib/qrcode";
 import { useCrawlerTaskQrcodeQuery } from "../hooks/use-crawler-queries";
 
 function QrcodeImage({
@@ -41,6 +42,7 @@ export function QrcodePanel({
   loginPrompt: string;
 }) {
   const waitingForLogin = task.status === "waiting_login";
+  const loginQrcodeExpired = isLoginQrcodeFailure(task);
   const qrcodeQuery = useCrawlerTaskQrcodeQuery(task.id, waitingForLogin);
 
   return (
@@ -55,19 +57,25 @@ export function QrcodePanel({
         {!waitingForLogin ? (
           <div className="flex min-h-52 flex-col items-center justify-center text-center">
             <div className="grid size-11 place-items-center rounded-xl bg-paper text-muted">
-              {task.status === "pending" ? (
+              {loginQrcodeExpired ? (
+                <AlertTriangle className="size-5 text-danger" />
+              ) : task.status === "pending" ? (
                 <LoaderCircle className="size-5" />
               ) : (
                 <CheckCircle2 className="size-5 text-success" />
               )}
             </div>
             <p className="mt-3 text-sm font-semibold text-ink">
-              {task.status === "pending"
+              {loginQrcodeExpired
+                ? "登录二维码已失效"
+                : task.status === "pending"
                 ? "等待任务进入登录阶段"
                 : "当前无需扫码"}
             </p>
             <p className="mt-1 max-w-xs text-xs leading-5 text-muted">
-              {task.status === "pending"
+              {loginQrcodeExpired
+                ? "登录已超时或验证失败。请重新运行研究任务，进入等待登录状态后再扫码。"
+                : task.status === "pending"
                 ? "Worker 领取任务后，二维码会自动出现在这里。"
                 : "任务已离开等待登录状态，二维码提示已隐藏。"}
             </p>

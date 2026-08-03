@@ -101,6 +101,31 @@ When a cross-layer test hangs, isolate the runtime first: if a minimal
 cross-thread event-loop wakeup also hangs, compare inside and outside the
 execution sandbox before changing application or dependency code.
 
+## Research Retry and Login-QR State Machine
+
+When a research rerun is expected to produce a platform login QR, trace this
+complete contract before changing only the UI:
+
+```
+failed crawler/query
+  → durable retry candidate (new id, parent_query_id, failed platform)
+  → runtime claim before duplicate gating
+  → platform-specific query rebind
+  → pending/running crawler
+  → waiting_login
+  → QR endpoint 200 PNG
+  → owner scan
+```
+
+The failed query must remain immutable for audit. A status-only rerun is
+insufficient: it can reach the quality gate with only historical duplicates,
+finish without creating a crawler, and leave the UI with no QR to refresh.
+The frontend must poll only while the crawler is `waiting_login`; after a
+login timeout it must say that the QR is stale and explain how to obtain a
+new one. Production verification must check both the database state and the
+corresponding API/Pydantic response, not only whether an old PNG exists on
+disk.
+
 ---
 
 ## Cross-Platform Template Consistency

@@ -97,6 +97,7 @@ available and a material gap remains; otherwise it reaches
 | Condition | Required behavior |
 |---|---|
 | Platform crawler fails | Record the platform/query failure as a coverage fact, then reuse the next held execution direction on the next eligible platform; rebind its platform-specific query text and normalized query while retaining old/new values in the execution trace |
+| Owner reruns after a crawler/login failure | Keep the failed execution query immutable, stage one auditable held retry with `parent_query_id`, preserve the failed platform in durable context, and let the runtime claim/rebind it before ordinary duplicate gating; a login retry must be able to create a fresh `waiting_login` crawler and QR |
 | Platform crawler fails and no held/new direction remains | Enter Summarizing/`partial_completion` with an explicit gap; do not convert the platform failure into a generic candidate-rejection failure |
 | Quality gate exhausts all candidates after a research round | Enter Summarizing/`partial_completion` with the quality-gate stop reason; do not raise a generic `all research query candidates were rejected` failure |
 | Planner returns malformed/unsupported JSON | Ignore field names and free-form JSON fragments; use deterministic Intent-Contract directions |
@@ -136,6 +137,16 @@ platform, rebuilding the platform-specific evidence strategy rather than
 carrying the old platform's terms into the new query. If no held or newly valid direction remains, the task converges to
 an auditable summary/`partial_completion` with an explicit coverage gap rather
 than raising a generic “all research query candidates were rejected” failure.
+
+An owner-requested rerun is a new execution attempt, not a status-only reset.
+When a prior execution query is linked to a failed crawler, the repository
+retains that failed row and stages a new held execution query whose parent is
+the failed row. The retry context names the failed platform and query so the
+runtime can claim that exact candidate before historical duplicate checks,
+rebind platform-specific wording, and submit a new crawler. This is required
+for login failures: only a crawler in `waiting_login` owns a live QR; a QR file
+left by a terminal task is stale and must not be presented as a usable login
+path.
 
 ## 6. Tests Required
 

@@ -1057,10 +1057,13 @@ class ResearchRuntime:
             label = platform_labels.get(platform, platform)
             return f"{variants[(platform_index + offset) % len(variants)]} {label}"
 
-        if modern_intent and crawl_count > 0:
+        retry_query_id = context.get("retry_query_id")
+        retry_query_id = retry_query_id if isinstance(retry_query_id, str) else None
+        if crawl_count > 0 and (modern_intent or retry_query_id is not None):
             held = self.research.claim_held_execution_query(
                 task_id,
                 platform=platform,
+                query_id=retry_query_id,
             )
             if held is not None:
                 held_query = str(held["query"])
@@ -1079,6 +1082,8 @@ class ResearchRuntime:
                     )
                 context["last_query_id"] = str(held["id"])
                 context["last_query_query"] = str(held["query"])
+                context.pop("retry_query_id", None)
+                context.pop("retry_platform", None)
                 return str(held["query"]), str(held["id"]), platform
         if modern_intent and crawl_count == 0:
             directions = plan.get("execution_query_directions")
@@ -1666,6 +1671,11 @@ class ResearchRuntime:
         )
         if not platforms:
             platforms = ["bili"]
+        retry_platform = context.get("retry_platform")
+        if isinstance(retry_platform, str):
+            normalized_retry_platform = retry_platform.casefold()
+            if normalized_retry_platform in platforms:
+                return normalized_retry_platform, platforms.index(normalized_retry_platform)
         raw_index = context.get("next_crawl_platform_index", 0)
         index = raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0
         return platforms[index % len(platforms)], index

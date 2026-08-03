@@ -597,6 +597,86 @@ def test_repository_controls_usage_events_and_terminal_guards(tmp_path: Path) ->
     assert detail["events"][0]["fingerprint"] == "fingerprint-1"
 
 
+def test_rerun_stages_failed_crawler_query_for_a_fresh_login_qr(
+    tmp_path: Path,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id, platforms=["bili", "xhs"])
+    task_id = str(task["id"])
+    query = repository.create_query(
+        task_id=task_id,
+        query="Codex WorkBuddy Skills 直接对比 小红书",
+        normalized_query="codex workbuddy skills 直接对比 小红书",
+        query_type="product",
+        platform="xhs",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="initial platform direction",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        relevance_score=0.9,
+        expected_value_score=0.8,
+        status="candidate",
+    )
+    crawler = CrawlerTaskRepository(database)
+    crawler_task = crawler.create(
+        platform="xhs",
+        crawler_type="search",
+        keywords=str(query["query"]),
+        login_type="qrcode",
+        requested_count=10,
+        research_task_id=task_id,
+        output_dir=str(tmp_path / "output"),
+        log_path=str(tmp_path / "logs" / "crawler.log"),
+        qrcode_path=str(tmp_path / "qrcode.png"),
+    )
+    repository.attach_query_crawler(str(query["id"]), str(crawler_task["id"]))
+    assert crawler.claim_next() is not None
+    crawler.complete_failure(str(crawler_task["id"]), "小红书 login timed out")
+    repository.complete_query(
+        str(query["id"]),
+        result_count=0,
+        new_content_count=0,
+        existing_content_count=0,
+        updated_content_count=0,
+        duplicate_evidence_count=0,
+        failed=True,
+    )
+    repository.transition(task_id, status="AwaitingReview", reason="login failed")
+
+    rerun = repository.control(task_id, "rerun", "owner requested a fresh login")
+
+    assert rerun["status"] == "Researching"
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    original = next(item for item in detail["queries"] if item["id"] == query["id"])
+    staged = [
+        item
+        for item in detail["queries"]
+        if item["id"] != query["id"]
+        and item["lifecycle_status"] == "skipped_low_marginal_value"
+    ]
+    assert original["status"] == "failed"
+    assert len(staged) == 1
+    assert staged[0]["status"] == "approved"
+    assert staged[0]["platform"] == "xhs"
+    assert staged[0]["parent_query_id"] == query["id"]
+    assert staged[0]["unexecuted_reason"] == "owner_rerun_after_crawler_failure"
+    assert detail["context"]["retry_query_id"] == staged[0]["id"]
+    assert detail["context"]["retry_platform"] == "xhs"
+    retry_events = [
+        item
+        for item in detail["execution_trace"]
+        if item.get("event") == "query_retry_staged"
+    ]
+    assert retry_events
+    assert retry_events[-1]["tool_arguments"]["failed_crawler_task_id"] == crawler_task["id"]
+
+
 class FakeResearchGateway:
     def __init__(self, responses: list[ModelResponse | Exception]) -> None:
         self.responses = responses
@@ -1721,6 +1801,106 @@ def test_production_runtime_rebinds_held_direction_to_next_platform(
     assert rebound_events
     assert rebound_events[-1]["tool_arguments"]["old_query"] == held["query"]
     assert rebound_events[-1]["tool_arguments"]["new_query"] == rebound_query
+
+
+def test_production_runtime_claims_staged_login_retry_and_rebinds_platform(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    task = create_task(database, owner_id, platforms=["bili", "xhs"])
+    task_id = str(task["id"])
+    from app.services.ai.intent_interpreter import build_default_intent
+
+    intent = build_default_intent("比较 Codex 与 WorkBuddy 的差异", ["bili", "xhs"])
+    repository.save_intent(task_id, intent.model_dump(mode="json"), change_reason="test")
+    query = repository.create_query(
+        task_id=task_id,
+        intent_id=str(repository.get_intent(task_id)["id"]),  # type: ignore[index]
+        record_type="execution_query",
+        gate_status="allow",
+        decision="allow",
+        query_role="cross_platform_validation",
+        query="Codex WorkBuddy Skills 直接对比 小红书",
+        normalized_query=normalize_query("Codex WorkBuddy Skills 直接对比 小红书"),
+        query_type="product",
+        platform="xhs",
+        source_type="intent_plan",
+        source_content_id=None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="initial platform direction",
+        specificity_score=0.9,
+        novelty_score=1.0,
+        noise_risk_score=0.1,
+        relevance_score=0.9,
+        expected_value_score=0.8,
+        status="running",
+        lifecycle_status="executing",
+    )
+    crawler = CrawlerTaskRepository(database)
+    crawler_task = crawler.create(
+        platform="xhs",
+        crawler_type="search",
+        keywords=str(query["query"]),
+        login_type="qrcode",
+        requested_count=10,
+        research_task_id=task_id,
+        output_dir=str(tmp_path / "output"),
+        log_path=str(tmp_path / "logs" / "crawler.log"),
+        qrcode_path=str(tmp_path / "qrcode.png"),
+    )
+    repository.attach_query_crawler(str(query["id"]), str(crawler_task["id"]))
+    assert crawler.claim_next() is not None
+    crawler.complete_failure(str(crawler_task["id"]), "小红书 login timed out")
+    repository.complete_query(
+        str(query["id"]),
+        result_count=0,
+        new_content_count=0,
+        existing_content_count=0,
+        updated_content_count=0,
+        duplicate_evidence_count=0,
+        failed=True,
+    )
+    repository.transition(task_id, status="AwaitingReview", reason="login failed")
+    repository.control(task_id, "rerun", "owner requested a fresh login")
+    current = repository.get_for_runtime(task_id, detail=True)
+    assert current is not None
+
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=Mock(),
+        crawler=Mock(),
+        research=repository,
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=tools,
+    )
+    context = current["context"]
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=2,
+            context=context,
+            plan=current["plan"],  # type: ignore[arg-type]
+            crawl_count=1,
+        )
+    )
+
+    assert prepared is not None
+    rebound_query, rebound_id, rebound_platform = prepared
+    assert rebound_id != str(query["id"])
+    assert rebound_platform == "xhs"
+    assert "小红书" in rebound_query
+    assert "retry_query_id" not in context
+    assert "retry_platform" not in context
+    saved_retry = repository.get_query(rebound_id)
+    assert saved_retry["lifecycle_status"] == "executing"
+    assert saved_retry["platform"] == "xhs"
 
 
 def test_platform_failure_with_no_remaining_queries_converges_to_summary() -> None:

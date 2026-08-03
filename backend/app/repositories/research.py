@@ -1351,6 +1351,7 @@ class ResearchTaskRepository:
         task_id: str,
         *,
         platform: str,
+        query_id: str | None = None,
     ) -> dict[str, object] | None:
         """Reuse the next durable plan direction on the next platform.
 
@@ -1368,6 +1369,7 @@ class ResearchTaskRepository:
                   AND record_type = 'execution_query'
                   AND status = 'approved'
                   AND lifecycle_status = 'skipped_low_marginal_value'
+                  AND (? IS NULL OR id = ?)
                 ORDER BY CASE query_role
                     WHEN 'cross_platform_validation' THEN 0
                     WHEN 'counterevidence' THEN 1
@@ -1379,7 +1381,7 @@ class ResearchTaskRepository:
                 END, created_at, id
                 LIMIT 1
                 """,
-                (task_id,),
+                (task_id, query_id, query_id),
             ).fetchone()
             if row is None:
                 connection.rollback()
@@ -3405,13 +3407,14 @@ class ResearchTaskRepository:
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT status, paused, waiting_crawl_task_id FROM research_tasks WHERE id = ?",
+                "SELECT status, paused, waiting_crawl_task_id, context FROM research_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
             if row is None:
                 raise ResearchTaskNotFound(task_id)
             current = str(row["status"])
             now = utc_now()
+            rerun_context: dict[str, object] | None = None
             if action == "pause":
                 if current in TERMINAL_STATUSES:
                     raise ResearchTaskConflict("terminal research task cannot be paused")
@@ -3439,9 +3442,30 @@ class ResearchTaskRepository:
             elif action == "rerun":
                 if current != "AwaitingReview":
                     raise ResearchTaskConflict("only an awaiting-review task can rerun")
+                staged_retry = self._stage_failed_crawler_query_for_rerun(
+                    connection,
+                    task_id,
+                )
+                if staged_retry is not None:
+                    rerun_context = _json(row["context"], {})
+                    rerun_context["retry_query_id"] = staged_retry["id"]
+                    rerun_context["retry_platform"] = staged_retry["platform"]
                 connection.execute(
-                    "UPDATE research_tasks SET status = 'Researching', paused = 0, current_round = current_round + 1, current_step = 'research_round', result = NULL, finished_at = NULL, failure_reason = NULL, updated_at = ? WHERE id = ?",
-                    (now, task_id),
+                    """
+                    UPDATE research_tasks
+                    SET status = 'Researching', paused = 0,
+                        current_round = current_round + 1,
+                        current_step = 'research_round', result = NULL,
+                        finished_at = NULL, failure_reason = ?,
+                        context = COALESCE(?, context), updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        None,
+                        _dump(rerun_context) if rerun_context is not None else None,
+                        now,
+                        task_id,
+                    ),
                 )
                 trace_status = "Researching"
             else:
@@ -3458,6 +3482,119 @@ class ResearchTaskRepository:
         if task is None:
             raise ResearchTaskNotFound(task_id)
         return task
+
+    def _stage_failed_crawler_query_for_rerun(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+    ) -> dict[str, object] | None:
+        """Clone one failed crawler query so an owner rerun can retry it.
+
+        A login timeout is an operational failure, not evidence that the
+        execution query is a duplicate.  Keep the failed row immutable for
+        audit purposes and stage a new held row for the runtime to claim.  A
+        login-related failure wins over a later generic platform failure so a
+        rerun can expose a fresh QR when that is the missing user action.
+        """
+        row = connection.execute(
+            """
+            SELECT q.*, c.id AS failed_crawler_task_id, c.error_message AS crawler_error,
+                   c.finished_at AS crawler_finished_at
+            FROM research_queries q
+            JOIN crawler_tasks c ON c.id = q.crawler_task_id
+            WHERE q.research_task_id = ?
+              AND q.record_type = 'execution_query'
+              AND q.status = 'failed'
+              AND c.status = 'failed'
+            ORDER BY CASE
+                WHEN lower(COALESCE(c.error_message, '')) LIKE '%login%'
+                  OR lower(COALESCE(c.error_message, '')) LIKE '%登录%'
+                  OR lower(COALESCE(c.error_message, '')) LIKE '%captcha%'
+                  OR lower(COALESCE(c.error_message, '')) LIKE '%二维码%'
+                THEN 0 ELSE 1 END,
+                COALESCE(c.finished_at, q.updated_at) DESC,
+                q.created_at DESC,
+                q.id DESC
+            LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        identifier = self.new_id()
+        now = utc_now()
+        generation_reason = (
+            "所有者重跑：保留失败查询审计并重试失败的 "
+            f"{row['platform']} crawler"
+        )
+        unexecuted_reason = "owner_rerun_after_crawler_failure"
+        connection.execute(
+            """
+            INSERT INTO research_queries (
+                id, research_task_id, intent_id, record_type, gate_status,
+                decision, query_role, query, normalized_query, query_type,
+                platform, source_type, source_content_id, source_finding_id,
+                parent_query_id, generation_reason, relevance_score,
+                specificity_score, novelty_score, noise_risk_score,
+                expected_value_score, status, rejection_reason, crawler_task_id,
+                executed_at, result_count, new_content_count,
+                existing_content_count, updated_content_count,
+                duplicate_evidence_count, created_at, updated_at,
+                lifecycle_status, unexecuted_reason, entity_diversity_bonus,
+                platform_diversity_bonus, negative_evidence_bonus,
+                estimated_resource_use, expected_evidence_role
+            ) VALUES (
+                ?, ?, ?, 'execution_query', 'hold', 'hold', ?, ?, ?, ?,
+                ?, 'owner_rerun', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NULL,
+                NULL, NULL, 0, 0, 0, 0, 0, ?, ?,
+                'skipped_low_marginal_value', ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                identifier,
+                row["research_task_id"],
+                row["intent_id"],
+                row["query_role"],
+                row["query"],
+                row["normalized_query"],
+                row["query_type"],
+                row["platform"],
+                row["source_content_id"],
+                row["source_finding_id"],
+                row["id"],
+                generation_reason,
+                row["relevance_score"],
+                row["specificity_score"],
+                row["novelty_score"],
+                row["noise_risk_score"],
+                row["expected_value_score"],
+                now,
+                now,
+                unexecuted_reason,
+                row["entity_diversity_bonus"],
+                row["platform_diversity_bonus"],
+                row["negative_evidence_bonus"],
+                row["estimated_resource_use"],
+                row["expected_evidence_role"],
+            ),
+        )
+        self._append_trace_connection(
+            connection,
+            task_id,
+            event="query_retry_staged",
+            status=None,
+            reason=unexecuted_reason,
+            step="control",
+            tool_arguments={
+                "failed_query_id": row["id"],
+                "retry_query_id": identifier,
+                "failed_crawler_task_id": row["failed_crawler_task_id"],
+                "platform": row["platform"],
+                "crawler_error": row["crawler_error"],
+            },
+        )
+        return {"id": identifier, "platform": str(row["platform"])}
 
     def complete_review(self, task_id: str) -> None:
         with connect_database(self.database_path) as connection:
