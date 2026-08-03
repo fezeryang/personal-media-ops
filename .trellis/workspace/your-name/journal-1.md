@@ -687,3 +687,44 @@ Diagnosed the frontend response-format error after the HTTP 500 fix: SQLite nume
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 阶段 8D-0：研究意图与信息价值生产验收
+
+**Date**: 2026-08-03
+**Task**: 阶段 8D-0：研究意图与信息价值生产验收
+**Branch**: `main`
+
+### Summary
+
+完成 8D-0 Intent Interpreter、Intent Contract、User Goal/Execution Query 分离、查询 transform/hold、信息价值、候选实体/事件、长期记忆与 Alignment Review；完成 0014 迁移与生产部署。真实探索任务 69361acd-21f0-406c-8f50-865549b4ccd4 产生 7 条核心证据、27 个发现种子；比较验收任务 5f8549ab-92e7-42e2-accc-ab2d4c9e606d 产生 3 条直接证据并诚实记录缺口。后续修复小红书 QR 登录 cookie 轮换与上游探针超时。后端 421 passed/86.40%，前端 lint、59 tests、build 通过；生产 API/Worker active，DB integrity ok，active crawler/research=0。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `888779e` | (see git log) |
+| `72c1778` | (see git log) |
+| `a5ed103` | (see git log) |
+| `128b94b` | (see git log) |
+| `86a0dfe` | (see git log) |
+| `7049176` | (see git log) |
+| `40c1541` | (see git log) |
+| `dc86a8f` | (see git log) |
+| `ad817b5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

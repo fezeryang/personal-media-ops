@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
-- **Last Active**: 2026-08-02
+- **Total Sessions**: 17
+- **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~689 | Active |
+| `journal-1.md` | ~730 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-08-03 | 阶段 8D-0：研究意图与信息价值生产验收 | `888779e`, `72c1778`, `a5ed103`, `128b94b`, `86a0dfe`, `7049176`, `40c1541`, `dc86a8f`, `ad817b5` | `main` |
 | 16 | 2026-08-02 | Fix research detail budget-event format | `920d86e` | `main` |
 | 15 | 2026-08-02 | Fix Phase 8C research detail HTTP 500 | `9e24ae8` | `main` |
 | 14 | 2026-08-02 | Phase 8C cross-platform research completion | `cf6b26c`, `ffb57a5`, `b324216`, `d7a530a`, `d85b125` | `main` |
