@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hashlib
 import importlib
 import json
 import os
@@ -52,6 +53,15 @@ LOGIN_STATE_CLIENTS = {
     "tieba": ("media_platform.tieba.client", "BaiduTieBaClient"),
     "ks": ("media_platform.kuaishou.client", "KuaiShouClient"),
 }
+XHS_AUTH_COOKIE_NAMES = frozenset(
+    {
+        "id_token",
+        "sec_poison_id",
+        "web_session",
+        "websectiga",
+        "xsecappid",
+    }
+)
 NATIVE_CRAWLER_TYPES = {"search", "detail", "creator"}
 PLATFORM_STORAGE_DIRECTORIES = {
     "bili": "bili",
@@ -790,6 +800,88 @@ def create_login_state_observer(
     return observed_probe
 
 
+def xhs_auth_cookie_fingerprint(cookies: object) -> str:
+    """Hash XHS auth-cookie metadata without retaining or logging values."""
+    if not isinstance(cookies, list):
+        return ""
+    entries: list[str] = []
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        name = cookie.get("name")
+        if not isinstance(name, str) or name not in XHS_AUTH_COOKIE_NAMES:
+            continue
+        domain = cookie.get("domain")
+        path = cookie.get("path")
+        value = cookie.get("value")
+        if not all(isinstance(item, str) for item in (domain, path, value)):
+            continue
+        entries.append(f"{name}\x00{domain}\x00{path}\x00{value}")
+    digest = hashlib.sha256()
+    for entry in sorted(entries):
+        digest.update(entry.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+async def _xhs_browser_auth_cookie_fingerprint(browser_context: object) -> str:
+    cookies = await browser_context.cookies()
+    return xhs_auth_cookie_fingerprint(cookies)
+
+
+def install_xhs_login_state_patch() -> None:
+    """Accept XHS auth-cookie rotation after QR secondary verification.
+
+    The pinned upstream login helper only treats a changed ``web_session`` or
+    one exact profile selector as success. XHS can rotate another auth cookie
+    after a QR scan plus phone verification while leaving that selector
+    unavailable in the headless page. Keep the upstream single-attempt probe,
+    then add a bounded, value-free cookie-fingerprint check.
+    """
+    from media_platform.xhs.login import XiaoHongShuLogin
+
+    if getattr(XiaoHongShuLogin, "_mediaops_login_state_patch", False):
+        return
+
+    upstream_check = XiaoHongShuLogin.check_login_state
+    single_attempt = getattr(upstream_check, "__wrapped__", upstream_check)
+
+    async def check_login_state(
+        login: object,
+        no_logged_in_session: str,
+    ) -> bool:
+        baseline = getattr(login, "_mediaops_xhs_auth_cookie_fingerprint", None)
+        if baseline is None:
+            baseline = await _xhs_browser_auth_cookie_fingerprint(
+                login.browser_context
+            )
+            login._mediaops_xhs_auth_cookie_fingerprint = baseline
+
+        for _ in range(600):
+            if await single_attempt(login, no_logged_in_session):
+                return True
+
+            current = await _xhs_browser_auth_cookie_fingerprint(
+                login.browser_context
+            )
+            if current and current != baseline:
+                print(
+                    "[MediaOps] XHS login successful after auth cookie rotation",
+                    flush=True,
+                )
+                return True
+            await asyncio.sleep(1)
+
+        print(
+            "[MediaOps] XHS login timeout while waiting for QR verification",
+            flush=True,
+        )
+        raise RuntimeError("XHS QR login timed out")
+
+    XiaoHongShuLogin.check_login_state = check_login_state
+    XiaoHongShuLogin._mediaops_login_state_patch = True
+
+
 def install_login_state_observer(platform: str) -> None:
     module_name, class_name = LOGIN_STATE_CLIENTS[platform]
     client_module = importlib.import_module(module_name)
@@ -1097,7 +1189,7 @@ def bilibili_video_identity(target: str) -> tuple[int, str]:
     candidate = parsed.path.rstrip("/").split("/")[-1] if parsed.netloc else target
     if candidate.startswith("BV") and re.fullmatch(r"BV[a-zA-Z0-9]+", candidate):
         return 0, candidate
-    aid_text = candidate[2:] if candidate.startswith("av") else candidate
+    aid_text = candidate.removeprefix("av")
     if aid_text.isdigit() and int(aid_text) > 0:
         return int(aid_text), ""
     raise ValueError("Bilibili content target must contain an AV or BV ID")
@@ -1356,6 +1448,8 @@ def main() -> None:
 
     crawler_utils.show_qrcode = save_qrcode
     install_login_state_observer(args.platform)
+    if args.platform == "xhs":
+        install_xhs_login_state_patch()
     upstream_type = (
         args.crawler_type
         if args.crawler_type in NATIVE_CRAWLER_TYPES

@@ -1125,6 +1125,129 @@ def test_runner_reports_existing_login_state_without_exposing_cookies(
     assert "cookie" not in output.casefold()
 
 
+def test_xhs_auth_cookie_fingerprint_is_order_stable_without_exposing_values() -> None:
+    runner = load_runner()
+    cookies = [
+        {
+            "name": "web_session",
+            "domain": ".xiaohongshu.com",
+            "path": "/",
+            "value": "session-secret",
+        },
+        {
+            "name": "id_token",
+            "domain": ".xiaohongshu.com",
+            "path": "/",
+            "value": "identity-secret",
+        },
+    ]
+
+    fingerprint = runner.xhs_auth_cookie_fingerprint(cookies)
+    reordered = runner.xhs_auth_cookie_fingerprint(list(reversed(cookies)))
+    rotated = runner.xhs_auth_cookie_fingerprint(
+        [{**cookies[0], "value": "rotated-secret"}, cookies[1]]
+    )
+
+    assert fingerprint == reordered
+    assert fingerprint != rotated
+    assert "session-secret" not in fingerprint
+    assert "identity-secret" not in fingerprint
+
+
+def test_xhs_qrcode_login_accepts_auth_cookie_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+    media_platform = ModuleType("media_platform")
+    xhs = ModuleType("media_platform.xhs")
+    login_module = ModuleType("media_platform.xhs.login")
+
+    class FakeLogin:
+        def __init__(self, browser_context: object) -> None:
+            self.browser_context = browser_context
+
+        async def check_login_state(self, no_logged_in_session: str) -> bool:
+            del no_logged_in_session
+            return False
+
+    login_module.XiaoHongShuLogin = FakeLogin
+    monkeypatch.setitem(sys.modules, "media_platform", media_platform)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs", xhs)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs.login", login_module)
+    runner.install_xhs_login_state_patch()
+
+    class FakeBrowserContext:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def cookies(self) -> list[dict[str, str]]:
+            self.calls += 1
+            value = "before-secret" if self.calls == 1 else "rotated-secret"
+            return [
+                {
+                    "name": "web_session",
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "value": value,
+                }
+            ]
+
+    login = FakeLogin(FakeBrowserContext())
+
+    assert asyncio.run(login.check_login_state("before-secret")) is True
+    output = capsys.readouterr().out
+    assert "XHS login successful after auth cookie rotation" in output
+    assert "before-secret" not in output
+    assert "rotated-secret" not in output
+
+
+def test_xhs_qrcode_login_times_out_without_false_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+    media_platform = ModuleType("media_platform")
+    xhs = ModuleType("media_platform.xhs")
+    login_module = ModuleType("media_platform.xhs.login")
+
+    class FakeLogin:
+        def __init__(self, browser_context: object) -> None:
+            self.browser_context = browser_context
+
+        async def check_login_state(self, no_logged_in_session: str) -> bool:
+            del no_logged_in_session
+            return False
+
+    login_module.XiaoHongShuLogin = FakeLogin
+    monkeypatch.setitem(sys.modules, "media_platform", media_platform)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs", xhs)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs.login", login_module)
+    runner.install_xhs_login_state_patch()
+
+    class StableBrowserContext:
+        async def cookies(self) -> list[dict[str, str]]:
+            return [
+                {
+                    "name": "web_session",
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "value": "stable",
+                }
+            ]
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+    login = FakeLogin(StableBrowserContext())
+
+    with pytest.raises(RuntimeError, match="XHS QR login timed out"):
+        asyncio.run(login.check_login_state("stable"))
+
+    assert "XHS login timeout while waiting for QR verification" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("platform", "profile", "expected"),
     [
@@ -1424,6 +1547,7 @@ def test_runner_forces_mediacrawler_safety_flags() -> None:
         in source
     )
     assert "install_login_state_observer(args.platform)" in source
+    assert "install_xhs_login_state_patch()" in source
     assert "install_bilibili_av_target_patch(args)" in source
     assert "from media_platform.kuaishou.core import KuaishouCrawler" in source
     assert "KuaiShouCrawler" not in source

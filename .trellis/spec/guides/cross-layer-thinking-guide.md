@@ -126,6 +126,25 @@ new one. Production verification must check both the database state and the
 corresponding API/Pydantic response, not only whether an old PNG exists on
 disk.
 
+For platform QR flows that require phone-side secondary verification, the
+login contract has one additional boundary:
+
+```
+phone confirmation
+  → browser auth-cookie rotation
+  → Runner value-free fingerprint comparison
+  → exact "Login successful" marker
+  → Adapter classifier
+  → Worker waiting_login → running
+```
+
+Do not rely on a single cookie name or a brittle profile-page selector. The
+Runner may fingerprint only an explicit allow-list of authentication cookie
+names, must never log their values, and must emit the exact success wording
+already recognized by the Adapter. A new Runner success phrase without an
+Adapter test is an incomplete fix: the crawler can be authenticated while the
+database remains stuck in `waiting_login`.
+
 ---
 
 ## Cross-Platform Template Consistency

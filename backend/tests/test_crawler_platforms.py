@@ -584,6 +584,10 @@ def test_login_success_detection_ignores_qr_save_line(platform: str) -> None:
     ("line", "expected"),
     [
         ("Login successful then wait for redirect", "success"),
+        (
+            "[MediaOps] XHS login successful after auth cookie rotation",
+            "success",
+        ),
         ("[MediaOps] Existing login state ready: zhihu", "success"),
         ("需要验证码后继续", "captcha_required"),
         ("Login state expired, please login again", "login_expired"),
