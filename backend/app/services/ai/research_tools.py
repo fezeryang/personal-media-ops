@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 
 from pydantic import JsonValue
 
@@ -13,8 +14,13 @@ from app.crawler.registry import (
     platform_registry,
 )
 from app.models.ai import ModelToolDefinition
+from app.models.research_intent import ResearchIntentContract
 from app.repositories.crawler_tasks import CrawlerTaskRepository
-from app.repositories.research import ResearchTaskConflict, ResearchTaskRepository
+from app.repositories.research import (
+    ResearchTaskConflict,
+    ResearchTaskNotFound,
+    ResearchTaskRepository,
+)
 from app.services.agent_tools import AgentToolService
 from app.services.ai.research_quality import (
     evaluate_query,
@@ -35,6 +41,89 @@ STOPWORDS = {
     "没有",
     "进行",
 }
+ENTITY_BLOCKLIST = {
+    "ai",
+    "agent",
+    "api",
+    "app",
+    "code",
+    "coding",
+    "com",
+    "dna",
+    "http",
+    "https",
+    "maldi-tof",
+    "ngs",
+    "pcr",
+    "quot",
+    "sop",
+    "tool",
+    "tools",
+    "url",
+    "vibe",
+    "vibecoding",
+    "www",
+    "产品",
+    "工具",
+    "软件",
+    "应用",
+    "话题",
+    "分析",
+    "文科生",
+}
+PRODUCT_HINTS = {
+    "chatgpt",
+    "claude",
+    "claude code",
+    "codex",
+    "codebuddy",
+    "copilot",
+    "cursor",
+    "deepseek",
+    "豆包",
+    "飞书",
+    "gemini",
+    "hermes",
+    "即梦",
+    "kiro",
+    "notion",
+    "obsidian",
+    "omniwork",
+    "openclaw",
+    "qoder",
+    "trae",
+    "within",
+    "windsurf",
+    "workbuddy",
+}
+PRODUCT_CONTEXT_TERMS = (
+    "个人",
+    "用户",
+    "普通人",
+    "创作者",
+    "工作流",
+    "效率",
+    "内容创作",
+    "编程",
+    "写作",
+    "知识管理",
+    "工作台",
+    "助手",
+    "工具",
+    "软件",
+    "应用",
+    "产品",
+    "使用",
+    "体验",
+    "评测",
+    "测评",
+    "推荐",
+    "对比",
+    "自动化",
+)
+PRODUCT_CONTEXT_RE = re.compile(
+    r"([\u4e00-\u9fff]{2,8})(?:AI|ai|工具|助手|工作台|软件|应用|产品)"
+)
 RESEARCH_DEFAULT_REQUESTED_COUNT = 12
 
 
@@ -362,6 +451,7 @@ class ResearchToolService:
                 raise ResearchTaskConflict("finding kind must be fact or inference")
             statement = self._string(arguments, "statement", max_length=10_000)
             content_ids = self._strings(arguments, "content_ids")
+            self._validate_finding_scope(task, content_ids)
             derivation_value = arguments.get("derivation")
             derivation = (
                 derivation_value.strip()
@@ -449,6 +539,46 @@ class ResearchToolService:
                 payload={str(key): value for key, value in payload.items()},
             )
         raise ResearchTaskConflict(f"tool '{tool_name}' is not implemented")
+
+    def _validate_finding_scope(
+        self,
+        task: dict[str, object],
+        content_ids: list[str],
+    ) -> None:
+        """Reject modern findings whose entire evidence set is out of scope.
+
+        The model may still use a contextual card to explain an evidence gap,
+        but it must not turn an unrelated library result into a Finding.  The
+        check is deliberately conservative and only applies when an audited
+        8D Intent Contract exists; legacy tasks retain their historical tool
+        behaviour.
+        """
+        contract_data = task.get("intent_contract")
+        if not isinstance(contract_data, dict):
+            try:
+                contract_data = self.research.get_intent(str(task["id"]))
+            except ResearchTaskNotFound:
+                return
+        if not isinstance(contract_data, dict):
+            return
+        if contract_data.get("intent_source") == "legacy_migrated":
+            return
+        try:
+            contract = ResearchIntentContract.model_validate(contract_data)
+        except (TypeError, ValueError):
+            return
+        scores: list[float] = []
+        for content_id in content_ids:
+            content = self.library_tools.get_content(content_id)
+            if not isinstance(content, dict):
+                raise ResearchTaskConflict(
+                    "finding evidence could not be validated against the Intent Contract"
+                )
+            scores.append(intent_relevance_score(content, intent=contract))
+        if scores and max(scores) < 0.3:
+            raise ResearchTaskConflict(
+                "finding evidence is outside the Intent Contract scope"
+            )
 
     def _submit_crawl(
         self,
@@ -658,3 +788,128 @@ def extract_entities(items: list[dict[str, object]], *, limit: int = 8) -> list[
                 continue
             counts[normalized] = counts.get(normalized, 0) + 1
     return [token for token, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:limit]]
+
+
+def _content_text(content: dict[str, object]) -> str:
+    return " ".join(
+        str(content.get(key) or "")
+        for key in ("title", "description", "content", "summary")
+    ).strip()
+
+
+def _intent_context_terms(intent: ResearchIntentContract) -> set[str]:
+    subject = intent.subject if isinstance(intent.subject, dict) else {}
+    subject_text = " ".join(
+        str(subject.get(key) or "") for key in ("category", "description")
+    )
+    terms = {
+        token.casefold()
+        for token in TOKEN_RE.findall(subject_text)
+        if token.casefold() not in ENTITY_BLOCKLIST and token.casefold() not in STOPWORDS
+    }
+    terms.update(term.casefold() for term in PRODUCT_CONTEXT_TERMS)
+    return terms
+
+
+def _looks_like_product_name(value: str, *, source: str, context_terms: set[str]) -> bool:
+    normalized = value.strip().casefold()
+    if not normalized or normalized in ENTITY_BLOCKLIST or len(normalized) < 2:
+        return False
+    if normalized in PRODUCT_HINTS:
+        return True
+    if normalized.isascii() and normalized.isupper():
+        return False
+    if not any(term in source for term in context_terms):
+        return False
+    # A capitalized Latin token in a product/usage context is a bounded
+    # discovery candidate.  Generic words are filtered above and by the
+    # explicit blocklist, so technical prose cannot turn every token into a
+    # product candidate.
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,}", value))
+
+
+def extract_intent_entities(
+    items: Iterable[dict[str, object]],
+    *,
+    intent: ResearchIntentContract,
+    limit: int = 8,
+) -> list[str]:
+    """Extract product-like candidates relevant to one Intent Contract.
+
+    ``extract_entities`` is retained for the historical 8C planner path.  The
+    8D path needs a stricter extractor: generic tokens such as ``https`` or
+    ``coding`` are not discovery entities, and candidates are only accepted
+    when they appear in a product/usage context.
+    """
+
+    counts: dict[str, int] = {}
+    context_terms = _intent_context_terms(intent)
+    for item in items:
+        source = _content_text(item)
+        folded = source.casefold()
+        candidates: list[str] = []
+        for hint in PRODUCT_HINTS:
+            if hint in folded:
+                candidates.append(hint)
+        candidates.extend(PRODUCT_CONTEXT_RE.findall(source))
+        candidates.extend(re.findall(r"\b[A-Z][A-Za-z0-9_-]{2,}\b", source))
+        for token in candidates:
+            normalized = token.strip().casefold()
+            if _looks_like_product_name(
+                token,
+                source=folded,
+                context_terms=context_terms,
+            ) or normalized in PRODUCT_HINTS:
+                counts[normalized] = counts.get(normalized, 0) + 1
+    return [
+        token
+        for token, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:limit]
+    ]
+
+
+def intent_relevance_score(
+    content: dict[str, object],
+    *,
+    intent: ResearchIntentContract,
+    extracted_entities: Iterable[str] = (),
+) -> float:
+    """Return a conservative [0, 1] scope score for one captured item."""
+
+    source = _content_text(content).casefold()
+    if not source:
+        return 0.0
+    entities = extract_intent_entities([content], intent=intent)
+    explicit_entities = [
+        value.strip()
+        for value in extracted_entities
+        if isinstance(value, str) and value.strip()
+    ]
+    entities = list(dict.fromkeys(entities + explicit_entities))
+    context_hits = sum(term in source for term in PRODUCT_CONTEXT_TERMS)
+    subject = intent.subject if isinstance(intent.subject, dict) else {}
+    subject_terms = {
+        token.casefold()
+        for token in TOKEN_RE.findall(
+            " ".join(str(subject.get(key) or "") for key in ("category", "description"))
+        )
+        if token.casefold() not in ENTITY_BLOCKLIST and token.casefold() not in STOPWORDS
+    }
+    subject_hits = sum(term in source for term in subject_terms)
+    score = 0.0
+    if entities:
+        score += 0.55
+    score += min(0.3, context_hits * 0.06)
+    score += min(0.2, subject_hits * 0.1)
+    if any(
+        term in source
+        for term in ("痛点", "需求", "缺口", "替代", "不好用", "限制", "问题")
+    ) and {
+        "pain_point_research",
+        "product_opportunity",
+        "content_opportunity",
+        "competitor_scan",
+    }.intersection({intent.primary_intent, *intent.secondary_intents}):
+        score += 0.25
+    if any(term in source for term in ("购买", "优惠", "扫码", "推广", "课程")):
+        score -= 0.12
+    return round(max(0.0, min(1.0, score)), 4)

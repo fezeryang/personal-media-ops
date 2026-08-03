@@ -44,7 +44,8 @@ from app.services.ai.research_rendering import render_research_markdown
 from app.services.ai.research_tools import (
     RESEARCH_DEFAULT_REQUESTED_COUNT,
     ResearchToolService,
-    extract_entities,
+    extract_intent_entities,
+    intent_relevance_score,
 )
 
 MAX_TOOL_ROUNDS = 8
@@ -76,6 +77,77 @@ def _safe_arguments(arguments: dict[str, object]) -> dict[str, object]:
         else:
             result[key] = value
     return result
+
+
+def _intent_contract_for_task(task: dict[str, object]) -> ResearchIntentContract:
+    contract_data = task.get("intent_contract")
+    try:
+        return ResearchIntentContract.model_validate(contract_data)
+    except (TypeError, ValueError):
+        platforms = task.get("platforms")
+        return build_default_intent(
+            str(task.get("objective") or ""),
+            platforms if isinstance(platforms, list) else [],
+        )
+
+
+def _content_card(item: dict[str, object]) -> dict[str, object] | None:
+    content_id = item.get("id")
+    if not isinstance(content_id, str) or not content_id:
+        return None
+    source = item.get("source")
+    source_data = source if isinstance(source, dict) else {}
+    return {
+        "id": content_id,
+        "title": str(item.get("title") or "")[:300],
+        "description": str(item.get("description") or "")[:900],
+        "platform": item.get("platform") or source_data.get("platform"),
+        "source_url": item.get("source_url") or source_data.get("url"),
+        "published_at": item.get("published_at"),
+    }
+
+
+def _merge_content_cards(
+    existing: object,
+    incoming: list[dict[str, object]],
+    *,
+    limit: int = 60,
+) -> list[dict[str, object]]:
+    merged: dict[str, dict[str, object]] = {}
+    if isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                merged[str(item["id"])] = dict(item)
+    for item in incoming:
+        card = _content_card(item)
+        if card is not None:
+            merged[str(card["id"])] = card
+    return list(merged.values())[-limit:]
+
+
+def _rank_content_cards(
+    items: list[dict[str, object]],
+    *,
+    intent: ResearchIntentContract,
+    limit: int = 20,
+) -> list[dict[str, object]]:
+    unique: dict[str, dict[str, object]] = {}
+    for item in items:
+        if isinstance(item.get("id"), str) and item["id"]:
+            unique[str(item["id"])] = item
+    ranked = sorted(
+        unique.values(),
+        key=lambda item: (
+            intent_relevance_score(item, intent=intent),
+            bool(item.get("description")),
+            str(item.get("published_at") or ""),
+        ),
+        reverse=True,
+    )
+    relevant = [
+        item for item in ranked if intent_relevance_score(item, intent=intent) >= 0.25
+    ]
+    return (relevant or ranked)[:limit]
 
 
 def _elapsed_from(started_at: object) -> int:
@@ -1225,13 +1297,8 @@ class ResearchRuntime:
         content_items: list[dict[str, object]],
         *,
         query_id: str | None,
-        entities: list[str],
     ) -> None:
-        contract_data = task.get("intent_contract")
-        try:
-            contract = ResearchIntentContract.model_validate(contract_data)
-        except (TypeError, ValueError):
-            contract = build_default_intent(str(task.get("objective") or ""), task.get("platforms") if isinstance(task.get("platforms"), list) else [])
+        contract = _intent_contract_for_task(task)
         task_id = str(task["id"])
         known_memory_keys = self.research.list_memory_keys(exclude_task_id=task_id)
         for item in content_items:
@@ -1245,13 +1312,22 @@ class ResearchRuntime:
                     query_id=query_id,
                     decision="candidate",
                 )
+                content_entities = extract_intent_entities([item], intent=contract)
                 assessments = classify_information_utility(
                     item,
                     intent=contract,
-                    extracted_entities=entities,
+                    extracted_entities=content_entities,
                     known_memory_keys=known_memory_keys,
                     is_repost=bool(decision.get("is_repost")),
                     adopted=decision.get("decision") == "adopted",
+                )
+                relevant = (
+                    intent_relevance_score(
+                        item,
+                        intent=contract,
+                        extracted_entities=content_entities,
+                    )
+                    >= 0.35
                 )
                 for assessment in assessments:
                     self.research.record_information_utility(
@@ -1262,7 +1338,7 @@ class ResearchRuntime:
                         confidence=assessment.confidence,
                         query_id=query_id,
                     )
-                for entity in entities[:8]:
+                for entity in content_entities[:8]:
                     if entity.casefold() in {"ai", "agent", "产品", "工具", "软件", "工作台"}:
                         continue
                     known = {
@@ -1285,7 +1361,7 @@ class ResearchRuntime:
                         confidence=0.72,
                         suggested_next_action="绑定父查询进行实体扩展或跨平台验证",
                     )
-                event_type = event_type_for_content(item)
+                event_type = event_type_for_content(item) if relevant else None
                 if event_type:
                     self.research.save_event_candidate(
                         task_id=task_id,
@@ -1295,11 +1371,11 @@ class ResearchRuntime:
                         source_content_id=content_id,
                         confidence=0.72,
                     )
-                if entities:
+                if content_entities:
                     self.research.save_memory_item(
                         task_id=task_id,
                         memory_type="observed_entity",
-                        memory_key=entities[0],
+                        memory_key=content_entities[0],
                         value={"content_id": content_id, "title": item.get("title")},
                         confidence=0.65,
                         content_id=content_id,
@@ -1309,6 +1385,103 @@ class ResearchRuntime:
                 # A malformed third-party record must not erase the rest of a
                 # bounded batch; the content remains visible in the audit log.
                 continue
+
+    def _ensure_deterministic_evidence_fallback(
+        self,
+        task_id: str,
+        *,
+        contract: ResearchIntentContract,
+        round_number: int,
+    ) -> None:
+        """Save only narrow, source-bound facts when the model produced none.
+
+        This is not a synthetic summary.  Each fallback Finding states only
+        what the captured title/description explicitly establishes: an entity
+        was mentioned in a relevant usage context.  The original content ID
+        remains the evidence anchor, and quality-sensitive claims are left as
+        an explicit limitation for later research.
+        """
+        detail = self.research.get_for_runtime(task_id, detail=True)
+        if not isinstance(detail, dict):
+            return
+        contract_data = detail.get("intent_contract")
+        if not isinstance(contract_data, dict) or contract_data.get("intent_source") == "legacy_migrated":
+            return
+        findings = detail.get("findings")
+        findings = findings if isinstance(findings, list) else []
+        existing_content_ids = {
+            str(evidence.get("content_id"))
+            for finding in findings
+            if isinstance(finding, dict)
+            for evidence in (finding.get("evidence") or [])
+            if isinstance(evidence, dict) and evidence.get("content_id")
+        }
+        intent_names = {contract.primary_intent, *contract.secondary_intents}
+        target_count = 2 if "discovery" in intent_names else 1
+        current_finding_count = sum(
+            1 for finding in findings if isinstance(finding, dict) and finding.get("evidence")
+        )
+        if current_finding_count >= target_count:
+            return
+        context = detail.get("context")
+        context = context if isinstance(context, dict) else {}
+        cards = context.get("content_cards")
+        cards = [item for item in cards if isinstance(item, dict)] if isinstance(cards, list) else []
+        saved = 0
+        for card in _rank_content_cards(cards, intent=contract, limit=60):
+            content_id = card.get("id")
+            if not isinstance(content_id, str) or content_id in existing_content_ids:
+                continue
+            relevance = intent_relevance_score(card, intent=contract)
+            entities = extract_intent_entities([card], intent=contract)
+            if relevance < 0.55 or not entities:
+                continue
+            entity = entities[0]
+            title = str(card.get("title") or content_id)[:300]
+            try:
+                self.research.save_finding(
+                    task_id=task_id,
+                    round_number=round_number,
+                    kind="fact",
+                    statement=(
+                        f"来源内容《{title}》明确提及「{entity}」，并记录了与当前研究主题相关的使用线索；"
+                        "这只确认来源中的实体与场景，不单独证明产品质量、热度或适用性。"
+                    ),
+                    derivation=None,
+                    content_ids=[content_id],
+                    evidence_links=[
+                        {
+                            "content_id": content_id,
+                            "support_type": "direct",
+                            "support_strength": "medium",
+                            "support_explanation": "来源标题或描述直接提及该实体及其研究相关使用场景。",
+                        }
+                    ],
+                    counterevidence_status="not_found",
+                    counterevidence_explanation=(
+                        "该兜底事实仅确认来源中的实体与场景；产品限制和反向证据仍需独立来源验证。"
+                    ),
+                )
+            except (ResearchTaskConflict, ResearchTaskNotFound, ValueError):
+                continue
+            existing_content_ids.add(content_id)
+            saved += 1
+            current_finding_count += 1
+            if current_finding_count >= target_count:
+                break
+        if saved:
+            self.research.record_step_usage(
+                task_id,
+                step="deterministic_evidence_fallback",
+            )
+            self.research.append_trace(
+                task_id,
+                event="deterministic_evidence_fallback",
+                status="Researching",
+                reason=f"model evidence pass left a bounded gap; saved {saved} source-bound fact(s)",
+                round_number=round_number,
+                step="evidence_selection",
+            )
 
     def _record_core_evidence_and_memory(self, task_id: str) -> None:
         detail = self.research.get_for_runtime(task_id, detail=True)
@@ -1511,6 +1684,7 @@ class ResearchRuntime:
                 query_id=query_id,
             )
         self.research.record_step_usage(task_id, step="tool_result_evaluation")
+        contract = _intent_contract_for_task(task)
         context["last_search_query"] = query
         context["last_search_content_ids"] = [
             str(item.get("id")) for item in items if isinstance(item, dict) and item.get("id")
@@ -1519,6 +1693,10 @@ class ResearchRuntime:
         if query_id is not None:
             context["last_query_id"] = query_id
         content_items = [item for item in items if isinstance(item, dict)]
+        context["content_cards"] = _merge_content_cards(
+            context.get("content_cards"),
+            content_items,
+        )
         for item in content_items:
             content_id = item.get("id")
             if isinstance(content_id, str):
@@ -1528,16 +1706,11 @@ class ResearchRuntime:
                     query_id=query_id,
                     decision="candidate",
                 )
-        entities = [
-            entity
-            for entity in extract_entities(content_items)
-            if entity.casefold() not in {"ai", "agent", "产品", "工具", "软件", "工作台"}
-        ]
+        entities = extract_intent_entities(content_items, intent=contract)
         self._classify_content_value(
             task,
             content_items,
             query_id=query_id,
-            entities=list(dict.fromkeys(entities)),
         )
         self.research.record_step_usage(task_id, step="entity_extraction")
         existing_detail = self.research.get_for_runtime(task_id, detail=True)
@@ -1614,7 +1787,12 @@ class ResearchRuntime:
             context["stop_reason"] = "budget_exhausted"
             self.research.update_context(task_id, context, step="budget_review", round_number=round_number)
 
-        await self._model_tool_loop(task, items, query, round_number)
+        await self._model_tool_loop(task, content_items, query, round_number)
+        self._ensure_deterministic_evidence_fallback(
+            task_id,
+            contract=contract,
+            round_number=round_number,
+        )
         self._record_core_evidence_and_memory(task_id)
         refreshed = self.research.get_for_runtime(task_id)
         if refreshed is not None:
@@ -2111,15 +2289,27 @@ class ResearchRuntime:
         if not isinstance(primary, dict):
             raise ResearchTaskConflict("research route snapshot is missing")
         detail = self.research.get_for_runtime(task_id, detail=True) or task
+        contract = _intent_contract_for_task(detail)
         runtime_context = detail.get("context")
         runtime_context = dict(runtime_context) if isinstance(runtime_context, dict) else {}
+        current_items = [item for item in items if isinstance(item, dict)]
+        content_cards = _merge_content_cards(
+            runtime_context.get("content_cards"),
+            current_items,
+        )
+        runtime_context["content_cards"] = content_cards
+        candidate_items = _rank_content_cards(
+            content_cards,
+            intent=contract,
+            limit=20,
+        )
         compacted, compaction_stats = compact_research_context(
             objective=str(task["objective"]),
             coverage=(detail.get("coverage") if isinstance(detail.get("coverage"), dict) else {}),
             entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
             queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
             findings=(detail.get("findings") if isinstance(detail.get("findings"), list) else []),
-            candidate_contents=items,
+            candidate_contents=candidate_items,
             loaded_content_ids=(
                 runtime_context.get("full_content_ids", [])
                 if isinstance(runtime_context, dict)
@@ -2148,32 +2338,50 @@ class ResearchRuntime:
                 "content_id": item.get("id"),
                 "title": str(item.get("title") or "")[:300],
                 "description": str(item.get("description") or "")[:800],
-                "source_url": item.get("source_url") or (item.get("source") or {}).get("url") if isinstance(item.get("source"), dict) else item.get("source_url"),
+                "source_url": item.get("source_url"),
                 "platform": item.get("platform"),
                 "published_at": item.get("published_at"),
+                "relevance_score": intent_relevance_score(item, intent=contract),
+                "candidate_entities": extract_intent_entities([item], intent=contract),
                 "evidence_role": "candidate",
             }
-            for item in items[:20]
-            if isinstance(item, dict)
+            for item in candidate_items[:20]
         ]
         messages = [
             ModelMessage(
                 role="user",
                 content=(
                     f"Research objective: {task['objective']}\n"
+                    f"Intent Contract (JSON): {json.dumps(contract.model_dump(mode='json'), ensure_ascii=False)[:12_000]}\n"
                     f"Current query: {query}\n"
                     f"Collected evidence cards (JSON): {json.dumps(item_cards[:12], ensure_ascii=False)[:16_000]}\n"
                     f"Compacted research context (JSON): {json.dumps(compacted, ensure_ascii=False)[:12_000]}\n"
+                    "Only treat a card with relevance_score >= 0.35 as in-scope evidence; lower-scoring cards are noise or an evidence gap. "
                     "Respect the coverage plan: compare relevant candidates across every completed platform before concluding, "
                     "and do not let one entity or one platform stand in for the market. "
                     "When the plan asks for negative evidence, inspect at least one bounded problem/shortcoming query; "
                     "record not_found only when the inspected evidence genuinely contains no contrary signal. "
                     "Use tools to inspect evidence. Every fact or inference must be saved with content_ids and one evidence_links item per content_id; each item needs support_type, support_strength, and a one-sentence support_explanation. "
                     "Inference findings also need a derivation and counterevidence_explanation; use not_found only when no contrary evidence was found. "
-                    "If evidence is insufficient, submit one bounded crawl. Finish by saving findings and proposing one safe action."
+                    "The runtime has already generated and quality-gated execution queries; do not search or crawl in this evidence pass. "
+                    "If evidence is insufficient, leave a bounded evidence gap and use only the supplied cards. "
+                    "Finish by saving evidence-bound findings and proposing one safe action."
                 ),
             )
         ]
+        finding_tool_names = {
+            "get_content",
+            "get_provenance",
+            "dedupe_check",
+            "save_finding",
+            "propose_action",
+        }
+        definitions = self.tools.definitions()
+        finding_tools = [
+            definition
+            for definition in definitions
+            if getattr(definition, "name", None) in finding_tool_names
+        ] if isinstance(definitions, list) else []
         for _ in range(MAX_TOOL_ROUNDS):
             if not self._step_is_allowed(task_id):
                 return
@@ -2185,7 +2393,7 @@ class ResearchRuntime:
                 ),
                 messages=messages,
                 max_tokens=700,
-                tools=self.tools.definitions(),
+                tools=finding_tools,
                 tool_choice="auto",
                 metadata={"runtime_step": "finding_generation", "round": str(round_number)},
                 timeout=60,

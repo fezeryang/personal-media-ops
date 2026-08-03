@@ -1,10 +1,17 @@
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from app.api.research import _detail
+from app.models.ai import ModelResponse, ModelUsage
 from app.models.research import ResearchTaskDetail
 from app.repositories.auth import AuthRepository
-from app.repositories.research import ResearchTaskRepository
+from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.research import ResearchTaskConflict, ResearchTaskRepository
 from app.security.passwords import hash_password
 from app.services.ai.information_value import (
     classify_information_utility,
@@ -18,6 +25,12 @@ from app.services.ai.intent_interpreter import (
     repair_model_request,
 )
 from app.services.ai.research_quality import evaluate_query, normalize_query
+from app.services.ai.research_runtime import ResearchRuntime
+from app.services.ai.research_tools import (
+    ResearchToolService,
+    extract_intent_entities,
+    intent_relevance_score,
+)
 from tests.alembic_utils import run_alembic_command
 
 
@@ -294,6 +307,212 @@ def test_information_utility_handles_duplicate_noise_action_and_memory_paths() -
     assert event_type_for_content({"title": "公司合作联名"}) == "partnership"
     assert event_type_for_content({"title": "产品上线发布"}) == "launch"
     assert event_type_for_content({"title": "平静的背景介绍"}) is None
+
+
+def test_intent_entity_extraction_filters_tokens_and_scores_scope() -> None:
+    intent = build_default_intent("最近有哪些值得关注的个人 AI 工具？", ["bili"])
+    relevant = {
+        "title": "WorkBuddy 是 Codex、Claude Code 平替吗？",
+        "description": "真实使用体验、安装与个人工作流案例。",
+    }
+    unrelated = {
+        "title": "微生物检测新技术大揭秘",
+        "description": "MALDI-TOF、NGS、DNA 和 AI 辅助菌落识别系统的实验室技术。",
+    }
+
+    entities = extract_intent_entities([relevant], intent=intent)
+
+    assert {"workbuddy", "codex", "claude"}.issubset(set(entities))
+    assert not {"https", "app", "code", "dna", "ngs", "maldi-tof"}.intersection(entities)
+    assert intent_relevance_score(relevant, intent=intent) > 0.5
+    assert intent_relevance_score(unrelated, intent=intent) < 0.3
+
+    unrelated_types = {
+        item.utility_type
+        for item in classify_information_utility(
+            unrelated,
+            intent=intent,
+            extracted_entities=[],
+        )
+    }
+    assert unrelated_types == {"noise"}
+
+
+def test_modern_finding_rejects_all_out_of_scope_evidence(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database = tmp_path / "mediaops.db"
+    run_alembic_command(database, "upgrade", "head")
+    repository, task_id = create_research_task(database)
+    contract = build_default_intent(
+        "最近有哪些值得关注的个人 AI 工具？", ["bili", "xhs"]
+    )
+    repository.save_intent(task_id, contract.model_dump(mode="json"))
+    task = repository.get_for_runtime(task_id, detail=True)
+    assert task is not None
+    library = Mock()
+    library.get_content.return_value = {
+        "id": "off-topic-content",
+        "title": "微生物检测新技术大揭秘",
+        "description": "MALDI-TOF、NGS、DNA 和 AI 辅助菌落识别系统的实验室技术。",
+    }
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=library,
+        crawler=CrawlerTaskRepository(database),
+        research=repository,
+    )
+
+    with pytest.raises(ResearchTaskConflict, match="outside the Intent Contract scope"):
+        asyncio.run(
+            tools.execute(
+                task=task,
+                tool_name="save_finding",
+                arguments={
+                    "kind": "fact",
+                    "statement": "这条内容证明了一个研究结论。",
+                    "content_ids": ["off-topic-content"],
+                    "evidence_links": [
+                        {
+                            "content_id": "off-topic-content",
+                            "support_type": "direct",
+                            "support_strength": "strong",
+                            "support_explanation": "来源直接支持该说法。",
+                        }
+                    ],
+                },
+            )
+        )
+
+
+def test_model_evidence_pass_does_not_expose_query_or_crawl_tools(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database = tmp_path / "mediaops.db"
+    run_alembic_command(database, "upgrade", "head")
+    repository, task_id = create_research_task(database)
+    contract = build_default_intent(
+        "最近有哪些值得关注的个人 AI 工具？", ["bili", "xhs"]
+    )
+    repository.save_intent(task_id, contract.model_dump(mode="json"))
+    repository.save_plan(
+        task_id,
+        plan={"initial_query": "个人 AI 工具真实使用体验", "derived_keywords": []},
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.update_context(
+        task_id,
+        {
+            "content_cards": [
+                {
+                    "id": "prior-content",
+                    "title": "Codex 个人自动化工作流体验",
+                    "description": "记录工具使用场景。",
+                    "platform": "bili",
+                }
+            ]
+        },
+        step="research_round",
+        round_number=1,
+    )
+    task = repository.get_for_runtime(task_id, detail=True)
+    assert task is not None
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=Mock(),
+        crawler=CrawlerTaskRepository(database),
+        research=repository,
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=tools,
+    )
+    runtime._generate = AsyncMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(
+            response=ModelResponse(
+                content="证据不足，保留缺口。",
+                provider="test",
+                model="test",
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            )
+        )
+    )
+
+    asyncio.run(
+        runtime._model_tool_loop(
+            task,
+            [
+                {
+                    "id": "content-1",
+                    "title": "WorkBuddy 个人工作流真实体验",
+                    "description": "记录工具使用场景和限制。",
+                }
+            ],
+            "个人 AI 工具真实使用体验",
+            1,
+        )
+    )
+    request = runtime._generate.call_args.kwargs["request"]
+    exposed_names = {definition.name for definition in request.tools or []}
+    assert "search_library" not in exposed_names
+    assert "submit_crawl" not in exposed_names
+    assert {"get_content", "save_finding", "propose_action"}.issubset(exposed_names)
+    assert "do not search or crawl" in request.messages[0].content
+    assert "prior-content" in request.messages[0].content
+
+
+def test_source_bound_fallback_saves_only_real_relevant_cards() -> None:
+    intent = build_default_intent(
+        "最近有哪些值得关注的个人 AI 工具？", ["bili", "xhs"]
+    )
+    detail = {
+        "intent_contract": intent.model_dump(mode="json"),
+        "findings": [],
+        "context": {
+            "content_cards": [
+                {
+                    "id": "workbuddy-content",
+                    "title": "WorkBuddy 个人工作流真实体验",
+                    "description": "记录工具使用场景和限制。",
+                },
+                {
+                    "id": "codex-content",
+                    "title": "Codex 自动化任务实测",
+                    "description": "记录个人效率和自动化使用体验。",
+                },
+            ]
+        },
+    }
+    research = Mock()
+    research.get_for_runtime.return_value = detail
+    runtime = ResearchRuntime(
+        research=research,
+        ai_repository=Mock(),
+        gateway=Mock(),
+        tools=Mock(),
+    )
+
+    runtime._ensure_deterministic_evidence_fallback(
+        "task-1",
+        contract=intent,
+        round_number=1,
+    )
+
+    assert research.save_finding.call_count == 2
+    saved_ids = [
+        call.kwargs["content_ids"][0]
+        for call in research.save_finding.call_args_list
+    ]
+    assert set(saved_ids) == {"codex-content", "workbuddy-content"}
+    assert all(
+        "不单独证明产品质量" in call.kwargs["statement"]
+        for call in research.save_finding.call_args_list
+    )
 
 
 def test_intent_and_8d0_artifacts_are_durable(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models.research_intent import ResearchIntentContract
+from app.services.ai.research_tools import intent_relevance_score
 
 NEGATIVE_TERMS = ("不好用", "缺点", "问题", "失败", "吐槽", "崩溃", "限制", "替代", "不推荐")
 EVENT_TERMS = ("上线", "发布", "更新", "新版本", "定价", "涨价", "合作", "融资", "故障", "下线")
@@ -64,10 +65,14 @@ def classify_information_utility(
     known.update(item.casefold() for item in known_memory_keys if item and item.strip())
     entities = [item.strip() for item in extracted_entities if item and item.strip()]
     new_entities = [item for item in entities if item.casefold() not in known]
-    target_text = " ".join(
-        [intent.interpreted_goal, str(intent.subject), *intent.unknowns_to_discover]
-    ).casefold()
-    relevant = any(token and token in body for token in target_text.split() if len(token) >= 2)
+    relevant = (
+        intent_relevance_score(
+            content,
+            intent=intent,
+            extracted_entities=entities,
+        )
+        >= 0.35
+    )
     if new_entities:
         assessments.append(
             InformationUtilityAssessment(
@@ -76,7 +81,7 @@ def classify_information_utility(
                 0.86,
             )
         )
-    if negative and intent.negative_evidence_requirements:
+    if relevant and negative and intent.negative_evidence_requirements:
         assessments.append(
             InformationUtilityAssessment(
                 "counterevidence",
@@ -84,7 +89,7 @@ def classify_information_utility(
                 0.84,
             )
         )
-    if event:
+    if relevant and event:
         assessments.append(
             InformationUtilityAssessment(
                 "event_signal",
@@ -92,7 +97,7 @@ def classify_information_utility(
                 0.8,
             )
         )
-    if opportunity and ("product_opportunity" in {intent.primary_intent, *intent.secondary_intents} or "content_opportunity" in {intent.primary_intent, *intent.secondary_intents}):
+    if relevant and opportunity and ("product_opportunity" in {intent.primary_intent, *intent.secondary_intents} or "content_opportunity" in {intent.primary_intent, *intent.secondary_intents}):
         assessments.append(
             InformationUtilityAssessment(
                 "action_trigger",
@@ -100,7 +105,9 @@ def classify_information_utility(
                 0.72,
             )
         )
-    if marketing and not new_entities and not negative:
+    if not relevant:
+        assessments.append(InformationUtilityAssessment("noise", "与当前 Intent Contract 的主题或用户场景缺少足够事实相关性。", 0.88))
+    elif marketing and not new_entities and not negative:
         assessments.append(InformationUtilityAssessment("noise", "主要是推广或转化文案，缺少独立事实增量。", 0.82))
     elif relevant or new_entities or negative or event:
         if adopted:

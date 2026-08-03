@@ -30,6 +30,9 @@ interpret_model_text(request, text, platforms) -> ResearchIntentContract
 execution_query_directions(contract) -> list[dict[str, str]]
 evaluate_query(..., record_type, query_role, intent_bound) -> QueryQuality
 classify_information_utility(content, intent, ...) -> list[InformationUtilityAssessment]
+extract_intent_entities(items, intent, limit=8) -> list[str]
+intent_relevance_score(content, intent, extracted_entities=()) -> float
+_rank_content_cards(items, intent, limit=20) -> list[dict[str, object]]
 ```
 
 Alembic revision `0014_research_intent_and_information_utility` owns:
@@ -86,6 +89,25 @@ Information utility is multi-label and explainable. Valid labels are
 time. Candidate entities remain `candidate_discovery`; they are not silently
 added to monitoring.
 
+The evidence-selection pass is downstream of query execution. It receives only
+bounded content cards with `id`, `title`, `description`, `platform`,
+`source_url`, and `published_at`; it does not receive raw payloads. Cards from
+all completed rounds are merged by content ID (maximum 60) and ranked against
+the current Intent Contract before the model sees them. The evidence-pass tool
+allow-list is limited to `get_content`, `get_provenance`, `dedupe_check`,
+`save_finding`, and `propose_action`; `search_library` and `submit_crawl` are
+runtime-owned operations and must not be exposed to that model call.
+
+Entity extraction is per content item, not one batch-wide token list. Generic
+protocol, URL, laboratory, and category words such as `https`, `app`, `DNA`,
+`工具`, and `coding` cannot become discovery candidates by themselves. A
+non-relevant item receives `noise` and does not create an entity or event
+candidate. When the model leaves a modern task without a bounded Finding, the
+runtime may save at most two discovery (or one non-discovery) source-bound
+facts, and only when a real card scores at least `0.55` and contains a
+product-like entity; the fallback must state the evidence limitation rather
+than inventing product quality or market claims.
+
 Intent Alignment Review runs before terminal completion and records
 `alignment_score`, covered and missing requirements, scope drift, a
 recommended next step, and a review status. A task continues when budget is
@@ -113,6 +135,10 @@ available and a material gap remains; otherwise it reaches
 | Intent confidence `0.45–<0.75` | Continue with defaults and expose assumptions in the understanding card |
 | Historical 8B/8C task | Create read-only `legacy_migrated` intent; do not re-run or rewrite old findings |
 | Content is not final evidence but contains a new entity/fact | Preserve its seed, background, event, or memory utility reason |
+| All evidence supplied to a modern `save_finding` call scores below `0.30` for the Intent Contract | Reject the tool call with an Intent Contract scope error; do not persist the Finding |
+| Evidence-selection model requests `search_library` or `submit_crawl` | Do not include the tool in the request; query planning and quality gating remain runtime-owned |
+| A captured item is clearly outside the subject or user scenario | Record `noise` only; do not create a discovery entity, event candidate, or memory update |
+| The evidence model returns no Finding but bounded relevant cards exist | Save only narrow, source-bound fallback facts with their real content IDs and explicit limitations |
 | Alignment gap remains with budget | Continue the highest-value missing branch |
 | Alignment gap remains without budget | Enter `partial_completion` with explicit missing requirements |
 | Populated 8D-0 tables are downgraded | Refuse downgrade to prevent data loss |
@@ -161,7 +187,9 @@ path.
   findings, and audit queries, mark historical goals, and pass `integrity_check`.
 - Repository/runtime tests assert versions, assumptions, unknowns, utility
   rows, candidates, events, memory, alignment review, partial completion, and
-  no legacy re-execution.
+  no legacy re-execution. They also assert per-content entity filtering,
+  cross-round card retention, the evidence-pass tool allow-list, out-of-scope
+  Finding rejection, and source-bound fallback behavior.
 - API/frontend tests assert the understanding card, revision boundary,
   detail schemas, utility counts, candidate/event cards, alignment review, and
   390px layout without synthetic values.
@@ -175,6 +203,11 @@ if any(term in user_goal for term in GENERIC_TERMS):
     return reject("query is too generic")
 ```
 
+This same separation applies after collection: a broad or unrelated captured
+card is not evidence merely because it came from a platform query, and a
+model's tool call is not authorized merely because the tool exists in the
+general Research allow-list.
+
 ### Correct
 
 ```python
@@ -187,4 +220,12 @@ for direction in directions:
         query_role=direction["query_role"],
         intent_bound=True,
     )
+```
+
+For evidence selection, use the corresponding bounded path:
+
+```python
+cards = merge_content_cards(previous_cards, current_results, limit=60)
+ranked = rank_content_cards(cards, intent=contract, limit=20)
+request.tools = [get_content, get_provenance, dedupe_check, save_finding, propose_action]
 ```
