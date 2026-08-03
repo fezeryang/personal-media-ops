@@ -62,6 +62,7 @@ XHS_AUTH_COOKIE_NAMES = frozenset(
         "xsecappid",
     }
 )
+XHS_LOGIN_STATE_PROBE_TIMEOUT_SECONDS = 2.0
 NATIVE_CRAWLER_TYPES = {"search", "detail", "creator"}
 PLATFORM_STORAGE_DIRECTORIES = {
     "bili": "bili",
@@ -858,7 +859,29 @@ def install_xhs_login_state_patch() -> None:
             login._mediaops_xhs_auth_cookie_fingerprint = baseline
 
         for _ in range(600):
-            if await single_attempt(login, no_logged_in_session):
+            current = await _xhs_browser_auth_cookie_fingerprint(
+                login.browser_context
+            )
+            if current and current != baseline:
+                print(
+                    "[MediaOps] XHS login successful after auth cookie rotation",
+                    flush=True,
+                )
+                return True
+
+            try:
+                upstream_ready = await asyncio.wait_for(
+                    single_attempt(login, no_logged_in_session),
+                    timeout=XHS_LOGIN_STATE_PROBE_TIMEOUT_SECONDS,
+                )
+            except Exception as probe_error:  # noqa: BLE001
+                # The upstream probe includes an unbounded page-content read on
+                # some XHS verification pages. Cookie rotation remains the
+                # authoritative signal for this QR flow, so a probe failure
+                # must not prevent the next bounded rotation check.
+                upstream_ready = False
+                del probe_error
+            if upstream_ready:
                 return True
 
             current = await _xhs_browser_auth_cookie_fingerprint(

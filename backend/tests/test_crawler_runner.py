@@ -1202,6 +1202,61 @@ def test_xhs_qrcode_login_accepts_auth_cookie_rotation(
     assert "rotated-secret" not in output
 
 
+def test_xhs_qrcode_login_checks_cookie_rotation_when_upstream_probe_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = load_runner()
+    media_platform = ModuleType("media_platform")
+    xhs = ModuleType("media_platform.xhs")
+    login_module = ModuleType("media_platform.xhs.login")
+
+    class HangingLogin:
+        def __init__(self, browser_context: object) -> None:
+            self.browser_context = browser_context
+
+        async def check_login_state(self, no_logged_in_session: str) -> bool:
+            del no_logged_in_session
+            await asyncio.Future()
+            return False
+
+    login_module.XiaoHongShuLogin = HangingLogin
+    monkeypatch.setitem(sys.modules, "media_platform", media_platform)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs", xhs)
+    monkeypatch.setitem(sys.modules, "media_platform.xhs.login", login_module)
+    runner.install_xhs_login_state_patch()
+    monkeypatch.setattr(runner, "XHS_LOGIN_STATE_PROBE_TIMEOUT_SECONDS", 0.01)
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+
+    class RotatingBrowserContext:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def cookies(self) -> list[dict[str, str]]:
+            self.calls += 1
+            value = "before-secret" if self.calls < 3 else "rotated-secret"
+            return [
+                {
+                    "name": "sec_poison_id",
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "value": value,
+                }
+            ]
+
+    login = HangingLogin(RotatingBrowserContext())
+
+    assert asyncio.run(login.check_login_state("before-secret")) is True
+    output = capsys.readouterr().out
+    assert "XHS login successful after auth cookie rotation" in output
+    assert "before-secret" not in output
+    assert "rotated-secret" not in output
+
+
 def test_xhs_qrcode_login_times_out_without_false_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

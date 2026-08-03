@@ -132,7 +132,8 @@ login contract has one additional boundary:
 ```
 phone confirmation
   → browser auth-cookie rotation
-  → Runner value-free fingerprint comparison
+  → Runner value-free fingerprint comparison (before/after a 2s-bounded page probe)
+  → probe timeout does not hide cookie rotation
   → exact "Login successful" marker
   → Adapter classifier
   → Worker waiting_login → running

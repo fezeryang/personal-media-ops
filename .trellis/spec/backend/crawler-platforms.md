@@ -100,14 +100,16 @@ and comment normalization.
   marker plus Adapter classifiers to distinguish persisted login, QR waiting,
   captcha, expiration, and timeout without platform branches.
 - XHS QR login also preserves a bounded login-state probe around the pinned
-  upstream helper. After a QR scan plus phone-side secondary verification, the
-  Runner compares a SHA-256 fingerprint of the allow-listed auth-cookie set
-  (`web_session`, `id_token`, `websectiga`, `sec_poison_id`, `xsecappid`) with
-  the pre-scan fingerprint; it never logs or persists cookie values. A changed
+  upstream helper. Each polling round checks a SHA-256 fingerprint of the
+  allow-listed auth-cookie set (`web_session`, `id_token`, `websectiga`,
+  `sec_poison_id`, `xsecappid`) before and after the upstream probe; it never
+  logs or persists cookie values. The upstream probe has a two-second hard
+  timeout because its verification-page content read is otherwise unbounded.
+  After a QR scan plus phone-side secondary verification, a changed
   fingerprint emits the exact `Login successful` marker consumed by the
-  generic Adapter/Worker state machine. If the bounded wait expires, it emits
-  a login-timeout marker and must not let the upstream helper fall through as
-  success.
+  generic Adapter/Worker state machine even when that page probe hangs or
+  raises. If the bounded wait expires, it emits a login-timeout marker and
+  must not let the upstream helper fall through as success.
 - The pinned Bilibili detail parser accepts BV targets only even though search
   persists public AV IDs and AV URLs. The reviewed Runner resolves AV/BV
   targets centrally, sends AV values through the upstream client's `aid`
@@ -205,6 +207,7 @@ and comment normalization.
 | Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
 | Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
 | XHS QR scan rotates an allow-listed auth cookie after secondary verification | Emit the generic `Login successful` marker and return the crawler task to `running` |
+| XHS verification page blocks the upstream login probe | Time out the probe after two seconds, re-check the allow-listed cookie fingerprint, and continue bounded polling |
 | XHS QR wait reaches its bounded deadline without a valid UI/cookie signal | Emit a login-timeout marker and persist failure; never report a successful crawl |
 | Bilibili detail/comment target is a public AV ID or AV URL | Runner maps it to the upstream `aid` request and retains the source AV identity |
 | Bilibili target is a BV ID or BV URL | Runner uses the upstream BV path and resolves the canonical AV identity for standalone sub-comments |
