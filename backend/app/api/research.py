@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.config import Settings
@@ -15,6 +16,19 @@ from app.crawler.registry import (
     UnsupportedPlatformError,
     platform_registry,
 )
+from app.models.discovery import (
+    DiscoveryAddToSpaceRequest,
+    DiscoveryCandidateDetail,
+    DiscoveryCandidateSummary,
+    DiscoveryContinueRequest,
+    DiscoveryFeedbackRequest,
+    ResearchPreferences,
+    ResearchSpaceCreate,
+    ResearchSpaceDetail,
+    ResearchSpaceItem,
+    ResearchSpaceItemCreate,
+    ResearchSpaceSummary,
+)
 from app.models.research import (
     ResearchAction,
     ResearchIntentRevisionRequest,
@@ -23,12 +37,18 @@ from app.models.research import (
     ResearchTaskDetail,
     ResearchTaskSummary,
 )
+from app.repositories.discovery import (
+    DiscoveryConflict,
+    DiscoveryNotFound,
+    DiscoveryRepository,
+)
 from app.repositories.research import (
     ResearchTaskConflict,
     ResearchTaskNotFound,
     ResearchTaskRepository,
 )
 from app.security.dependencies import AuthContext, require_owner_session
+from app.services.ai.discovery import DiscoveryEngine
 from app.services.ai.intent_interpreter import build_default_intent
 from app.services.ai.research_quality import (
     classify_query,
@@ -48,6 +68,14 @@ def _repository(request: Request) -> ResearchTaskRepository:
 
 def _settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def _discovery(request: Request) -> DiscoveryRepository:
+    return request.app.state.discovery_repository
+
+
+def _discovery_engine(request: Request) -> DiscoveryEngine:
+    return request.app.state.discovery_engine
 
 
 def _result_with_formats(value: object) -> object:
@@ -194,6 +222,8 @@ def _detail(task: dict[str, object]) -> dict[str, object]:
         "entity_candidates": task.get("entity_candidates", []),
         "event_candidates": task.get("event_candidates", []),
         "memory_items": task.get("memory_items", []),
+        "discovery_candidates": task.get("discovery_candidates", []),
+        "discovery_seeds": task.get("discovery_seeds", []),
         "research_plan": task.get("plan", {}),
     }
 
@@ -205,7 +235,11 @@ def _not_found() -> HTTPException:
 def _conflict(error: Exception) -> HTTPException:
     if isinstance(error, ResearchTaskNotFound):
         return _not_found()
+    if isinstance(error, DiscoveryNotFound):
+        return HTTPException(status_code=404, detail="Discovery resource not found")
     if isinstance(error, ResearchTaskConflict):
+        return HTTPException(status_code=409, detail=str(error))
+    if isinstance(error, DiscoveryConflict):
         return HTTPException(status_code=409, detail=str(error))
     if isinstance(error, ValueError):
         return HTTPException(status_code=409, detail=str(error))
@@ -292,6 +326,90 @@ def create_task(
         raise _conflict(error) from error
     request.app.state.research_runtime.wake()
     return _detail(task)
+
+
+def _create_follow_up_task(
+    *,
+    request: Request,
+    auth: AuthContext,
+    objective: str,
+    platforms: list[str],
+    candidate: dict[str, object],
+) -> dict[str, object]:
+    repository = _repository(request)
+    settings = _settings(request)
+    selected_platforms = _validated_platforms(platforms or None, settings)
+    defaults = ResearchTaskCreate(objective=objective, platforms=selected_platforms)
+    task = repository.create(
+        user_id=auth.user_id,
+        objective=defaults.objective,
+        platforms=selected_platforms,
+        crawl_limit=defaults.budget.crawl_limit,
+        content_limit=defaults.budget.content_limit,
+        duration_seconds=defaults.budget.duration_seconds,
+        token_limit=defaults.budget.token_limit,
+        cost_limit=defaults.budget.cost_limit,
+        cost_currency=defaults.budget.cost_currency,
+        coverage=defaults.coverage.model_dump(),
+        max_input_tokens=defaults.budget.max_input_tokens,
+        max_output_tokens=defaults.budget.max_output_tokens,
+        max_model_calls=defaults.budget.max_model_calls,
+        route_policy=defaults.budget.route_policy,
+        max_total_tokens=defaults.budget.max_total_tokens,
+        max_crawl_tasks=defaults.budget.max_crawl_tasks,
+        max_new_contents=defaults.budget.max_new_contents,
+        max_runtime_seconds=defaults.budget.max_runtime_seconds,
+        max_payg_amount=defaults.budget.max_payg_amount,
+        budget_currency=defaults.budget.currency,
+    )
+    task_id = str(task["id"])
+    intent = build_default_intent(objective, selected_platforms)
+    repository.save_intent(task_id, intent.model_dump(mode="json"), change_reason="discovery_follow_up")
+    normalized_goal = normalize_query(objective)
+    saved_intent = repository.get_intent(task_id)
+    repository.create_query(
+        task_id=task_id,
+        intent_id=str(saved_intent["id"]),
+        record_type="user_goal",
+        gate_status="not_applicable",
+        decision="allow",
+        query_role="seed_discovery",
+        query=objective,
+        normalized_query=normalized_goal,
+        query_type=classify_query(normalized_goal),
+        platform=selected_platforms[0],
+        source_type="user_goal",
+        source_content_id=str(candidate["source_content_id"]) if candidate.get("source_content_id") else None,
+        source_finding_id=None,
+        parent_query_id=None,
+        generation_reason="基于用户确认的 Discovery Candidate 创建独立后续研究",
+        specificity_score=specificity_score(normalized_goal),
+        novelty_score=1.0,
+        noise_risk_score=noise_risk_score(normalized_goal),
+        status="candidate",
+        expected_evidence_role="background",
+    )
+    detail = repository.get(user_id=auth.user_id, task_id=task_id, detail=True)
+    if detail is None:
+        raise ResearchTaskNotFound(task_id)
+    context = detail.get("context") if isinstance(detail.get("context"), dict) else {}
+    source_ids = [
+        str(item.get("content_id"))
+        for item in candidate.get("sources", [])
+        if isinstance(item, dict) and item.get("content_id")
+    ]
+    context.update(
+        {
+            "discovery_parent_candidate_id": str(candidate["id"]),
+            "discovery_source_content_ids": list(dict.fromkeys(source_ids))[:20],
+            "discovery_source_summary": str(candidate.get("summary") or "")[:1_000],
+        }
+    )
+    repository.update_context(task_id, context, step="discovery_follow_up", round_number=0)
+    refreshed = repository.get(user_id=auth.user_id, task_id=task_id, detail=True)
+    if refreshed is None:
+        raise ResearchTaskNotFound(task_id)
+    return refreshed
 
 
 @router.get("/tasks/{task_id}", response_model=ResearchTaskDetail)
@@ -478,6 +596,282 @@ def _decide_action(
         return repository.decide_action(task_id, action_id, status)
     except Exception as error:
         raise _conflict(error) from error
+
+
+@router.get("/discoveries", response_model=list[DiscoveryCandidateSummary])
+def list_discoveries(
+    request: Request,
+    auth: OwnerSession,
+    state: str | None = Query(default=None),
+    research_task_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, object]]:
+    return _discovery(request).list_candidates(
+        owner_id=auth.user_id,
+        state=state,
+        research_task_id=research_task_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/discoveries/{candidate_id}", response_model=DiscoveryCandidateDetail)
+def get_discovery(
+    candidate_id: str,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    candidate = _discovery(request).get_candidate(
+        owner_id=auth.user_id,
+        candidate_id=candidate_id,
+        detail=True,
+    )
+    if candidate is None:
+        raise _conflict(DiscoveryNotFound(candidate_id))
+    return candidate
+
+
+def _feedback_state(feedback_type: str) -> str | None:
+    return {
+        "valuable": "accepted",
+        "irrelevant": "ignored",
+        "already_known": "ignored",
+        "duplicate": "dismissed_duplicate",
+        "follow": "deferred",
+        "mute_topic": "ignored",
+        "deprioritize_similar": "deferred",
+        "needs_more_evidence": "deferred",
+        "converted_to_research": "converted_to_research",
+        "added_to_space": "added_to_space",
+    }.get(feedback_type)
+
+
+@router.post("/discoveries/{candidate_id}/feedback", response_model=DiscoveryCandidateDetail)
+def give_discovery_feedback(
+    candidate_id: str,
+    payload: DiscoveryFeedbackRequest,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    discovery = _discovery(request)
+    try:
+        if payload.undo_feedback_id:
+            revoked = discovery.undo_feedback(
+                owner_id=auth.user_id,
+                feedback_id=payload.undo_feedback_id,
+            )
+            if str(revoked.get("candidate_id") or "") != candidate_id:
+                raise DiscoveryConflict("feedback does not belong to candidate")
+        else:
+            if payload.feedback_type is None:
+                raise DiscoveryConflict("feedback_type is required unless undo_feedback_id is supplied")
+            discovery.record_feedback(
+                owner_id=auth.user_id,
+                candidate_id=candidate_id,
+                feedback_type=payload.feedback_type,
+                scope=payload.scope,
+                scope_key=payload.scope_key,
+                weight=payload.weight,
+                reason=payload.reason,
+            )
+            next_state = _feedback_state(payload.feedback_type)
+            if next_state is not None:
+                discovery.set_candidate_state(
+                    owner_id=auth.user_id,
+                    candidate_id=candidate_id,
+                    state=next_state,
+                    reason=payload.reason or f"用户反馈：{payload.feedback_type}",
+                    feedback_type=payload.feedback_type,
+                )
+        _discovery_engine(request).rescore_after_feedback(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+        )
+    except Exception as error:
+        raise _conflict(error) from error
+    candidate = discovery.get_candidate(
+        owner_id=auth.user_id,
+        candidate_id=candidate_id,
+        detail=True,
+    )
+    if candidate is None:
+        raise _not_found()
+    return candidate
+
+
+@router.post("/discoveries/{candidate_id}/continue", response_model=ResearchTaskDetail)
+def continue_discovery(
+    candidate_id: str,
+    payload: DiscoveryContinueRequest,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    discovery = _discovery(request)
+    candidate = discovery.get_candidate(
+        owner_id=auth.user_id,
+        candidate_id=candidate_id,
+        detail=True,
+    )
+    if candidate is None:
+        raise _not_found()
+    settings = _settings(request)
+    enabled = platform_registry.enabled_platforms_for_mode("search", settings.enabled_platforms)
+    source_platforms = [
+        str(item.get("platform"))
+        for item in candidate.get("sources", [])
+        if isinstance(item, dict) and item.get("platform") in enabled
+    ]
+    platforms = list(dict.fromkeys(source_platforms)) or enabled
+    objective = payload.request or f"继续研究：{candidate['title']}"
+    try:
+        task = _create_follow_up_task(
+            request=request,
+            auth=auth,
+            objective=objective,
+            platforms=platforms,
+            candidate=candidate,
+        )
+        discovery.record_feedback(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+            feedback_type="converted_to_research",
+            scope="global",
+            scope_key=None,
+            weight=1,
+            reason="用户选择继续研究，已创建独立 Research Task",
+            follow_up_task_id=str(task["id"]),
+        )
+        discovery.set_candidate_state(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+            state="converted_to_research",
+            reason=f"独立后续任务 {task['id']} 已创建",
+            feedback_type="converted_to_research",
+        )
+        _discovery_engine(request).rescore_after_feedback(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+        )
+    except Exception as error:
+        raise _conflict(error) from error
+    request.app.state.research_runtime.wake()
+    return _detail(task)
+
+
+@router.post("/discoveries/{candidate_id}/add-to-space", response_model=ResearchSpaceItem)
+def add_discovery_to_space(
+    candidate_id: str,
+    payload: DiscoveryAddToSpaceRequest,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    discovery = _discovery(request)
+    try:
+        item = discovery.add_space_item(
+            owner_id=auth.user_id,
+            space_id=payload.space_id,
+            item_type="discovery_candidate",
+            item_id=candidate_id,
+            position=payload.position,
+            note=payload.note,
+            source_candidate_id=candidate_id,
+        )
+        discovery.record_feedback(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+            feedback_type="added_to_space",
+            scope="research_space",
+            scope_key=payload.space_id,
+            weight=1,
+            reason="用户将候选加入研究空间",
+        )
+        discovery.set_candidate_state(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+            state="added_to_space",
+            reason=f"已加入研究空间 {payload.space_id}",
+            feedback_type="added_to_space",
+        )
+        _discovery_engine(request).rescore_after_feedback(
+            owner_id=auth.user_id,
+            candidate_id=candidate_id,
+        )
+    except Exception as error:
+        raise _conflict(error) from error
+    return item
+
+
+@router.get("/spaces", response_model=list[ResearchSpaceSummary])
+def list_research_spaces(request: Request, auth: OwnerSession) -> list[dict[str, object]]:
+    return _discovery(request).list_spaces(owner_id=auth.user_id)
+
+
+@router.post("/spaces", response_model=ResearchSpaceDetail, status_code=201)
+def create_research_space(
+    payload: ResearchSpaceCreate,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    try:
+        return _discovery(request).create_space(
+            owner_id=auth.user_id,
+            name=payload.name,
+            description=payload.description,
+        )
+    except sqlite3.IntegrityError as error:
+        raise HTTPException(status_code=409, detail="research space name already exists") from error
+    except Exception as error:
+        raise _conflict(error) from error
+
+
+@router.get("/spaces/{space_id}", response_model=ResearchSpaceDetail)
+def get_research_space(
+    space_id: str,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    space = _discovery(request).get_space(owner_id=auth.user_id, space_id=space_id)
+    if space is None:
+        raise _not_found()
+    return space
+
+
+@router.post("/spaces/{space_id}/items", response_model=ResearchSpaceItem)
+def add_research_space_item(
+    space_id: str,
+    payload: ResearchSpaceItemCreate,
+    request: Request,
+    auth: OwnerSession,
+) -> dict[str, object]:
+    try:
+        return _discovery(request).add_space_item(
+            owner_id=auth.user_id,
+            space_id=space_id,
+            item_type=payload.item_type,
+            item_id=payload.item_id,
+            position=payload.position,
+            note=payload.note,
+        )
+    except Exception as error:
+        raise _conflict(error) from error
+
+
+@router.get("/preferences", response_model=ResearchPreferences)
+def research_preferences(request: Request, auth: OwnerSession) -> dict[str, object]:
+    settings = _settings(request)
+    return {
+        "feature_flags": {
+            "research_primary_enabled": bool(getattr(settings, "research_primary_enabled", True)),
+            "discovery_inbox_enabled": bool(getattr(settings, "discovery_inbox_enabled", True)),
+            "legacy_today_visible": bool(getattr(settings, "legacy_today_visible", False)),
+            "legacy_trends_visible": bool(getattr(settings, "legacy_trends_visible", False)),
+            "legacy_subscriptions_visible": bool(getattr(settings, "legacy_subscriptions_visible", False)),
+            "legacy_creator_watch_visible": bool(getattr(settings, "legacy_creator_watch_visible", False)),
+            "manual_crawler_primary": bool(getattr(settings, "manual_crawler_primary", False)),
+        },
+        "rules": _discovery(request).list_preferences(owner_id=auth.user_id),
+    }
 
 
 @router.get("/tasks/{task_id}/events")

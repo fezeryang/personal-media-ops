@@ -22,6 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Research Quality](./research-quality.md) | Query gates, four-way content counts, evidence occurrences, and support contracts | Active |
 | [Research Runtime 8C](./research-runtime-8c.md) | Cross-platform coverage, durable controls, step usage, billing, and recovery | Active |
 | [Research Runtime 8D-0](./research-runtime-8d0.md) | Intent contracts, execution-query separation, information utility, memory, and alignment | Active |
+| [Research Discovery and Spaces 8D-1/2/3](./research-discovery-8d1.md) | Bounded discoveries, reversible feedback memory, typed research spaces, and owner-scoped APIs | Active |
 | [Error Handling](./error-handling.md) | API and worker failure handling | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards and testing | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Crawler subprocess logging | Active |

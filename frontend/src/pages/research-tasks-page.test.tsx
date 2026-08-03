@@ -559,39 +559,58 @@ describe("ResearchTasksPage", () => {
   });
 
   it("shows status, evidence provenance, trace parameters, and owner actions", async () => {
+    const user = userEvent.setup();
     renderPage();
     expect(await screen.findByText("待审核")).toBeInTheDocument();
-    expect(await screen.findByText("资料描述了一个本地优先的 AI 工作台。")).toBeInTheDocument();
+    expect(await screen.findByText("研究对齐审查")).toBeInTheDocument();
     expect(screen.getByText("模型化研究摘要")).toBeInTheDocument();
     expect(document.querySelector("script")).not.toBeInTheDocument();
-    expect(screen.getByText("AI 工作台实践")).toBeInTheDocument();
-    expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
     expect(screen.getByText("平台计划与实体覆盖")).toBeInTheDocument();
-    expect(screen.getByText("证据池与未采用内容")).toBeInTheDocument();
-    expect(screen.getByText("预算分类与模型轨迹")).toBeInTheDocument();
     expect(screen.getByText("研究理解卡")).toBeInTheDocument();
-    expect(screen.getByText("信息价值分布")).toBeInTheDocument();
-    expect(screen.getByText("发现实体与下一步")).toBeInTheDocument();
     expect(screen.getByText("研究对齐审查")).toBeInTheDocument();
+    expect(screen.getByText("独立证据")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "证据与结论" }));
+    expect(await screen.findByText("资料描述了一个本地优先的 AI 工作台。")).toBeInTheDocument();
+    expect(screen.getByText("AI 工作台实践")).toBeInTheDocument();
+    expect(screen.getByText("证据池与未采用内容")).toBeInTheDocument();
+    expect(screen.getByText("信息价值分布")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "发现与记忆" }));
+    expect(screen.getByText("新发现与下一步")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "计划与资源" }));
+    expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
+    expect(screen.getByText("预算分类与模型轨迹")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /平台执行查询 · 已执行/ }));
+    await user.click(screen.getByRole("button", { name: /平台执行查询 · 已拒绝/ }));
     expect(screen.getByText(/仅包含泛化词/)).toBeInTheDocument();
     expect(screen.getByText(/连续两轮新增率低于阈值/)).toBeInTheDocument();
-    expect(screen.getByText("独立证据")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "执行轨迹" }));
     expect(screen.getByText("执行轨迹（1 步）")).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByText("search_library"));
+    await user.click(screen.getByText("search_library"));
     expect(screen.getByText(/AI workbench/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
   });
 
   it("keeps quality counts, rejected queries, and evidence reachable at 390px", async () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     try {
+      const user = userEvent.setup();
       renderPage();
-      expect(await screen.findByText("查询轨迹与质量闸门")).toBeInTheDocument();
-      expect(screen.getByText("已存在")).toBeInTheDocument();
+      expect(await screen.findByText("研究理解卡")).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "计划与资源" }));
+      expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /平台执行查询 · 已执行/ }));
+      await user.click(screen.getByRole("button", { name: /平台执行查询 · 已拒绝/ }));
       expect(screen.getByText(/拒绝原因：仅包含泛化词/)).toBeInTheDocument();
-      expect(screen.getByText("直接支持 · 强")).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "总览" }));
+      expect(screen.getByText("已存在")).toBeInTheDocument();
       expect(screen.getByText(/停止原因：/)).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "证据与结论" }));
+      expect(screen.getByText("直接支持 · 强")).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
     }

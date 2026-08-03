@@ -176,6 +176,16 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "event_contents",
             "research_queries",
             "evidence_occurrences",
+            "research_discovery_runs",
+            "research_discovery_seeds",
+            "research_discovery_candidates",
+            "research_discovery_candidate_sources",
+            "research_discovery_candidate_scores",
+            "research_discovery_candidate_events",
+            "research_discovery_feedback",
+            "research_discovery_preference_rules",
+            "research_spaces",
+            "research_space_items",
         }.issubset({
             row[0]
             for row in connection.execute(
@@ -223,6 +233,19 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "idx_evidence_occurrences_task_content",
             "idx_evidence_occurrences_finding",
             "idx_evidence_occurrences_query",
+            "idx_discovery_runs_task_created",
+            "idx_discovery_seeds_run_created",
+            "idx_discovery_seeds_task_type",
+            "idx_discovery_candidates_owner_state_score",
+            "idx_discovery_candidates_task_score",
+            "idx_discovery_candidate_sources_candidate",
+            "idx_discovery_candidate_scores_candidate_created",
+            "idx_discovery_candidate_events_candidate_created",
+            "idx_discovery_feedback_owner_scope",
+            "idx_discovery_feedback_candidate_active",
+            "idx_discovery_preference_owner_active",
+            "idx_research_spaces_owner_status",
+            "idx_research_space_items_space_position",
         }.issubset(indexes)
 
 
@@ -906,4 +929,41 @@ def test_downgrade_to_0002_refuses_when_remaining_platform_rows_exist(
 
     assert result.returncode != 0
     assert "remaining-platform" in result.stderr
+    assert get_current_revision(database_path) == get_head_revision()
+
+
+def test_downgrade_refuses_when_discovery_or_space_rows_exist(tmp_path: Path) -> None:
+    database_path = tmp_path / "mediaops.db"
+    run_alembic_command(database_path, "upgrade", "head")
+    now = "2026-08-03T00:00:00Z"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO users (
+                id, username, password_hash, is_active, failed_login_count,
+                created_at, updated_at
+            ) VALUES ('discovery-migration-owner', 'discovery-migration-owner',
+                      'hash', 1, 0, ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO research_spaces (
+                id, owner_id, name, description, status, created_at, updated_at
+            ) VALUES ('space-migration-1', 'discovery-migration-owner',
+                      'Migration space', 'preserve me', 'active', ?, ?)
+            """,
+            (now, now),
+        )
+
+    result = run_alembic_command(
+        database_path,
+        "downgrade",
+        "0014_research_intent_and_information_utility",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "research spaces" in result.stderr
     assert get_current_revision(database_path) == get_head_revision()

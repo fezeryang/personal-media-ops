@@ -977,6 +977,46 @@ class ResearchTaskRepository:
             item["is_current"] = bool(item["is_current"])
             memory_items.append(item)
         task["memory_items"] = memory_items
+        discovery_candidates = []
+        for row in connection.execute(
+            """
+            SELECT id, research_task_id, candidate_type, title, summary,
+                   normalized_key, parent_candidate_id, source_seed_id,
+                   source_content_id, source_platform, relevance_score,
+                   novelty_score, evidence_strength_score,
+                   source_independence_score, cross_platform_score,
+                   counterevidence_score, actionability_score, feedback_score,
+                   noise_risk_score, marketing_risk_score, saturation_score,
+                   resource_cost_score, final_score, score_explanation_json,
+                   content_count, independent_source_count, platform_count,
+                   suspected_repost_count, depth, state, suggested_next_action,
+                   experimental_status, created_at, updated_at
+            FROM research_discovery_candidates
+            WHERE research_task_id = ?
+            ORDER BY final_score DESC, updated_at DESC, id DESC
+            LIMIT 100
+            """,
+            (task_id,),
+        ).fetchall():
+            item = dict(row)
+            item["score_explanation"] = _json(item.pop("score_explanation_json"), {})
+            discovery_candidates.append(item)
+        task["discovery_candidates"] = discovery_candidates
+        task["discovery_seeds"] = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, research_task_id, run_id, seed_type,
+                       source_content_id, source_finding_id,
+                       source_entity_candidate_id, source_event_candidate_id,
+                       source_candidate_id, relation_to_intent, novelty,
+                       confidence, information_utility, depth, status, created_at
+                FROM research_discovery_seeds
+                WHERE research_task_id = ? ORDER BY created_at, id LIMIT 100
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
         alignment = connection.execute(
             """
             SELECT id, research_task_id, alignment_score, covered_requirements_json,

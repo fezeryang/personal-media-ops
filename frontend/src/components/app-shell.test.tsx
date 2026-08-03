@@ -25,6 +25,17 @@ vi.mock("../features/crawler/hooks/use-crawler-queries", () => ({
   }),
 }));
 
+vi.mock("../features/research/hooks/use-discovery-queries", () => ({
+  useResearchPreferencesQuery: () => ({
+    data: {
+      feature_flags: {
+        research_primary_enabled: true,
+        discovery_inbox_enabled: true,
+      },
+    },
+  }),
+}));
+
 import { AppShell } from "./app-shell";
 
 describe("AppShell", () => {
@@ -48,10 +59,12 @@ describe("AppShell", () => {
       name: "移动端主导航",
     });
     expect(mobile).toHaveClass("overflow-x-auto");
-    expect(mobile.querySelectorAll("a")).toHaveLength(12);
-    expect(container).toHaveTextContent("今日情报");
-    expect(container).toHaveTextContent("AI 模型中心");
-    expect(container).toHaveTextContent("AI 研究任务");
+    expect(mobile.querySelectorAll("a")).toHaveLength(6);
+    expect(container).toHaveTextContent("发现收件箱");
+    expect(container).toHaveTextContent("记忆与证据");
+    expect(container).toHaveTextContent("AI 研究");
+    expect(container).not.toHaveTextContent("今日情报");
+    expect(container).not.toHaveTextContent("AI 模型中心");
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(mocks.logout).toHaveBeenCalledOnce();
   });

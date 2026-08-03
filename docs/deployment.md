@@ -108,6 +108,13 @@ Profile 和 Provider 价格版本；该迁移会为既有 Provider/Invocation �
 假设、未知项、查询 `record_type`/`decision`/`query_role`、信息价值分类、发现实体、
 事件候选、长期记忆和 Intent Alignment Review。它为历史 Research Task 建立只读
 `legacy_migrated` 意图投影，不重新执行旧任务，也不删除旧 Finding 或证据。
+`0015_limited_discovery_and_feedback` 增加有深度上限的 Discovery Run/Seed/Candidate、
+来源与分数快照、候选生命周期、所有者反馈和可撤销的偏好规则；`0016_research_spaces`
+增加所有者隔离的 Research Space 与带类型的 Space Item，可容纳研究任务、Discovery、
+证据、实体、事件、结论、未解问题和长期记忆。Discovery 只从真实内容/8D-0 候选建立
+来源绑定候选，深度固定为 0/1；反馈 undo 必须同时停用对应偏好规则。两次迁移均要求
+已有数据兼容测试，downgrade 在新表有数据时拒绝。应用启动只校验当前 revision，不会
+静默执行迁移。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或
 资料库数据时，对应 downgrade 会拒绝执行，避免隐式丢失。应用启动只校验当前
 revision，不会静默执行迁移。
@@ -143,6 +150,25 @@ SHA-256，再审查迁移中的历史意图投影、查询 `user_goal` 标记和
 `0014_research_intent_and_information_utility`、`PRAGMA integrity_check` 为 `ok`，
 并比较旧 Research、Finding、Evidence、Query、AI Invocation 行数没有减少。不要执行
 未经审查的 downgrade；数据库回滚只能通过前向修复或经授权的恢复操作完成。
+
+阶段 8D-1/2/3 的 `0015_limited_discovery_and_feedback` 与
+`0016_research_spaces` 发布前必须确认生产仍在
+`0014_research_intent_and_information_utility`，先执行 SQLite 一致性备份并记录备份
+路径与 SHA-256，再审查候选深度/来源约束、反馈撤销和空间 item 类型，使用
+`--allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
+`0016_research_spaces`、`PRAGMA integrity_check` 为 `ok`，并比较旧 Research、Finding、
+Evidence、Query、AI Invocation 与 Library 行数没有减少。验收至少调用认证的
+`/api/research/tasks`、每个验收任务的 detail/events、`/api/research/discoveries`、
+`/api/research/preferences` 和 `/api/research/spaces`；Research detail 必须通过
+`ResearchTaskDetail` 响应模型，包含 utilities、entity/event candidates、memory、
+alignment、queries、evidence 和 Discovery 字段。不得用假数据掩盖 500 或 schema mismatch。
+不要执行未经审查的 downgrade；数据库回滚只能通过前向修复或经授权的恢复操作完成。
+
+8D 前端的生产主导航固定为 `/research`、`/discoveries`、`/spaces`、`/memory`、
+`/tools`、`/settings`。`/today`、`/subscriptions`、`/trends`、`/creators`、
+`/collections`、`/system`、`/crawler/tasks`、`/ai/models` 和 `/integrations` 只作兼容
+重定向或工具子页，不得重新成为主导航。生产构建必须通过同源 `/api`，不得直接编辑
+`frontend/dist`。
 
 ## Frontend Build
 

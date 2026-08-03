@@ -25,6 +25,7 @@ workbench.
 | [AI Model Center](./ai-model-center.md) | Provider/model forms, route editing, usage semantics, and bounded gateway diagnostics | Active |
 | [Research Center 8C](./research-center-8c.md) | Platform coverage, evidence decisions, budget trace, and durable controls | Active |
 | [Research Center 8D-0](./research-center-8d0.md) | Intent understanding card, information utility, discovery candidates, memory, and alignment | Active |
+| [AI Research Workbench 8D-1/2/3/4/5](./research-workbench-8d.md) | Discovery Inbox, research spaces, memory/evidence, tabbed research detail, and canonical navigation | Active |
 
 ---
 

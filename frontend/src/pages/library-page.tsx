@@ -65,9 +65,9 @@ export function LibraryPage() {
   return (
     <div className="space-y-7">
       <PageHeader
-        eyebrow="Persistent intelligence library"
-        title="内容资料库"
-        description="跨任务沉淀标准化内容、创作者、评论和来源关系。页面只展示安全文本，不直接渲染原始载荷。"
+        eyebrow="Memory · Evidence"
+        title="记忆与证据"
+        description="跨任务沉淀标准化内容、创作者、评论和来源关系。页面只展示安全文本，不直接渲染原始载荷；研究空间和候选发现会从这里引用真实证据。"
       />
 
       <section className="grid gap-4 sm:grid-cols-3">

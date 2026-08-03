@@ -28,12 +28,14 @@ from app.repositories.ai import AIRepository
 from app.repositories.auth import AuthRepository
 from app.repositories.automation import AutomationRepository
 from app.repositories.crawler_tasks import CrawlerTaskRepository
+from app.repositories.discovery import DiscoveryRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
 from app.repositories.organization import OrganizationRepository
 from app.repositories.research import ResearchTaskRepository
 from app.security.provider_secrets import ProviderSecretCipher
 from app.services.agent_tools import AgentToolService
+from app.services.ai.discovery import DiscoveryEngine
 from app.services.ai.model_gateway import ModelGateway
 from app.services.ai.research_runtime import ResearchRuntime
 from app.services.ai.research_tools import ResearchToolService
@@ -55,6 +57,7 @@ def create_app(config: Settings | None = None) -> FastAPI:
     auth_service = AuthService(auth_repository, active_settings)
     ai_repository = AIRepository(active_settings.database_path)
     research_repository = ResearchTaskRepository(active_settings.database_path)
+    discovery_repository = DiscoveryRepository(active_settings.database_path)
     provider_secret_cipher = ProviderSecretCipher(
         active_settings.model_gateway_master_key_path
     )
@@ -92,11 +95,16 @@ def create_app(config: Settings | None = None) -> FastAPI:
         crawler=repository,
         research=research_repository,
     )
+    discovery_engine = DiscoveryEngine(
+        discovery=discovery_repository,
+        research=research_repository,
+    )
     research_runtime = ResearchRuntime(
         research=research_repository,
         ai_repository=ai_repository,
         gateway=model_gateway,
         tools=research_tools,
+        discovery=discovery_engine,
     )
 
     @asynccontextmanager
@@ -126,6 +134,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.state.auth_service = auth_service
     application.state.ai_repository = ai_repository
     application.state.research_repository = research_repository
+    application.state.discovery_repository = discovery_repository
+    application.state.discovery_engine = discovery_engine
     application.state.research_tools = research_tools
     application.state.research_runtime = research_runtime
     application.state.provider_secret_cipher = provider_secret_cipher

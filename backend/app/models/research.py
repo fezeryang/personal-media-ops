@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.discovery import DiscoveryCandidateSummary
 from app.models.research_intent import (
     ContentResearchUtility,
     ResearchAlignmentReview,
@@ -479,4 +480,6 @@ class ResearchTaskDetail(ResearchTaskSummary):
     entity_candidates: list[ResearchEntityCandidate] = Field(default_factory=list)
     event_candidates: list[ResearchEventCandidate] = Field(default_factory=list)
     memory_items: list[ResearchMemoryItem] = Field(default_factory=list)
+    discovery_candidates: list[DiscoveryCandidateSummary] = Field(default_factory=list)
+    discovery_seeds: list[dict[str, object]] = Field(default_factory=list)
     research_plan: dict[str, object] = Field(default_factory=dict)

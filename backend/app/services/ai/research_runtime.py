@@ -15,6 +15,7 @@ from app.repositories.research import (
     ResearchTaskRepository,
 )
 from app.services.ai.context_compactor import compact_research_context
+from app.services.ai.discovery import DiscoveryEngine
 from app.services.ai.information_value import (
     classify_information_utility,
     event_type_for_content,
@@ -170,11 +171,13 @@ class ResearchRuntime:
         ai_repository: AIRepository,
         gateway: ModelGateway,
         tools: ResearchToolService,
+        discovery: DiscoveryEngine | None = None,
     ) -> None:
         self.research = research
         self.ai_repository = ai_repository
         self.gateway = gateway
         self.tools = tools
+        self.discovery = discovery
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -1794,6 +1797,29 @@ class ResearchRuntime:
             round_number=round_number,
         )
         self._record_core_evidence_and_memory(task_id)
+        if self.discovery is not None:
+            try:
+                discovery_result = self.discovery.generate_for_task(task_id)
+                self.research.append_trace(
+                    task_id,
+                    event="discovery_generated",
+                    status="Researching",
+                    reason=(
+                        f"有限 Discovery 完成：{len(discovery_result.get('seeds', []))} 个种子，"
+                        f"{len(discovery_result.get('candidates', []))} 个候选"
+                    ),
+                    round_number=round_number,
+                    step="discovery",
+                )
+            except Exception as error:  # noqa: BLE001 - persist a visible feature boundary failure
+                self.research.append_trace(
+                    task_id,
+                    event="discovery_failed",
+                    status="Researching",
+                    reason=f"有限 Discovery 未完成：{str(error)[:500]}",
+                    round_number=round_number,
+                    step="discovery",
+                )
         refreshed = self.research.get_for_runtime(task_id)
         if refreshed is not None:
             refreshed_context = refreshed.get("context")

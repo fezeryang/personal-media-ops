@@ -1,48 +1,43 @@
 import {
-  Activity,
-  BookOpen,
-  Bot,
-  ChevronRight,
-  Compass,
   Database,
-  Eye,
   FolderKanban,
-  LayoutDashboard,
+  ChevronRight,
   LogOut,
-  RadioTower,
   Radar,
   SearchCheck,
   Sparkles,
+  Settings,
+  Wrench,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
 
 import { useAuth } from "../features/auth/auth-context";
 import { useHealthQuery } from "../features/crawler/hooks/use-crawler-queries";
+import { useResearchPreferencesQuery } from "../features/research/hooks/use-discovery-queries";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 
-const navigation = [
-  { label: "指挥中心", to: "/", icon: LayoutDashboard, end: true },
-  { label: "今日情报", to: "/today", icon: Compass, end: false },
-  { label: "订阅中心", to: "/subscriptions", icon: RadioTower, end: false },
-  { label: "内容资料库", to: "/library", icon: Database, end: false },
-  { label: "趋势雷达", to: "/trends", icon: Radar, end: false },
-  { label: "创作者观察", to: "/creators", icon: Eye, end: false },
-  { label: "专题集合", to: "/collections", icon: FolderKanban, end: false },
-  { label: "采集中心", to: "/crawler/tasks", icon: Activity, end: false },
-  { label: "Agent 与集成", to: "/integrations", icon: Bot, end: false },
-  { label: "AI 模型中心", to: "/ai/models", icon: Sparkles, end: false },
-  { label: "AI 研究任务", to: "/research/tasks", icon: SearchCheck, end: false },
-  { label: "系统状态", to: "/system", icon: BookOpen, end: false },
-];
-
 export function AppShell() {
   const health = useHealthQuery();
+  const preferences = useResearchPreferencesQuery();
   const auth = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const connected = health.data?.status === "ok";
+  const flags = preferences.data?.feature_flags;
+  const navigation = [
+    ...(flags?.research_primary_enabled !== false
+      ? [{ label: "AI 研究", to: "/research", icon: SearchCheck, end: true }]
+      : []),
+    ...(flags?.discovery_inbox_enabled !== false
+      ? [{ label: "发现收件箱", to: "/discoveries", icon: Sparkles, end: false }]
+      : []),
+    { label: "研究空间", to: "/spaces", icon: FolderKanban, end: false },
+    { label: "记忆与证据", to: "/memory", icon: Database, end: false },
+    { label: "工具中心", to: "/tools", icon: Wrench, end: false },
+    { label: "设置", to: "/settings", icon: Settings, end: false },
+  ];
 
   async function logout() {
     setLoggingOut(true);

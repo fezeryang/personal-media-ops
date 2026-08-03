@@ -4,6 +4,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings loaded from environment variables."""
@@ -32,6 +44,13 @@ class Settings:
     )
     model_gateway_max_connections: int = 20
     model_gateway_max_keepalive_connections: int = 10
+    research_primary_enabled: bool = True
+    discovery_inbox_enabled: bool = True
+    legacy_today_visible: bool = False
+    legacy_trends_visible: bool = False
+    legacy_subscriptions_visible: bool = False
+    legacy_creator_watch_visible: bool = False
+    manual_crawler_primary: bool = False
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -163,6 +182,13 @@ class Settings:
             ),
             model_gateway_max_connections=model_gateway_max_connections,
             model_gateway_max_keepalive_connections=model_gateway_max_keepalive,
+            research_primary_enabled=_env_bool("MEDIAOPS_RESEARCH_PRIMARY_ENABLED", True),
+            discovery_inbox_enabled=_env_bool("MEDIAOPS_DISCOVERY_INBOX_ENABLED", True),
+            legacy_today_visible=_env_bool("MEDIAOPS_LEGACY_TODAY_VISIBLE", False),
+            legacy_trends_visible=_env_bool("MEDIAOPS_LEGACY_TRENDS_VISIBLE", False),
+            legacy_subscriptions_visible=_env_bool("MEDIAOPS_LEGACY_SUBSCRIPTIONS_VISIBLE", False),
+            legacy_creator_watch_visible=_env_bool("MEDIAOPS_LEGACY_CREATOR_WATCH_VISIBLE", False),
+            manual_crawler_primary=_env_bool("MEDIAOPS_MANUAL_CRAWLER_PRIMARY", False),
         )
 
 
