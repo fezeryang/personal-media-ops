@@ -222,6 +222,53 @@ function ResearchFlow() {
   return <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label="AI 研究流程">{stages.map(([number, title, description]) => <Card key={number} className="p-4"><p className="font-mono text-xs text-signal">{number}</p><p className="mt-3 text-sm font-semibold">{title}</p><p className="mt-1 text-xs leading-5 text-muted">{description}</p></Card>)}</section>;
 }
 
+function previewIntent(objective: string): {
+  primary: string;
+  secondary: string[];
+  unknowns: string[];
+  timeScope: string;
+  evidence: string[];
+  counterevidence: string[];
+  exclusions: string[];
+  output: string;
+} {
+  const normalized = objective.toLowerCase();
+  if (normalized.includes("痛点") || normalized.includes("问题") || normalized.includes("抱怨")) {
+    return {
+      primary: "痛点研究",
+      secondary: ["来源独立性与转载识别", "可复现性与替代方案"],
+      unknowns: ["哪些负向体验来自直接用户证据", "问题是否跨平台、跨作者重复出现"],
+      timeScope: "未指定；按可用时间范围与预算边界检索",
+      evidence: ["直接用户负向表达", "不同作者或平台的独立复核"],
+      counterevidence: ["官方或正向使用体验", "仅个体问题或疑似转载"],
+      exclusions: ["纯营销内容", "无正文、重复或无法复核的记录"],
+      output: "直接负向证据、反例、来源独立性与可验证的改进机会",
+    };
+  }
+  if (normalized.includes("机会") || normalized.includes("产品") || normalized.includes("工具")) {
+    return {
+      primary: "产品机会探索",
+      secondary: ["用户需求与使用场景", "跨平台变化验证"],
+      unknowns: ["真实需求是否重复出现", "现有工具的限制与替代方案"],
+      timeScope: "未指定；优先近期且可比较的使用记录",
+      evidence: ["真实使用场景", "跨作者或平台的独立来源"],
+      counterevidence: ["纯营销陈述", "用户已知或饱和的候选"],
+      exclusions: ["无正文内容", "疑似同稿转载和未通过平台门禁的来源"],
+      output: "产品/工具候选、需求信号、证据强度和下一步验证建议",
+    };
+  }
+  return {
+    primary: "探索发现",
+    secondary: ["实体、主题与事件扩展", "证据缺口与反向验证"],
+    unknowns: ["哪些实体、主题或事件值得继续验证", "哪些来源具备独立且可复核的证据价值"],
+    timeScope: "未指定；按可用时间范围与预算边界检索",
+    evidence: ["与目标直接相关的正文", "独立来源和可追溯来源链"],
+    counterevidence: ["反向观点、失败记录和未知项"],
+    exclusions: ["纯营销、重复、噪音和无正文内容"],
+    output: "有限候选、来源链、反向证据和可继续推进的研究方向",
+  };
+}
+
 function ResearchCreateForm({
   capabilities,
   capabilitiesPending,
@@ -244,6 +291,7 @@ function ResearchCreateForm({
     [capabilities],
   );
   const [form, setForm] = useState<ResearchTaskInput>(() => createInitialForm([]));
+  const [reviewing, setReviewing] = useState(false);
   const initializedPlatforms = useRef(false);
 
   useEffect(() => {
@@ -258,6 +306,10 @@ function ResearchCreateForm({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (form.platforms.length === 0 || capabilitiesPending || capabilitiesError) return;
+    if (!reviewing) {
+      setReviewing(true);
+      return;
+    }
     onSubmit({ ...form, objective: form.objective.trim() });
   }
   function setBudget(key: keyof ResearchTaskInput["budget"], value: string) {
@@ -356,15 +408,43 @@ function ResearchCreateForm({
             </div>
           </details>
           <p className="text-xs leading-5 text-muted">每轮会先查已有资料；跨平台采集仍由单 Worker 串行执行。</p>
+          {reviewing ? <ResearchIntentPreview objective={form.objective} platforms={form.platforms} budget={form.budget} /> : null}
           {error ? <p className="text-sm text-danger">{errorMessage(error)}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
-            <Button disabled={pending || capabilitiesPending || Boolean(capabilitiesError) || form.platforms.length === 0 || form.objective.trim().length < 5}><Send className="size-4" />{pending ? "创建中…" : "创建并开始"}</Button>
+            {reviewing ? <Button type="button" variant="secondary" disabled={pending} onClick={() => setReviewing(false)}>返回修改</Button> : null}
+            <Button disabled={pending || capabilitiesPending || Boolean(capabilitiesError) || form.platforms.length === 0 || form.objective.trim().length < 5}><Send className="size-4" />{pending ? "创建中…" : reviewing ? "确认理解并开始" : "查看研究理解"}</Button>
           </div>
         </form>
       </CardContent>
     </Card>
   );
+}
+
+function ResearchIntentPreview({ objective, platforms, budget }: { objective: string; platforms: string[]; budget: ResearchTaskInput["budget"] }) {
+  const intent = previewIntent(objective);
+  return <div role="region" className="rounded-2xl border border-signal/25 bg-signal/[0.04] p-4" aria-label="研究理解预览">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><p className="section-kicker">Step 02 · Intent preview</p><h3 className="mt-1 font-display text-lg font-semibold">先确认研究理解</h3></div>
+      <Badge variant="info">{intent.primary}</Badge>
+    </div>
+    <p className="mt-3 text-sm leading-6">“{objective.trim()}”</p>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <PreviewItem label="次要意图" value={intent.secondary.join("；")} />
+      <PreviewItem label="需要发现的内容" value={intent.unknowns.join("；")} />
+      <PreviewItem label="时间范围" value={intent.timeScope} />
+      <PreviewItem label="计划平台" value={platforms.join("、")} />
+      <PreviewItem label="需要的证据" value={intent.evidence.join("；")} />
+      <PreviewItem label="反向证据" value={intent.counterevidence.join("；")} />
+      <PreviewItem label="排除项" value={intent.exclusions.join("；")} />
+      <PreviewItem label="预期输出" value={intent.output} />
+    </div>
+    <p className="mt-3 text-xs leading-5 text-muted">预算边界：{budget.crawl_limit} 次采集 · {budget.content_limit} 条新增内容 · {budget.token_limit.toLocaleString()} Token。创建后仍可在草稿阶段修改理解。</p>
+  </div>;
+}
+
+function PreviewItem({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl bg-white p-3 text-xs"><p className="font-semibold">{label}</p><p className="mt-1 leading-5 text-muted">{value || "未指定"}</p></div>;
 }
 
 function BudgetField({ label, value, onChange }: { label: string; value: number; onChange: (value: string) => void }) {

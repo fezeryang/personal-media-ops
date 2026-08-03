@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
@@ -638,7 +638,15 @@ describe("ResearchTasksPage", () => {
     const objective = screen.getByLabelText("研究目标");
     await user.clear(objective);
     await user.type(objective, "研究个人 AI 工作台的产品机会");
-    await user.click(screen.getByRole("button", { name: "创建并开始" }));
+    await user.click(screen.getByRole("button", { name: "查看研究理解" }));
+    const preview = screen.getByRole("region", { name: "研究理解预览" });
+    expect(preview).toBeInTheDocument();
+    expect(screen.getByText("产品机会探索")).toBeInTheDocument();
+    expect(within(preview).getByText("次要意图")).toBeInTheDocument();
+    expect(within(preview).getByText("需要的证据")).toBeInTheDocument();
+    expect(within(preview).getAllByText("反向证据").length).toBeGreaterThan(0);
+    expect(within(preview).getByText("排除项")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认理解并开始" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ platforms: ["bili", "xhs"] })));
   });
 });

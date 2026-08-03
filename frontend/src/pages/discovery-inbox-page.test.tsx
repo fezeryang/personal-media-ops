@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import * as researchApi from "../api/research";
@@ -38,6 +39,15 @@ const candidate: DiscoveryCandidateDetail = {
     counterevidence: "记录到 1 条反向证据。",
     risks: "营销风险较低。",
     recommendation: "继续寻找独立用户证据。",
+    event_aggregation: {
+      first_seen: "2026-08-01T00:00:00Z",
+      latest_seen: "2026-08-03T00:00:00Z",
+      related_entities: ["AI 工作台"],
+      platforms: ["bili", "zhihu"],
+      positive_evidence_count: 1,
+      negative_evidence_count: 1,
+      unknown_evidence_count: 0,
+    },
   },
   content_count: 2,
   independent_source_count: 2,
@@ -91,5 +101,32 @@ describe("DiscoveryInboxPage", () => {
     expect(screen.getByText("继续寻找独立用户证据。")).toBeInTheDocument();
     expect(screen.getByText("还没有研究空间，先创建一个再收藏这条发现。")).toBeInTheDocument();
     expect(screen.getByText("真实登录体验")).toBeInTheDocument();
+  });
+
+  it("renders event aggregation and unavailable experimental status", async () => {
+    const eventCandidate: DiscoveryCandidateDetail = {
+      ...candidate,
+      candidate_type: "event",
+      title: "AI 工作台版本变化",
+      experimental_status: "experimental_not_available",
+    };
+    vi.mocked(researchApi.getDiscovery).mockResolvedValue(eventCandidate);
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "AI 工作台版本变化" })).toBeInTheDocument();
+    expect(screen.getByText("事件聚合")).toBeInTheDocument();
+    expect(screen.getByText("2026-08-01T00:00:00Z → 2026-08-03T00:00:00Z")).toBeInTheDocument();
+    expect(screen.getByText("平台：bili、zhihu")).toBeInTheDocument();
+    expect(screen.getByText("扩展关系/推荐暂不可用：experimental_not_available")).toBeInTheDocument();
+  });
+
+  it("exposes explicit topic and ranking feedback actions", async () => {
+    const giveFeedback = vi.spyOn(researchApi, "giveDiscoveryFeedback").mockResolvedValue(candidate);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "AI 工作台登录摩擦" });
+    expect(screen.getByRole("button", { name: "稍后处理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "降低同类优先级" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "屏蔽此主题" }));
+    await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", { feedback_type: "mute_topic" }));
   });
 });

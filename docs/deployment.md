@@ -112,7 +112,9 @@ Profile 和 Provider 价格版本；该迁移会为既有 Provider/Invocation �
 来源与分数快照、候选生命周期、所有者反馈和可撤销的偏好规则；`0016_research_spaces`
 增加所有者隔离的 Research Space 与带类型的 Space Item，可容纳研究任务、Discovery、
 证据、实体、事件、结论、未解问题和长期记忆。Discovery 只从真实内容/8D-0 候选建立
-来源绑定候选，深度固定为 0/1；反馈 undo 必须同时停用对应偏好规则。两次迁移均要求
+来源绑定候选，收藏、已采纳候选、空间焦点实体和确认事件也可作为后续种子；跨平台回搜
+只取当前 enabled 且 exact search mode 为 `production_verified` 的 Adapter，深度固定为
+0/1；反馈 undo 必须同时停用对应偏好规则。两次迁移均要求
 已有数据兼容测试，downgrade 在新表有数据时拒绝。应用启动只校验当前 revision，不会
 静默执行迁移。
 唯一约束按“平台 + 源 ID”建立，互动指标允许 `null` 并有非负约束。存在非搜索任务或

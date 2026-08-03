@@ -45,13 +45,22 @@ def _content(database: Path, *, content_id: str, title: str, platform: str, desc
         )
 
 
-def _task(database: Path, owner_id: str) -> dict[str, object]:
+def _task(
+    database: Path,
+    owner_id: str,
+    *,
+    platforms: list[str] | None = None,
+    objective: str = "探索值得关注的个人 AI 工具",
+) -> dict[str, object]:
     repository = ResearchTaskRepository(database)
-    request = ResearchTaskCreate(objective="探索值得关注的个人 AI 工具", platforms=["bili"])
+    request = ResearchTaskCreate(
+        objective=objective,
+        platforms=platforms or ["bili"],
+    )
     task = repository.create(
         user_id=owner_id,
-        objective=request.objective,
-        platforms=["bili"],
+        objective=objective,
+        platforms=list(request.platforms or ["bili"]),
         crawl_limit=request.budget.crawl_limit,
         content_limit=request.budget.content_limit,
         duration_seconds=request.budget.duration_seconds,
@@ -72,7 +81,7 @@ def _task(database: Path, owner_id: str) -> dict[str, object]:
     )
     repository.save_intent(
         str(task["id"]),
-        build_default_intent("探索值得关注的个人 AI 工具", ["bili"]).model_dump(mode="json"),
+        build_default_intent(objective, list(request.platforms or ["bili"])).model_dump(mode="json"),
     )
     return task
 
@@ -223,3 +232,327 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
         rule["scope"] == "research_space" and rule["scope_key"] == space_id
         for rule in discovery.list_preferences(owner_id=owner_id)
     )
+
+
+def test_discovery_collects_favorite_accepted_space_and_confirmed_event_seeds(
+    test_settings,
+) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="discovery-seed-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    task = _task(test_settings.database_path, owner_id)
+    previous_task = _task(
+        test_settings.database_path,
+        owner_id,
+        objective="验证过去的研究发现",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="favorite-seed-content",
+        title="收藏的个人 AI 工作台体验",
+        platform="bili",
+        description="收藏内容记录了真实使用场景和后续需求。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="accepted-seed-content",
+        title="已采纳的 AI 工具候选",
+        platform="bili",
+        description="已采纳候选的来源证据。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="event-seed-content",
+        title="个人 AI 工具发布事件",
+        platform="bili",
+        description="记录一次真实发布变化。",
+    )
+    with sqlite3.connect(test_settings.database_path) as connection:
+        connection.execute(
+            "UPDATE library_contents SET is_favorite = 1 WHERE id = ?",
+            ("favorite-seed-content",),
+        )
+
+    research = ResearchTaskRepository(test_settings.database_path)
+    entity = research.save_entity_candidate(
+        task_id=str(previous_task["id"]),
+        entity_type="product",
+        normalized_name="Saved AI Workspace",
+        source_content_id="favorite-seed-content",
+        relevance_to_intent=0.8,
+        novelty=0.8,
+        confidence=0.9,
+        suggested_next_action="继续验证",
+    )
+    event = research.save_event_candidate(
+        task_id=str(previous_task["id"]),
+        event_type="release",
+        title="个人 AI 工具发布事件",
+        summary="一次可验证的产品变化。",
+        source_content_id="event-seed-content",
+        confidence=0.9,
+    )
+    with sqlite3.connect(test_settings.database_path) as connection:
+        connection.execute(
+            "UPDATE research_event_candidates SET status = 'accepted' WHERE id = ?",
+            (event["id"],),
+        )
+
+    discovery = DiscoveryRepository(test_settings.database_path)
+    space = discovery.create_space(
+        owner_id=owner_id,
+        name="种子聚焦空间",
+        description="用于验证空间焦点种子",
+    )
+    discovery.add_space_item(
+        owner_id=owner_id,
+        space_id=str(space["id"]),
+        item_type="entity",
+        item_id=str(entity["id"]),
+        position=0,
+        note=None,
+    )
+    run = discovery.create_run(task_id=str(previous_task["id"]))
+    accepted = discovery.upsert_candidate(
+        owner_id=owner_id,
+        task_id=str(previous_task["id"]),
+        run_id=str(run["id"]),
+        candidate_type="entity",
+        title="Accepted AI Workspace",
+        summary="已采纳的跨任务候选。",
+        normalized_key="accepted ai workspace",
+        parent_candidate_id=None,
+        source_seed_id=None,
+        source_content_id="accepted-seed-content",
+        source_platform="bili",
+        scores={
+            "relevance_score": 0.8,
+            "novelty_score": 0.8,
+            "evidence_strength_score": 0.5,
+            "source_independence_score": 0.5,
+            "cross_platform_score": 0.5,
+            "counterevidence_score": 0.2,
+            "actionability_score": 0.7,
+            "feedback_score": 0.5,
+            "noise_risk_score": 0.1,
+            "marketing_risk_score": 0.1,
+            "saturation_score": 0.1,
+            "resource_cost_score": 0.2,
+            "final_score": 0.7,
+        },
+        score_explanation={"recommendation": "继续研究"},
+        counts={
+            "content_count": 1,
+            "independent_source_count": 1,
+            "platform_count": 1,
+            "suspected_repost_count": 0,
+        },
+        depth=1,
+        state="accepted",
+        suggested_next_action="继续研究",
+        experimental_status=None,
+    )
+    assert accepted["state"] == "accepted"
+
+    result = DiscoveryEngine(
+        discovery=discovery,
+        research=research,
+        production_verified_platforms=("bili",),
+    ).generate_for_task(str(task["id"]))
+
+    seed_types = {str(seed["seed_type"]) for seed in result["seeds"]}
+    assert {"favorite", "accepted_candidate", "space_entity", "confirmed_event"} <= seed_types
+    candidate_types = {str(candidate["candidate_type"]) for candidate in result["candidates"]}
+    assert "event" in candidate_types
+    event_candidate = next(
+        candidate for candidate in result["candidates"] if candidate["candidate_type"] == "event"
+    )
+    assert event_candidate["score_explanation"]["event_aggregation"]["platforms"] == ["bili"]
+
+
+def test_discovery_does_not_promote_title_only_content_to_a_candidate(test_settings) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="discovery-body-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    task = _task(test_settings.database_path, str(owner["id"]))
+    _content(
+        test_settings.database_path,
+        content_id="title-only-content",
+        title="只有标题的记录",
+        platform="bili",
+        description="",
+    )
+    research = ResearchTaskRepository(test_settings.database_path)
+    research.record_information_utility(
+        task_id=str(task["id"]),
+        content_id="title-only-content",
+        utility_type="discovery_seed",
+        rationale="验证正文质量门禁",
+        confidence=0.8,
+    )
+
+    result = DiscoveryEngine(
+        discovery=DiscoveryRepository(test_settings.database_path),
+        research=research,
+    ).generate_for_task(str(task["id"]))
+
+    assert result["run"]["status"] == "partial"
+    assert result["candidates"] == []
+
+
+def test_related_content_empty_platform_allowlist_is_fail_closed(test_settings) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    _content(
+        test_settings.database_path,
+        content_id="platform-gate-content",
+        title="平台门禁内容",
+        platform="bili",
+        description="有正文的门禁测试记录。",
+    )
+
+    repository = DiscoveryRepository(test_settings.database_path)
+
+    assert repository.find_related_contents("平台门禁", platforms=[]) == []
+
+
+def test_discovery_generates_typed_opportunity_candidates_and_respects_platform_gate(
+    test_settings,
+) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="discovery-type-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    task = _task(test_settings.database_path, owner_id)
+    _content(
+        test_settings.database_path,
+        content_id="typed-bili-content",
+        title="个人 AI 工作台真实使用反馈",
+        platform="bili",
+        description="用户需要更稳定的工作流，但现在难用、失败且有明显问题；希望找到更好的工具。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="typed-xhs-content",
+        title="个人 AI 工作台真实使用反馈",
+        platform="xhs",
+        description="用户需要更稳定的工作流，但现在难用、失败且有明显问题；希望找到更好的工具。",
+    )
+    research = ResearchTaskRepository(test_settings.database_path)
+    research.save_entity_candidate(
+        task_id=str(task["id"]),
+        entity_type="product",
+        normalized_name="个人 AI 工作台",
+        source_content_id="typed-bili-content",
+        relevance_to_intent=0.95,
+        novelty=0.9,
+        confidence=0.9,
+        suggested_next_action="寻找独立用户反馈",
+    )
+    research.record_information_utility(
+        task_id=str(task["id"]),
+        content_id="typed-bili-content",
+        utility_type="discovery_seed",
+        rationale="内容提供产品、痛点和需求的来源证据。",
+        confidence=0.9,
+    )
+
+    result = DiscoveryEngine(
+        discovery=DiscoveryRepository(test_settings.database_path),
+        research=research,
+        production_verified_platforms=("bili", "xhs"),
+    ).generate_for_task(str(task["id"]))
+
+    candidate_types = {str(item["candidate_type"]) for item in result["candidates"]}
+    assert {
+        "entity",
+        "topic",
+        "query",
+        "pain_point",
+        "need",
+        "product_opportunity_signal",
+        "content_opportunity_signal",
+    } <= candidate_types
+    for item in result["candidates"]:
+        detail = DiscoveryRepository(test_settings.database_path).get_candidate(
+            owner_id=owner_id,
+            candidate_id=str(item["id"]),
+        )
+        assert detail is not None
+        assert {str(source["platform"]) for source in detail["sources"]} <= {"bili"}
+
+
+def test_discovery_event_explanation_contains_lightweight_aggregation(
+    test_settings,
+) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="discovery-event-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    task = _task(
+        test_settings.database_path,
+        owner_id,
+        platforms=["bili", "xhs"],
+        objective="验证一个产品发布事件的多平台变化",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="event-old",
+        title="AI 工作台发布新版本",
+        platform="bili",
+        description="用户反馈功能提升，体验更好。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="event-new",
+        title="AI 工作台发布新版本",
+        platform="xhs",
+        description="用户反馈功能失败，仍有问题。",
+    )
+    with sqlite3.connect(test_settings.database_path) as connection:
+        connection.execute(
+            "UPDATE library_contents SET published_at = ? WHERE id = ?",
+            ("2026-07-01T00:00:00Z", "event-old"),
+        )
+        connection.execute(
+            "UPDATE library_contents SET published_at = ? WHERE id = ?",
+            ("2026-08-02T00:00:00Z", "event-new"),
+        )
+    research = ResearchTaskRepository(test_settings.database_path)
+    event = research.save_event_candidate(
+        task_id=str(task["id"]),
+        event_type="release",
+        title="AI 工作台发布新版本",
+        summary="产品发布事件",
+        source_content_id="event-old",
+        confidence=0.9,
+    )
+    with sqlite3.connect(test_settings.database_path) as connection:
+        connection.execute(
+            "UPDATE research_event_candidates SET status = 'accepted' WHERE id = ?",
+            (event["id"],),
+        )
+
+    result = DiscoveryEngine(
+        discovery=DiscoveryRepository(test_settings.database_path),
+        research=research,
+        production_verified_platforms=("bili", "xhs"),
+    ).generate_for_task(str(task["id"]))
+    event_candidate = next(
+        item for item in result["candidates"] if item["candidate_type"] == "event"
+    )
+    explanation = event_candidate["score_explanation"]
+    aggregation = explanation["event_aggregation"]
+    assert aggregation["first_seen"] == "2026-07-01T00:00:00Z"
+    assert aggregation["latest_seen"] == "2026-08-02T00:00:00Z"
+    assert set(aggregation["platforms"]) == {"bili", "xhs"}
+    assert aggregation["positive_evidence_count"] >= 1
+    assert aggregation["negative_evidence_count"] >= 1

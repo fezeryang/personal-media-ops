@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from app.db import connect_database
@@ -149,14 +150,20 @@ class DiscoveryRepository:
                 """
                 SELECT id, platform, source_content_id, content_type, title,
                        description, source_url, author_source_id, author_name,
-                       published_at, raw_payload
+                       published_at, source_keyword, is_favorite, raw_payload
                 FROM library_contents WHERE id = ?
                 """,
                 (content_id,),
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def find_related_contents(self, term: str, *, limit: int = 20) -> list[dict[str, object]]:
+    def find_related_contents(
+        self,
+        term: str,
+        *,
+        limit: int = 20,
+        platforms: Iterable[str] | None = None,
+    ) -> list[dict[str, object]]:
         normalized = term.strip()
         if not normalized:
             return []
@@ -165,19 +172,131 @@ class DiscoveryRepository:
         # supported builds.
         bounded_limit = max(1, min(limit, 100))
         pattern = f"%{normalized[:120]}%"
+        platform_values = tuple(
+            dict.fromkeys(
+                str(value).strip() for value in (platforms or ()) if str(value).strip()
+            )
+        )
+        platform_clause = ""
+        values: list[object] = [pattern, pattern]
+        if platforms is not None and not platform_values:
+            platform_clause = " AND 1 = 0"
+        elif platform_values:
+            placeholders = ", ".join("?" for _ in platform_values)
+            platform_clause = f" AND platform IN ({placeholders})"
+            values.extend(platform_values)
         with connect_database(self.database_path) as connection:
             rows = connection.execute(
                 f"""
                 SELECT id, platform, source_content_id, content_type, title,
                        description, source_url, author_source_id, author_name,
-                       published_at, raw_payload
+                       published_at, source_keyword, is_favorite, raw_payload
                 FROM library_contents
-                WHERE lower(COALESCE(title, '')) LIKE lower(?)
-                   OR lower(COALESCE(description, '')) LIKE lower(?)
+                WHERE (
+                    lower(COALESCE(title, '')) LIKE lower(?)
+                    OR lower(COALESCE(description, '')) LIKE lower(?)
+                )
+                   {platform_clause}
                 ORDER BY COALESCE(published_at, last_collected_at) DESC, id DESC
                 LIMIT {bounded_limit}
                 """,
-                (pattern, pattern),
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_favorite_contents(self, *, limit: int = 24) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(limit, 100))
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id, platform, source_content_id, content_type, title,
+                       description, source_url, author_source_id, author_name,
+                       published_at, source_keyword, is_favorite, raw_payload
+                FROM library_contents
+                WHERE is_favorite = 1
+                ORDER BY updated_at DESC, id DESC
+                LIMIT {bounded_limit}
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_accepted_candidates(
+        self,
+        *,
+        owner_id: str,
+        exclude_task_id: str | None = None,
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(limit, 100))
+        clauses = ["owner_id = ?", "state = 'accepted'"]
+        values: list[object] = [owner_id]
+        if exclude_task_id:
+            clauses.append("research_task_id != ?")
+            values.append(exclude_task_id)
+        values.append(bounded_limit)
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM research_discovery_candidates
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                values,
+            ).fetchall()
+        return [self._candidate_from_row(row) for row in rows]
+
+    def list_space_entity_candidates(
+        self,
+        *,
+        owner_id: str,
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(limit, 100))
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT c.*, item.space_id AS focus_space_id
+                FROM research_space_items item
+                JOIN research_spaces space ON space.id = item.space_id
+                JOIN research_entity_candidates c ON c.id = item.item_id
+                JOIN research_tasks task ON task.id = c.research_task_id
+                WHERE item.item_type = 'entity'
+                  AND space.owner_id = ?
+                  AND space.status = 'active'
+                  AND task.user_id = ?
+                ORDER BY item.updated_at DESC, item.id DESC
+                LIMIT {bounded_limit}
+                """,
+                (owner_id, owner_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_confirmed_events(
+        self,
+        *,
+        owner_id: str,
+        exclude_task_id: str | None = None,
+        limit: int = 24,
+    ) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(limit, 100))
+        clauses = ["task.user_id = ?", "event.status = 'accepted'"]
+        values: list[object] = [owner_id]
+        if exclude_task_id:
+            clauses.append("event.research_task_id != ?")
+            values.append(exclude_task_id)
+        values.append(bounded_limit)
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT event.*, task.user_id AS owner_id
+                FROM research_event_candidates event
+                JOIN research_tasks task ON task.id = event.research_task_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY event.updated_at DESC, event.id DESC
+                LIMIT ?
+                """,
+                values,
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -208,6 +327,7 @@ class DiscoveryRepository:
                   AND COALESCE(source_content_id, '') = COALESCE(?, '')
                   AND COALESCE(source_entity_candidate_id, '') = COALESCE(?, '')
                   AND COALESCE(source_event_candidate_id, '') = COALESCE(?, '')
+                  AND COALESCE(source_candidate_id, '') = COALESCE(?, '')
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (
@@ -216,6 +336,7 @@ class DiscoveryRepository:
                     source_content_id,
                     source_entity_candidate_id,
                     source_event_candidate_id,
+                    source_candidate_id,
                 ),
             ).fetchone()
             if existing is not None:
@@ -507,6 +628,8 @@ class DiscoveryRepository:
         if state:
             clauses.append("state = ?")
             params.append(state)
+        else:
+            clauses.append("state NOT IN ('ignored', 'dismissed_duplicate', 'expired')")
         if research_task_id:
             clauses.append("research_task_id = ?")
             params.append(research_task_id)
@@ -1183,6 +1306,11 @@ class DiscoveryRepository:
                 "UPDATE research_spaces SET updated_at = ? WHERE id = ?", (now, space_id)
             )
             if item_type == "discovery_candidate":
+                candidate = connection.execute(
+                    "SELECT state FROM research_discovery_candidates WHERE id = ? AND owner_id = ?",
+                    (item_id, owner_id),
+                ).fetchone()
+                previous_state = str(candidate["state"]) if candidate is not None else None
                 connection.execute(
                     """
                     UPDATE research_discovery_candidates SET state = 'added_to_space', updated_at = ?
@@ -1190,6 +1318,26 @@ class DiscoveryRepository:
                     """,
                     (now, item_id, owner_id),
                 )
+                if previous_state is not None and previous_state not in {
+                    "converted_to_research",
+                    "accepted",
+                    "added_to_space",
+                }:
+                    connection.execute(
+                        """
+                        INSERT INTO research_discovery_candidate_events (
+                            id, candidate_id, previous_state, next_state,
+                            reason, actor_type, created_at
+                        ) VALUES (?, ?, ?, 'added_to_space', ?, 'owner', ?)
+                        """,
+                        (
+                            self.new_id(),
+                            item_id,
+                            previous_state,
+                            f"加入研究空间 {space_id}",
+                            now,
+                        ),
+                    )
             row = connection.execute(
                 """
                 SELECT id, space_id, item_type, item_id, position, note,

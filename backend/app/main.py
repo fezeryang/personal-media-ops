@@ -58,6 +58,10 @@ def create_app(config: Settings | None = None) -> FastAPI:
     ai_repository = AIRepository(active_settings.database_path)
     research_repository = ResearchTaskRepository(active_settings.database_path)
     discovery_repository = DiscoveryRepository(active_settings.database_path)
+    production_verified_search_platforms = platform_registry.production_verified_platforms_for_mode(
+        "search",
+        active_settings.enabled_platforms,
+    )
     provider_secret_cipher = ProviderSecretCipher(
         active_settings.model_gateway_master_key_path
     )
@@ -98,6 +102,7 @@ def create_app(config: Settings | None = None) -> FastAPI:
     discovery_engine = DiscoveryEngine(
         discovery=discovery_repository,
         research=research_repository,
+        production_verified_platforms=production_verified_search_platforms,
     )
     research_runtime = ResearchRuntime(
         research=research_repository,

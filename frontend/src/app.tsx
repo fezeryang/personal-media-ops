@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 
 import { AppShell } from "./components/app-shell";
 import { LoginPage } from "./pages/login-page";
@@ -39,6 +39,11 @@ function ProtectedShell() {
   return <Suspense fallback={<RouteLoading />}><AppShell /></Suspense>;
 }
 
+export function LegacyTaskDetailRedirect() {
+  const { taskId } = useParams<{ taskId: string }>();
+  return <Navigate to={taskId ? `/tools/crawls/${encodeURIComponent(taskId)}` : "/tools/crawls"} replace />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -70,6 +75,10 @@ export function App() {
         <Route path="settings/security" element={<SettingsPage />} />
 
         {/* Compatibility redirects keep old bookmarks from opening legacy modules as primary surfaces. */}
+        <Route path="tasks" element={<Navigate to="/tools/crawls" replace />} />
+        <Route path="tasks/:taskId" element={<LegacyTaskDetailRedirect />} />
+        <Route path="capabilities" element={<Navigate to="/tools/capabilities" replace />} />
+        <Route path="watch" element={<Navigate to="/tools/legacy-automation/creators" replace />} />
         <Route path="today" element={<Navigate to="/discoveries" replace />} />
         <Route path="subscriptions" element={<Navigate to="/tools/legacy-automation/subscriptions" replace />} />
         <Route path="trends" element={<Navigate to="/tools/legacy-trends" replace />} />

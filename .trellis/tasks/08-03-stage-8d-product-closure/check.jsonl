@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/research-discovery-8d1.md","reason":"Discovery seed provenance, depth, production-verified platform gating, event aggregation, lifecycle, and owner isolation contracts."}
+{"file":".trellis/spec/frontend/research-workbench-8d.md","reason":"Primary workbench routes, honest Discovery detail states, and two-step research creation contracts."}

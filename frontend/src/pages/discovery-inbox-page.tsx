@@ -1,6 +1,8 @@
 import {
+  ArrowDown,
   ArrowRight,
   Check,
+  Clock3,
   ExternalLink,
   Filter,
   FolderPlus,
@@ -9,6 +11,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  VolumeX,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
@@ -16,6 +19,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import type {
   DiscoveryCandidateDetail,
   DiscoveryCandidateSummary,
+  DiscoveryFeedbackType,
   ResearchSpaceSummary,
 } from "../api/research";
 import { ErrorState } from "../components/error-state";
@@ -82,6 +86,20 @@ function candidateMatches(candidate: DiscoveryCandidateSummary, query: string): 
   return haystack.includes(query.toLowerCase());
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function asCount(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "未记录";
+}
+
 export function DiscoveryInboxPage() {
   const navigate = useNavigate();
   const { candidateId } = useParams<{ candidateId: string }>();
@@ -108,7 +126,7 @@ export function DiscoveryInboxPage() {
     void navigate(`/discoveries/${encodeURIComponent(id)}`);
   }
 
-  function giveFeedback(feedbackType: "valuable" | "irrelevant" | "already_known" | "duplicate" | "follow" | "needs_more_evidence") {
+  function giveFeedback(feedbackType: DiscoveryFeedbackType) {
     if (!effectiveId) return;
     feedback.mutate({ candidateId: effectiveId, feedback: { feedback_type: feedbackType } });
   }
@@ -246,7 +264,7 @@ function DiscoveryDetail({
   feedbackPending: boolean;
   continuePending: boolean;
   addPending: boolean;
-  onFeedback: (value: "valuable" | "irrelevant" | "already_known" | "duplicate" | "follow" | "needs_more_evidence") => void;
+  onFeedback: (value: DiscoveryFeedbackType) => void;
   onUndo?: () => void;
   lastFeedbackLabel?: string;
   onContinue: () => void;
@@ -256,6 +274,9 @@ function DiscoveryDetail({
   error: unknown;
 }) {
   const explanation = candidate.score_explanation;
+  const eventAggregation = asRecord(explanation.event_aggregation);
+  const eventPlatforms = asStringList(eventAggregation?.platforms);
+  const relatedEntities = asStringList(eventAggregation?.related_entities);
   const metrics = [
     ["最终排序", candidate.final_score],
     ["相关性", candidate.relevance_score],
@@ -297,6 +318,27 @@ function DiscoveryDetail({
               </div>
             ))}
           </div>
+          {candidate.experimental_status ? (
+            <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm">
+              <p className="font-semibold">扩展关系/推荐暂不可用</p>
+              <p className="mt-1 leading-5 text-muted">扩展关系/推荐暂不可用：{candidate.experimental_status}</p>
+            </div>
+          ) : null}
+          {eventAggregation ? (
+            <div className="rounded-xl border border-line bg-paper p-4 text-sm">
+              <p className="font-semibold">事件聚合</p>
+              <p className="mt-1 leading-5 text-muted">
+                {typeof eventAggregation.first_seen === "string" ? eventAggregation.first_seen : "未记录"}
+                {" → "}
+                {typeof eventAggregation.latest_seen === "string" ? eventAggregation.latest_seen : "未记录"}
+              </p>
+              <p className="mt-1 leading-5 text-muted">平台：{eventPlatforms.length > 0 ? eventPlatforms.join("、") : "未记录"}</p>
+              <p className="mt-1 leading-5 text-muted">
+                正向证据 {asCount(eventAggregation.positive_evidence_count)} · 负向证据 {asCount(eventAggregation.negative_evidence_count)} · 未知 {asCount(eventAggregation.unknown_evidence_count)}
+              </p>
+              {relatedEntities.length > 0 ? <p className="mt-1 leading-5 text-muted">相关实体：{relatedEntities.join("、")}</p> : null}
+            </div>
+          ) : null}
           <div className="rounded-xl border border-signal/20 bg-signal/[0.04] p-4 text-sm">
             <p className="font-semibold">建议下一步</p>
             <p className="mt-1 leading-5 text-muted">{typeof explanation.recommendation === "string" ? explanation.recommendation : candidate.suggested_next_action ?? "等待更多来源"}</p>
@@ -309,13 +351,16 @@ function DiscoveryDetail({
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={feedbackPending} onClick={() => onFeedback("valuable")}><ThumbsUp className="size-4" />有价值</Button>
-            <Button variant="secondary" size="sm" disabled={feedbackPending} onClick={() => onFeedback("follow")}><ArrowRight className="size-4" />值得跟进</Button>
+            <Button variant="secondary" size="sm" disabled={feedbackPending} onClick={() => onFeedback("follow")}><Clock3 className="size-4" />稍后处理</Button>
             <Button variant="secondary" size="sm" disabled={feedbackPending} onClick={() => onFeedback("needs_more_evidence")}><Search className="size-4" />需要更多证据</Button>
+            <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={() => onFeedback("deprioritize_similar")}><ArrowDown className="size-4" />降低同类优先级</Button>
+            <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={() => onFeedback("mute_topic")}><VolumeX className="size-4" />屏蔽此主题</Button>
             <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={() => onFeedback("already_known")}><Check className="size-4" />已知</Button>
             <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={() => onFeedback("irrelevant")}><ThumbsDown className="size-4" />不相关</Button>
             <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={() => onFeedback("duplicate")}><RotateCcw className="size-4" />重复</Button>
             {onUndo ? <Button variant="ghost" size="sm" disabled={feedbackPending} onClick={onUndo}>撤销最近反馈（{lastFeedbackLabel}）</Button> : null}
           </div>
+          <p className="text-xs leading-5 text-muted">“稍后处理”只保存未来关注意图，不启动长期监控任务。</p>
           {error ? <p className="text-sm text-danger">{errorMessage(error)}</p> : null}
         </CardContent>
       </Card>

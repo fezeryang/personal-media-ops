@@ -43,8 +43,20 @@ not primary navigation entries.
 - Discovery cards show candidate type/state, final score, explanation, source
   counts, feedback actions, continue-to-research, and add-to-space. No card
   invents a title, source, score, or count when the API is empty or invalid.
+- Discovery detail renders event aggregation (`first_seen`, `latest_seen`,
+  platforms, related entities, and positive/negative/unknown evidence counts)
+  when present, and shows `experimental_status` as an explicit unavailable-
+  capability notice rather than implying a creator relationship or
+  recommendation.
+- Candidate feedback controls expose valuable, defer/follow, more-evidence,
+  lower-similar-priority, mute-topic, known, irrelevant, and duplicate actions;
+  the follow action states that it stores intent only and does not start an 8E
+  monitoring task.
 - Space items are typed and display the resolved item summary plus the real
   object ID. A missing item/error is visible; it is not replaced by a fixture.
+- Research creation is a two-step owner confirmation: the first submit displays
+  a deterministic understanding preview; only the explicit confirmation starts
+  the task, while “back to edit” does not call the create API.
 - Research HTML is still passed through the existing DOMPurify allow-list.
   JSON/API error and Zod mismatch states remain visible to the owner.
 - Route-level page imports are lazy-loaded behind the existing Suspense

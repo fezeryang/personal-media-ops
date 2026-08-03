@@ -96,6 +96,22 @@ class CrawlerPlatformRegistry:
             if adapter.mode_status(mode, adapter.platform in enabled)[1]
         ]
 
+    def production_verified_platforms_for_mode(
+        self,
+        mode: TaskMode,
+        enabled_platforms: Iterable[str],
+    ) -> list[str]:
+        """Return only configured platforms whose mode is production verified."""
+
+        enabled = frozenset(enabled_platforms)
+        self._validate_enabled(enabled)
+        return [
+            adapter.platform
+            for adapter in self._ordered
+            if adapter.platform in enabled
+            and adapter.mode_status(mode, True)[0] == "production_verified"
+        ]
+
     def _validate_enabled(self, enabled: frozenset[str]) -> None:
         unknown = sorted(enabled.difference(self._by_platform))
         if unknown:

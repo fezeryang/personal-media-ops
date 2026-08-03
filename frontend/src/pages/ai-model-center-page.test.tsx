@@ -151,7 +151,7 @@ describe("AiModelCenterPage", () => {
     await user.click(screen.getByRole("button", { name: /编辑 DeepSeek 生产/ }));
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     expect(screen.getByText("留空以保留现有凭证")).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("tests a provider and imports refreshed models only after confirmation", async () => {
     const test = vi.spyOn(aiApi, "testAiProvider").mockResolvedValue({

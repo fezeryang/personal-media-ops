@@ -73,6 +73,23 @@ The feature flags exposed by `/api/research/preferences` are
 `MEDIAOPS_*` environment variables with primary Research/Discovery enabled
 and legacy primary surfaces hidden by default.
 
+Discovery seed collection is ordered and bounded: information-utility content,
+favorites, owner-accepted candidates, active-space entity items, confirmed
+events, then task entity/event candidates. A seed with no real content or
+candidate source may be recorded for the run but cannot produce a candidate.
+Cross-platform source lookup receives the intersection of the task's requested
+platforms and `production_verified` search adapters that are currently enabled;
+deferred or merely code-ready adapters are never used as validation evidence.
+An empty platform intersection is fail-closed at the repository query boundary.
+`confirmed_event`/`event_signal` seeds also create a source-bound lightweight
+`event` candidate before aggregation, so event evidence is not limited to an
+already-existing 8D-0 event row.
+Event explanations additionally expose `first_seen`, `latest_seen`,
+`related_entities`, `platforms`, `positive_evidence_count`,
+`negative_evidence_count`, and `unknown_evidence_count`. The default Inbox
+query excludes terminal low-value states (`ignored`, `dismissed_duplicate`, and
+`expired`); an explicit state filter may still inspect them.
+
 ## 4. Validation & Error Matrix
 
 | Condition | Required behavior |

@@ -87,6 +87,9 @@ def test_registry_filters_platforms_by_enabled_mode() -> None:
     assert platform_registry.enabled_platforms_for_mode(
         "search", ("bili", "xhs", "tieba", "ks")
     ) == ["bili", "xhs", "tieba"]
+    assert platform_registry.production_verified_platforms_for_mode(
+        "search", ("bili", "xhs", "tieba", "ks")
+    ) == ["bili", "xhs", "tieba"]
 
 
 @pytest.mark.parametrize(
