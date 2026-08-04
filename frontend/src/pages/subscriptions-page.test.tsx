@@ -1,31 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 
 import * as subscriptionApi from "../api/subscriptions";
 import { SubscriptionsPage } from "./subscriptions-page";
-
-vi.mock("../features/crawler/hooks/use-crawler-queries", () => ({
-  useCrawlerCapabilitiesQuery: () => ({
-    data: {
-      max_concurrent_tasks: 1,
-      platforms: [
-        {
-          platform: "bili",
-          display_name: "B站",
-          enabled: true,
-          modes: [
-            {
-              mode: "search",
-              enabled: true,
-              status: "production_verified",
-            },
-          ],
-        },
-      ],
-    },
-  }),
-}));
 
 const subscription: subscriptionApi.Subscription = {
   id: "subscription-1",
@@ -51,63 +29,29 @@ function renderPage() {
   });
   render(
     <QueryClientProvider client={client}>
-      <SubscriptionsPage />
+      <MemoryRouter>
+        <SubscriptionsPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("SubscriptionsPage", () => {
-  it("edits, manually runs, and resumes a subscription", async () => {
+  it("shows historical subscriptions without exposing write actions", async () => {
     vi.spyOn(subscriptionApi, "listSubscriptions").mockResolvedValue([
       subscription,
     ]);
-    const save = vi
-      .spyOn(subscriptionApi, "saveSubscription")
-      .mockResolvedValue(subscription);
-    const run = vi
-      .spyOn(subscriptionApi, "runSubscription")
-      .mockResolvedValue({
-        id: "run-1",
-        subscription_id: subscription.id,
-        scheduled_for: "2026-07-28T01:00:00Z",
-        trigger: "manual",
-        status: "queued",
-        started_at: null,
-        finished_at: null,
-        new_content_count: 0,
-        existing_content_count: 0,
-        changed_content_count: 0,
-        error_summary: null,
-        created_at: "2026-07-28T01:00:00Z",
-        platform_results: [],
-      });
-    const toggle = vi
-      .spyOn(subscriptionApi, "setSubscriptionEnabled")
-      .mockResolvedValue({ ...subscription, enabled: true });
-    const user = userEvent.setup();
     renderPage();
 
     expect(
       await screen.findByText("AI Agent 每日观察"),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /编辑/ }));
-    const name = screen.getByLabelText("名称");
-    await user.clear(name);
-    await user.type(name, "AI Agent 追踪");
-    await user.click(screen.getByRole("button", { name: "保存订阅" }));
-    await waitFor(() =>
-      expect(save).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "AI Agent 追踪" }),
-        "subscription-1",
-      ),
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "已停止作为核心产品继续开发",
     );
-
-    await user.click(screen.getByRole("button", { name: /手动执行/ }));
-    await waitFor(() => expect(run).toHaveBeenCalled());
-    expect(run.mock.calls[0]?.[0]).toBe("subscription-1");
-    await user.click(screen.getByRole("button", { name: /恢复/ }));
-    await waitFor(() =>
-      expect(toggle).toHaveBeenCalledWith("subscription-1", true),
-    );
+    expect(
+      screen.queryByRole("button", { name: /编辑|手动执行|恢复|暂停/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 });

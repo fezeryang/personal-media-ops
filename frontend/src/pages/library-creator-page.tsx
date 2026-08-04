@@ -1,13 +1,10 @@
 import {
   ArrowLeft,
   ArrowUpRight,
-  Eye,
-  Pause,
-  Play,
   TrendingUp,
   UserRound,
 } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 
 import { ErrorState } from "../components/error-state";
@@ -18,47 +15,15 @@ import { SafeImage } from "../features/library/components/safe-image";
 import { useLibraryCreatorQuery } from "../features/library/hooks/use-library-queries";
 import { formatDateTime } from "../lib/utils";
 import { listCreatorMetrics } from "../api/library";
-import {
-  createWatch,
-  listWatches,
-  setWatchEnabled,
-} from "../api/watchlist";
 
 export function LibraryCreatorPage() {
   const { creatorId = "" } = useParams();
   const query = useLibraryCreatorQuery(creatorId);
-  const queryClient = useQueryClient();
-  const watches = useQuery({
-    queryKey: ["watchlist"],
-    queryFn: ({ signal }) => listWatches(signal),
-  });
   const metrics = useQuery({
     queryKey: ["library", "creators", creatorId, "metrics"],
     queryFn: ({ signal }) => listCreatorMetrics(creatorId, signal),
     enabled: Boolean(creatorId),
   });
-  const existingWatch = watches.data?.find(
-    (watch) => watch.creator_id === creatorId,
-  );
-  const watch = useMutation({
-    mutationFn: async () => {
-      if (existingWatch) {
-        return setWatchEnabled(existingWatch.id, !existingWatch.enabled);
-      }
-      return createWatch({
-        creator_id: creatorId,
-        enabled: false,
-        check_frequency: "daily",
-        requested_count: 3,
-        timezone:
-          Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
-      });
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-    },
-  });
-
   if (query.isPending) {
     return <div className="h-96 animate-pulse rounded-2xl bg-white" />;
   }
@@ -116,26 +81,9 @@ export function LibraryCreatorPage() {
                 </a>
               ) : null}
             </div>
-            <Button
-              className="mt-5"
-              variant="secondary"
-              size="sm"
-              disabled={watch.isPending}
-              onClick={() => watch.mutate()}
-            >
-              {existingWatch?.enabled ? (
-                <Pause className="size-4" />
-              ) : existingWatch ? (
-                <Play className="size-4" />
-              ) : (
-                <Eye className="size-4" />
-              )}
-              {existingWatch?.enabled
-                ? "暂停监控"
-                : existingWatch
-                  ? "开始监控"
-                  : "加入监控"}
-            </Button>
+            <p className="mt-5 rounded-xl border border-warning/25 bg-warning/5 px-3 py-2 text-xs leading-5 text-muted">
+              创作者观察仅保留历史审计；新的监控能力将由未来统一监控模块替代。
+            </p>
           </div>
         </CardContent>
       </Card>

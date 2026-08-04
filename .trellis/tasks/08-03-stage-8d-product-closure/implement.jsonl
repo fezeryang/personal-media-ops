@@ -2,3 +2,12 @@
 {"file":".trellis/spec/frontend/research-workbench-8d.md","reason":"Implementation reference for canonical navigation, candidate explanation rendering, and explicit owner confirmation."}
 {"file":"frontend/src/pages/research-tasks-page.tsx","reason":"Research home now starts with the natural-language input and owner pulse cards; detail tabs match the 8D product information architecture; technical fields are isolated and raw execution details are progressively disclosed."}
 {"file":"frontend/src/pages/research-tasks-page.test.tsx","reason":"Regression coverage for the default research home, supplementary requirements, semantic tab labels, technical isolation, and 390px behavior."}
+{"file":"frontend/src/components/legacy-surface-notice.tsx","reason":"Shared explicit stopped-core-product notice for historical compatibility surfaces."}
+{"file":"frontend/src/pages/overview-page.tsx","reason":"Replaced legacy command-center metrics with a runtime-only overview backed by health, Research, crawler, platform capability, model health, and usage APIs."}
+{"file":"frontend/src/pages/subscriptions-page.tsx","reason":"Reduced the historical subscription surface to owner-scoped read-only audit data with no create, edit, run, pause, or resume controls."}
+{"file":"frontend/src/pages/creator-watch-page.tsx","reason":"Reduced the historical creator-watch surface to read-only audit data and removed mutation controls."}
+{"file":"frontend/src/pages/library-creator-page.tsx","reason":"Removed the remaining creator-watch mutation shortcut from the creator detail page while retaining real profile and metric data."}
+{"file":"frontend/src/pages/today-page.tsx","reason":"Kept historical daily intelligence read-only and added the compatibility notice."}
+{"file":"frontend/src/pages/trends-page.tsx","reason":"Kept historical deterministic trends read-only and added the compatibility notice."}
+{"file":"frontend/src/pages/overview-page.test.tsx","reason":"Regression coverage for runtime operations metrics and absence of legacy command-center metrics."}
+{"file":"frontend/src/pages/subscriptions-page.test.tsx","reason":"Regression coverage for the explicit legacy notice and read-only action boundary."}

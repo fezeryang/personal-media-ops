@@ -70,6 +70,13 @@ not primary navigation entries.
   JSON/API error and Zod mismatch states remain visible to the owner.
 - Route-level page imports are lazy-loaded behind the existing Suspense
   loading boundary. All layouts must remain usable at 390px.
+- `/tools/overview` is the runtime-only operations surface: it reads service
+  health, active Research and crawler work, platform capability facts, model
+  health, and resource usage. It must not reuse legacy library counts,
+  subscription activity, trend generation, or “command center” copy.
+- Legacy Today, Trends, Subscription, and Creator Watch pages remain reachable
+  only for historical audit. Each page shows the explicit stopped-core-product
+  notice and exposes no create, edit, run, pause, resume, or regenerate action.
 
 ## 4. Validation & Error Matrix
 
@@ -111,6 +118,9 @@ not primary navigation entries.
   real empty or API-error states.
 - Discovery/Space page tests assert source explanations, feedback/undo,
   continue-to-research, add-to-space, owner-safe errors, and typed item forms.
+- Runtime overview tests assert real operations metrics and the absence of
+  legacy command-center metrics. Legacy page tests assert the stopped-product
+  notice and read-only action boundary.
 - Run `npm run lint`, `npm run test`, and `npm run build` after route changes.
 
 ## 7. Wrong vs Correct

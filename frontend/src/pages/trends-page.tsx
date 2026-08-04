@@ -1,11 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, RefreshCw } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { BarChart3 } from "lucide-react";
 
-import { generateTrends, listTrends } from "../api/intelligence";
+import { listTrends } from "../api/intelligence";
 import { ErrorState } from "../components/error-state";
+import { LegacySurfaceNotice } from "../components/legacy-surface-notice";
 import { PageHeader } from "../components/page-header";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { formatDateTime } from "../lib/utils";
 
@@ -17,38 +17,21 @@ const scoreParts = [
 ] as const;
 
 export function TrendsPage() {
-  const queryClient = useQueryClient();
   const trends = useQuery({
     queryKey: ["intelligence", "trends"],
     queryFn: ({ signal }) => listTrends(signal),
   });
-  const generate = useMutation({
-    mutationFn: generateTrends,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["intelligence", "trends"],
-      });
-    },
-  });
-
   return (
     <div className="space-y-8">
       <PageHeader
         eyebrow="Explainable signals"
         title="趋势雷达"
-        description="使用固定公式组合内容量、增速、跨平台覆盖与互动变化。样本不足时明确标记，不放大稀疏数据。"
-        action={
-          <Button
-            variant="secondary"
-            onClick={() => generate.mutate()}
-            disabled={generate.isPending}
-          >
-            <RefreshCw
-              className={`size-4 ${generate.isPending ? "animate-spin" : ""}`}
-            />
-            重新计算
-          </Button>
-        }
+        description="保留历史趋势信号及其固定公式、样本和证据，不再从这里重新计算新的运营趋势。"
+      />
+      <LegacySurfaceNotice
+        surface="趋势雷达"
+        replacement="AI Research 与 Discovery Inbox"
+        replacementPath="/discoveries"
       />
       {trends.isError ? (
         <ErrorState
@@ -56,7 +39,6 @@ export function TrendsPage() {
           onRetry={() => void trends.refetch()}
         />
       ) : null}
-      {generate.isError ? <ErrorState error={generate.error} /> : null}
 
       <section className="grid gap-5 xl:grid-cols-2">
         {(trends.data ?? []).map((trend) => (
@@ -128,7 +110,7 @@ export function TrendsPage() {
             <BarChart3 className="mx-auto size-8 text-muted" />
             <p className="mt-3 font-semibold">尚无趋势信号</p>
             <p className="mt-2 text-sm text-muted">
-              运行订阅并重新计算后，这里会展示真实证据。
+              历史趋势信号将在这里展示真实证据；新的研究结果请从 AI Research 查看。
             </p>
           </div>
         </Card>

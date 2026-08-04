@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader } from "../components/ui/card";
 const tools = [
   { title: "采集任务", description: "查看单 Worker 运行中的采集任务、登录状态和真实错误。", to: "/tools/crawls", icon: Activity },
   { title: "平台能力", description: "检查平台 × mode 的独立能力事实，不把搜索能力外推到其他模式。", to: "/tools/capabilities", icon: Gauge },
-  { title: "运行总览", description: "查看系统健康、已有内容和仍在运行的低层工具任务。", to: "/tools/overview", icon: Radar },
-  { title: "旧版趋势工具", description: "保留为低层工具入口；趋势结果不会冒充 AI 研究发现。", to: "/tools/legacy-trends", icon: Database },
-  { title: "旧版自动化工具", description: "订阅与创作者观察仍可访问，但不再作为主导航产品。", to: "/tools/legacy-automation/subscriptions", icon: Wrench },
+  { title: "运行总览", description: "查看服务健康、活跃研究、采集队列、平台能力、模型健康和资源用量。", to: "/tools/overview", icon: Radar },
+  { title: "旧版趋势工具", description: "仅保留历史查看与审计；趋势工具已停止作为核心产品继续开发。", to: "/tools/legacy-trends", icon: Database },
+  { title: "旧版自动化工具", description: "仅保留订阅与创作者观察的历史审计；未来由统一监控模块替代。", to: "/tools/legacy-automation/subscriptions", icon: Wrench },
   { title: "Agent 与集成", description: "查看 Agent API、集成和外部调用配置。", to: "/settings/integrations", icon: Bot },
 ];
 

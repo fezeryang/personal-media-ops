@@ -1,18 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpenCheck, RefreshCw, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { BookOpenCheck, Sparkles } from "lucide-react";
 
-import {
-  generateBrief,
-  generateTrends,
-  getLatestBrief,
-  listTrends,
-} from "../api/intelligence";
+import { getLatestBrief, listTrends } from "../api/intelligence";
 import { listLibraryContents } from "../api/library";
-import { ApiError } from "../api/client";
 import { ErrorState } from "../components/error-state";
+import { LegacySurfaceNotice } from "../components/legacy-surface-notice";
 import { PageHeader } from "../components/page-header";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader } from "../components/ui/card";
 import { ContentCard } from "../features/library/components/content-card";
 import { formatDateTime } from "../lib/utils";
@@ -32,7 +26,6 @@ const conclusionLabel = {
 };
 
 export function TodayPage() {
-  const queryClient = useQueryClient();
   const contents = useQuery({
     queryKey: ["library", "today", "detail"],
     queryFn: ({ signal }) =>
@@ -50,43 +43,28 @@ export function TodayPage() {
     queryFn: ({ signal }) => getLatestBrief(signal),
     retry: false,
   });
-  const refresh = useMutation({
-    mutationFn: async () => {
-      await generateTrends();
-      try {
-        return await generateBrief(false);
-      } catch (error: unknown) {
-        if (error instanceof ApiError && error.status === 409) {
-          return generateBrief(true);
-        }
-        throw error;
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["intelligence"] });
-    },
-  });
-
   return (
     <div className="space-y-8">
       <PageHeader
         eyebrow="Daily intelligence"
         title="今日情报"
-        description="把当日新增、趋势变化和可追溯简报放在同一条阅读流中。所有结论都保留类型与证据。"
-        action={
-          <Button
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
-          >
-            <RefreshCw
-              className={`size-4 ${refresh.isPending ? "animate-spin" : ""}`}
-            />
-            {brief.data ? "重新生成简报" : "生成今日简报"}
-          </Button>
-        }
+        description="保留历史每日情报、趋势和简报的真实阅读结果，不再从这里生成新的运营内容。"
       />
 
-      {refresh.isError ? <ErrorState error={refresh.error} /> : null}
+      <LegacySurfaceNotice
+        surface="今日情报"
+        replacement="AI Research 与 Discovery Inbox"
+        replacementPath="/discoveries"
+      />
+      {contents.isError ? (
+        <ErrorState
+          error={contents.error}
+          onRetry={() => void contents.refetch()}
+        />
+      ) : null}
+      {trends.isError ? (
+        <ErrorState error={trends.error} onRetry={() => void trends.refetch()} />
+      ) : null}
 
       <section className="grid gap-5 xl:grid-cols-[0.86fr_1.14fr]">
         <Card className="brief-sheet overflow-hidden">
