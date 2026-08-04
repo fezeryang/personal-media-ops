@@ -45,6 +45,13 @@ not primary navigation entries.
   provider/model route, token detail, crawler IDs, internal status, raw errors,
   model-call trace, and raw context are not rendered in the default summary or
   user-facing tabs.
+- When a research response contains a crawler task ID, Overview also exposes a
+  typed link to the canonical `/tools/crawls/:taskId` detail route. The link
+  explains that platform login is separate from the Owner Workbench login; a
+  `WaitingLogin` task tells the owner to complete the platform QR/verification
+  in their Windows browser while the server Worker continues the task. The
+  QR itself remains owned by the crawler detail surface and is never copied
+  into the research page or a temporary automation profile.
 - Query execution groups are collapsed by default and sorted by
   `expected_value_score` descending. Rejected queries remain available with
   their durable reason. Trace groups are collapsed, searchable, and do not
@@ -89,6 +96,8 @@ not primary navigation entries.
 | No Research Space exists | Explain that a space must be created before add-to-space can succeed |
 | Space item API rejects an ID | Show the conflict/error; do not append an optimistic fake item |
 | Task has partial completion | Label it as partial/incomplete and show missing requirements/next step |
+| Research has a crawler task ID | Show a direct platform采集 detail link from Overview; distinguish platform login from Owner Workbench login |
+| Research status is `WaitingLogin` | Show the platform采集 link and tell the owner to scan/verify in Windows Chrome; do not request a WSL browser or browser state export |
 | Legacy URL is opened | Redirect to the canonical surface or explicit low-level tool route |
 | Feature flag disables Discovery | Hide the Inbox navigation entry and do not show fake Inbox content |
 | Narrow viewport | Wrap grids and keep primary actions and tabs horizontally reachable |
@@ -114,8 +123,9 @@ not primary navigation entries.
 - Research page tests assert default Overview, the natural-language home and
   supplementary requirements, tab switching across process/discovery/
   evidence/queries/budget/technical detail, collapsed query groups/model-call
-  trace/raw context, searchable/grouped trace, partial-completion copy, and
-  real empty or API-error states.
+  trace/raw context, searchable/grouped trace, partial-completion copy, direct
+  crawler-detail links for platform authentication, and real empty or
+  API-error states.
 - Discovery/Space page tests assert source explanations, feedback/undo,
   continue-to-research, add-to-space, owner-safe errors, and typed item forms.
 - Runtime overview tests assert real operations metrics and the absence of

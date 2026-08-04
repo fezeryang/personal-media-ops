@@ -356,6 +356,16 @@ function resultString(result: ResearchTaskDetail["result"], key: string): string
   return typeof value === "string" ? value : null;
 }
 
+function crawlerTaskIds(task: ResearchTaskDetail): string[] {
+  return Array.from(
+    new Set(
+      (task.queries ?? [])
+        .map((query) => query.crawler_task_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+}
+
 export function ResearchTasksPage() {
   const tasks = useResearchTasksQuery();
   const discoveries = useDiscoveriesQuery();
@@ -794,6 +804,7 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
         {tabs.map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={activeTab === value} onClick={() => setActiveTab(value)} className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold transition ${activeTab === value ? "border-signal text-signal-strong" : "border-transparent text-muted hover:text-ink"}`}>{label}</button>)}
       </div>
       {activeTab === "overview" ? <div className="space-y-5">
+        <CrawlerAccessCard task={task} />
         <IntentUnderstandingCard task={task} canRevise={task.status === "Draft"} revisePending={reviseIntent.isPending} reviseError={reviseIntent.error} onRevise={(request) => reviseIntent.mutate({ taskId: task.id, request })} />
         <div className="grid gap-5 lg:grid-cols-2"><AlignmentReviewCard task={task} /><CoverageCard task={task} /></div>
         {task.result ? <ResearchResultCard task={task} /> : null}
@@ -812,6 +823,52 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
       {activeTab === "budget" ? <BudgetTraceCard task={task} /> : null}
       {activeTab === "technical" ? <TechnicalDetailsCard task={task} /> : null}
     </div>
+  );
+}
+
+function CrawlerAccessCard({ task }: { task: ResearchTaskDetail }) {
+  const ids = crawlerTaskIds(task);
+  if (ids.length === 0) return null;
+
+  const waitingLogin = task.status === "WaitingLogin";
+  const waitingCrawl = task.status === "WaitingCrawl";
+  const title = waitingLogin
+    ? "平台采集需要登录"
+    : waitingCrawl
+      ? "平台采集准备中"
+      : "平台采集任务";
+  const description = waitingLogin
+    ? "请在采集详情页查看二维码，并在你的 Windows Chrome 中完成对应平台扫码或验证。完成后服务器 Worker 会继续执行。"
+    : waitingCrawl
+      ? "采集任务已创建；如果平台需要登录，扫码入口会在采集详情页出现。"
+      : "本研究已记录平台采集任务。若二维码已失效，请重新研究以创建新的登录窗口；不要在 AI 研究页寻找 Owner 登录。";
+
+  return (
+    <Card className={waitingLogin ? "border-warning/30 bg-warning/[0.04]" : "border-signal/20 bg-signal/[0.025]"}>
+      <CardHeader>
+        <p className="section-kicker">Platform authentication</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h3 className="font-display text-xl font-semibold">{title}</h3>
+          <Badge variant={waitingLogin || waitingCrawl ? "warning" : "neutral"}>
+            {waitingLogin ? "现在需要操作" : waitingCrawl ? "等待 Worker" : "已记录"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm leading-6">
+          <span className="font-semibold">这不是 Owner Workbench 登录。</span> {description}
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {ids.map((id, index) => (
+            <Button key={id} asChild variant="secondary" size="sm">
+              <Link to={`/tools/crawls/${encodeURIComponent(id)}`}>
+                {ids.length === 1 ? "打开平台采集详情" : `打开第 ${index + 1} 个采集详情`}
+              </Link>
+            </Button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1170,7 +1227,7 @@ function TechnicalDetailsCard({ task }: { task: ResearchTaskDetail }) {
   };
   const provider = objectStringField(task.route_snapshot.primary, "provider");
   const model = objectStringField(task.route_snapshot.primary, "model");
-  const crawlerTaskIds = Array.from(new Set((task.queries ?? []).map((query) => query.crawler_task_id).filter((id): id is string => Boolean(id))));
+  const crawlerIds = crawlerTaskIds(task);
   return (
     <div className="space-y-5">
       <Card>
@@ -1188,7 +1245,7 @@ function TechnicalDetailsCard({ task }: { task: ResearchTaskDetail }) {
       <Card>
         <CardHeader><p className="section-kicker">Crawler references</p><h3 className="mt-1 font-display text-xl font-semibold">Crawler Task ID</h3></CardHeader>
         <CardContent>
-          {crawlerTaskIds.length === 0 ? <p className="text-sm text-muted">尚未生成 Crawler Task ID。</p> : <ul className="space-y-2 text-xs text-muted">{crawlerTaskIds.map((id) => <li key={id} className="break-all rounded-lg bg-paper p-3 font-mono">{id}</li>)}</ul>}
+          {crawlerIds.length === 0 ? <p className="text-sm text-muted">尚未生成 Crawler Task ID。</p> : <ul className="space-y-2 text-xs text-muted">{crawlerIds.map((id) => <li key={id} className="rounded-lg bg-paper p-3"><Link to={`/tools/crawls/${encodeURIComponent(id)}`} className="flex flex-wrap items-center justify-between gap-2 hover:text-signal"><span className="break-all font-mono">{id}</span><span className="shrink-0 font-semibold">打开采集详情 →</span></Link></li>)}</ul>}
         </CardContent>
       </Card>
       <Card>

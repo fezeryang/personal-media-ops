@@ -643,6 +643,21 @@ describe("ResearchTasksPage", () => {
     expect(screen.getByRole("button", { name: "取消任务" })).toBeInTheDocument();
   });
 
+  it("surfaces the platform login entry from the research detail", async () => {
+    const loginTask = { ...task, status: "WaitingLogin" as const, current_step: "waiting_login" };
+    vi.mocked(researchApi.listResearchTasks).mockResolvedValue([loginTask]);
+    vi.mocked(researchApi.getResearchTask).mockResolvedValue(loginTask);
+
+    renderPage();
+
+    expect(await screen.findByText("平台采集需要登录")).toBeInTheDocument();
+    expect(screen.getByText(/这不是 Owner Workbench 登录/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "打开平台采集详情" })).toHaveAttribute(
+      "href",
+      "/tools/crawls/crawl-1",
+    );
+  });
+
   it("creates a bounded task from the single task page", async () => {
     const create = vi.spyOn(researchApi, "createResearchTask").mockResolvedValue(task);
     const user = userEvent.setup();
