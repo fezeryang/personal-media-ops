@@ -13,3 +13,9 @@
 {"command":"cd frontend && npm run lint && npm run build","result":"passed after runtime overview and legacy read-only changes: ESLint; TypeScript and Vite production build"}
 {"command":"cd backend && .venv/bin/pytest","result":"passed: 429 tests in 419.98s"}
 {"command":"bash -n scripts/server/*.sh","result":"passed after final frontend changes"}
+{"command":"cd backend && .venv/bin/pytest --cov=app --cov-report=term-missing","result":"passed: 431 tests; total coverage 86.20%, required 86%"}
+{"command":"cd backend && .venv/bin/pytest -q tests/test_discovery.py -k phase_8d_acceptance","result":"passed: product-discovery and pain-point acceptance contract; bounded platform gate"}
+{"commit":"4239999","result":"production code deployed: bounded repost grouping and explainable source independence"}
+{"commit":"2a9c4a2","result":"production code deployed: follow-up lineage and scoped-feedback validation"}
+{"commit":"9e72e15","result":"acceptance-contract tests and discovery spec pushed; test-only change not deployed"}
+{"production_backup":"/var/backups/mediaops/20260804T062801Z","sha256":"e48e2659554b060c74ba47c668e8036cdbfce964deaee2d82f9c6bd770020627","result":"pre-deployment SQLite backup verified"}
