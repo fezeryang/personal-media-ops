@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import hashlib
+import re
 from collections import defaultdict
 from collections.abc import Iterable
+from difflib import SequenceMatcher
 
 from app.repositories.discovery import DiscoveryRepository
 from app.repositories.research import ResearchTaskRepository
@@ -85,9 +86,82 @@ def _content_text(content: dict[str, object]) -> str:
     return _norm(f"{content.get('title', '')} {content.get('description', '')}")
 
 
-def _content_signature(content: dict[str, object]) -> str:
-    text = _content_text(content)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
+def _comparison_text(value: object, *, limit: int = 2_000) -> str:
+    """Normalize bounded text for deterministic repost comparison."""
+
+    normalized = _norm(value)
+    return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)[:limit]
+
+
+def _content_title_key(content: dict[str, object]) -> str:
+    return _comparison_text(content.get("title"), limit=300)
+
+
+def _content_author_key(content: dict[str, object]) -> str:
+    return _norm(content.get("author_name"))
+
+
+def _duplicate_match(
+    content: dict[str, object],
+    previous: list[dict[str, object]],
+) -> tuple[int, float, str] | None:
+    """Find one bounded, explainable repost/synchronization match.
+
+    A source is not treated as independent merely because it arrived from a
+    different platform. Exact URLs, meaningful cross-platform titles, highly
+    similar bodies, and close same-author synchronizations all collapse into
+    the first observed source group. The thresholds are deliberately
+    conservative and the comparison is limited to the candidate's bounded
+    source list.
+    """
+
+    content_platform = _norm(content.get("platform"))
+    content_url = _norm(content.get("source_url"))
+    content_title = _content_title_key(content)
+    content_text = _comparison_text(
+        f"{content.get('title', '')} {content.get('description', '')}"
+    )
+    content_author = _content_author_key(content)
+    best: tuple[int, float, str] | None = None
+
+    for index, item in enumerate(previous):
+        previous_content = item.get("content")
+        if not isinstance(previous_content, dict):
+            continue
+        previous_platform = _norm(previous_content.get("platform"))
+        cross_platform = bool(content_platform and previous_platform) and content_platform != previous_platform
+        previous_url = _norm(previous_content.get("source_url"))
+        previous_title = _content_title_key(previous_content)
+        previous_text = _comparison_text(
+            f"{previous_content.get('title', '')} {previous_content.get('description', '')}"
+        )
+        previous_author = _content_author_key(previous_content)
+
+        match: tuple[float, str] | None = None
+        if content_url and previous_url and content_url == previous_url:
+            match = (1.0, "same_source_url")
+        elif cross_platform and content_title and content_title == previous_title and len(content_title) >= 6:
+            match = (0.95, "same_cross_platform_title")
+        else:
+            body_similarity = (
+                SequenceMatcher(None, content_text, previous_text).ratio()
+                if content_text and previous_text
+                else 0.0
+            )
+            if body_similarity >= 0.88:
+                match = (body_similarity, "similar_body")
+            elif cross_platform and content_author and content_author == previous_author:
+                title_similarity = (
+                    SequenceMatcher(None, content_title, previous_title).ratio()
+                    if content_title and previous_title
+                    else 0.0
+                )
+                if title_similarity >= 0.75 or body_similarity >= 0.72:
+                    match = (max(title_similarity, body_similarity), "same_author_sync")
+
+        if match is not None and (best is None or match[0] > best[1]):
+            best = (index, match[0], match[1])
+    return best
 
 
 def _independent_group(content: dict[str, object]) -> str:
@@ -831,7 +905,6 @@ class DiscoveryEngine:
                     known_ids.add(content_id)
         unique: list[dict[str, object]] = []
         seen_ids: set[str] = set()
-        signatures: dict[str, str] = {}
         for content in contents:
             content_id = str(content.get("id") or "")
             if not content_id or content_id in seen_ids:
@@ -850,10 +923,33 @@ class DiscoveryEngine:
             if marketing_hits >= 2:
                 continue
             seen_ids.add(content_id)
-            signature = _content_signature(content)
-            repost_of = signatures.get(signature) if signature else None
-            if signature:
-                signatures.setdefault(signature, content_id)
+            match = _duplicate_match(content, unique)
+            repost_of: str | None = None
+            similarity_score: float | None = None
+            repost_reason: str | None = None
+            independent_group = _independent_group(content)
+            root_index = len(unique)
+            if match is not None:
+                match_index, similarity_score, repost_reason = match
+                previous_source = unique[match_index]
+                previous_content = previous_source.get("content")
+                repost_of = (
+                    str(previous_content.get("id"))
+                    if isinstance(previous_content, dict) and previous_content.get("id")
+                    else None
+                )
+                root_index = int(previous_source.get("_repost_root_index", match_index))
+                root_content = unique[root_index].get("content")
+                root_id = (
+                    str(root_content.get("id"))
+                    if isinstance(root_content, dict) and root_content.get("id")
+                    else repost_of
+                )
+                independent_group = f"repost:{root_id}" if root_id else independent_group
+                for prior_source in unique:
+                    if int(prior_source.get("_repost_root_index", -1)) == root_index:
+                        prior_source["_repost_root_index"] = root_index
+                        prior_source["independent_group"] = independent_group
             unique.append(
                 {
                     "content": content,
@@ -867,8 +963,10 @@ class DiscoveryEngine:
                     ),
                     "is_repost": repost_of is not None,
                     "repost_of_content_id": repost_of,
-                    "similarity_score": 1.0 if repost_of is not None else None,
-                    "independent_group": _independent_group(content),
+                    "similarity_score": similarity_score,
+                    "repost_reason": repost_reason,
+                    "independent_group": independent_group,
+                    "_repost_root_index": root_index,
                 }
             )
             if len(unique) >= limit:
@@ -976,6 +1074,16 @@ class DiscoveryEngine:
             "risks": f"噪音风险 {noise_risk:.2f}，营销风险 {marketing_risk:.2f}，饱和度 {saturation:.2f}，资源成本 {resource_cost:.2f}。",
             "recommendation": "继续寻找独立来源和反向证据，再决定是否转为研究任务或加入研究空间。",
             "score_breakdown": {key: round(value, 3) for key, value in scores.items()},
+            "repost_detection": {
+                "suspected_repost_count": repost_count,
+                "reasons": sorted(
+                    {
+                        str(item.get("repost_reason"))
+                        for item in sources
+                        if item.get("repost_reason")
+                    }
+                ),
+            },
         }
         if candidate_type == "event":
             dated_sources = sorted(

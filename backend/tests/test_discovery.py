@@ -556,3 +556,82 @@ def test_discovery_event_explanation_contains_lightweight_aggregation(
     assert set(aggregation["platforms"]) == {"bili", "xhs"}
     assert aggregation["positive_evidence_count"] >= 1
     assert aggregation["negative_evidence_count"] >= 1
+
+
+def test_discovery_marks_cross_platform_near_duplicate_as_repost(
+    test_settings,
+) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="discovery-repost-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    task = _task(
+        test_settings.database_path,
+        owner_id,
+        platforms=["bili", "xhs"],
+        objective="验证跨平台转载识别",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="repost-source",
+        title="AI 工作台真实使用体验",
+        platform="bili",
+        description="用户介绍了产品的核心工作流、实际使用场景和限制问题。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="repost-copy",
+        title="AI 工作台真实使用体验（复盘）",
+        platform="xhs",
+        description="用户介绍了产品的核心工作流、实际使用场景和限制问题，补充了跨平台体验。",
+    )
+    with sqlite3.connect(test_settings.database_path) as connection:
+        connection.execute(
+            "UPDATE library_contents SET author_name = ? WHERE id IN (?, ?)",
+            ("同一作者", "repost-source", "repost-copy"),
+        )
+
+    research = ResearchTaskRepository(test_settings.database_path)
+    research.save_entity_candidate(
+        task_id=str(task["id"]),
+        entity_type="product",
+        normalized_name="AI 工作台",
+        source_content_id="repost-source",
+        relevance_to_intent=0.9,
+        novelty=0.8,
+        confidence=0.9,
+        suggested_next_action="验证独立用户来源",
+    )
+    research.record_information_utility(
+        task_id=str(task["id"]),
+        content_id="repost-source",
+        utility_type="discovery_seed",
+        rationale="来源内容提供了产品体验证据。",
+        confidence=0.9,
+    )
+
+    result = DiscoveryEngine(
+        discovery=DiscoveryRepository(test_settings.database_path),
+        research=research,
+        production_verified_platforms=("bili", "xhs"),
+    ).generate_for_task(str(task["id"]))
+    candidate = next(item for item in result["candidates"] if item["candidate_type"] == "entity")
+    detail = DiscoveryRepository(test_settings.database_path).get_candidate(
+        owner_id=owner_id,
+        candidate_id=str(candidate["id"]),
+    )
+
+    assert detail is not None
+    sources = {str(item["content_id"]): item for item in detail["sources"]}
+    assert set(sources) == {"repost-source", "repost-copy"}
+    assert sources["repost-copy"]["is_repost"] is True
+    assert sources["repost-copy"]["similarity_score"] is not None
+    assert sources["repost-copy"]["similarity_score"] >= 0.8
+    assert sources["repost-source"]["independent_group"] == sources["repost-copy"]["independent_group"]
+    assert detail["independent_source_count"] == 1
+    assert detail["suspected_repost_count"] == 1
+    repost_detection = detail["score_explanation"]["repost_detection"]
+    assert repost_detection["suspected_repost_count"] == 1
+    assert repost_detection["reasons"]

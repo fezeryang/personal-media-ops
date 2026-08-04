@@ -81,6 +81,16 @@ Cross-platform source lookup receives the intersection of the task's requested
 platforms and `production_verified` search adapters that are currently enabled;
 deferred or merely code-ready adapters are never used as validation evidence.
 An empty platform intersection is fail-closed at the repository query boundary.
+Source independence is also fail-closed: sources are compared in bounded
+arrival order before they contribute to counts. An exact source URL, a
+meaningful cross-platform title match, body similarity of at least `0.88`, or
+a same-author cross-platform synchronization with title similarity at least
+`0.75` (or body similarity at least `0.72`) is grouped with the first matching
+source. The source retains `is_repost`, `repost_of_content_id`,
+`similarity_score`, `repost_reason`, and the shared `independent_group`; the
+score explanation exposes `repost_detection.suspected_repost_count` and the
+matched reasons. This comparison is deterministic, bounded to the source list,
+and never persists raw comparison text.
 `confirmed_event`/`event_signal` seeds also create a source-bound lightweight
 `event` candidate before aggregation, so event evidence is not limited to an
 already-existing 8D-0 event row.
@@ -129,8 +139,9 @@ query excludes terminal low-value states (`ignored`, `dismissed_duplicate`, and
   `integrity_check`, preserve existing rows, and refuse downgrade when new
   tables contain data.
 - Engine tests assert depth `1`, source-bound candidates, deterministic score
-  components/explanations, repost grouping, cross-platform counts, pain-point
-  generation, and no candidate without a source.
+  components/explanations, exact and near-duplicate repost grouping with
+  explainable reasons, cross-platform counts, pain-point generation, and no
+  candidate without a source.
 - Repository tests assert owner isolation, upsert uniqueness, lifecycle
   transitions, score snapshots, feedback rule creation/deactivation, and
   typed space-item validation.
