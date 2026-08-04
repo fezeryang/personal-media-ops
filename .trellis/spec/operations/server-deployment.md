@@ -274,3 +274,103 @@ Correct:
 uv run python -m app.cli create-owner --username owner
 # getpass reads both entries from the TTY.
 ```
+
+## Scenario: Phase 8D human-authenticated production acceptance
+
+### 1. Scope / Trigger
+
+Apply this scenario to real Phase 8D production tasks, Owner Workbench
+confirmation, platform QR/captcha intervention, Discovery/Research Space
+acceptance, and final product-experience checks. A WSL temporary Playwright
+profile with no Owner cookie is an automation-context failure, not evidence of
+an invalid production login.
+
+### 2. Signatures
+
+```text
+Production frontend: https://<production-host>/research
+GET  /api/auth/session
+POST /api/auth/login                 # only through the normal frontend flow
+GET  /api/research/tasks
+POST /api/research/tasks
+GET  /api/research/tasks/{id}
+GET  /api/research/tasks/{id}/events
+GET  /api/crawler/tasks/{id}
+GET  /api/crawler/tasks/{id}/qrcode # only while status is waiting_login
+User acknowledgement: 已完成
+```
+
+### 3. Contracts
+
+- The Windows browser is the user's visual entry point for the production
+  frontend, Owner login, third-party QR/captcha, one explicit confirmation,
+  and final visual inspection. Codex does not read, attach to, or export its
+  cookies, tokens, profile, or debugging port.
+- The server owns the Research Runtime, single-concurrency Crawler Worker,
+  platform login persistence, Discovery generation/scoring, feedback, Space
+  association, recovery, database, formal API, and logs.
+- Owner Workbench authentication and platform authentication are separate
+  domains. Platform QR completion is persisted by the server Worker; an Owner
+  confirmation is made through the normal frontend and business API.
+- When a real visual intervention is required, Codex names the exact
+  production page, waits for `已完成`, and then verifies server session/task
+  state, database state, and the formal API response before continuing.
+- Codex must not create a new WSL temporary browser, ask the user to configure
+  WSL/Playwright/remote debugging, request cookies or tokens, or ask the user
+  to run server commands.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| No real login, QR, captcha, or confirmation is required | Continue server-side acceptance from the verified checkpoint |
+| Owner login or confirmation is required | Show the exact production frontend page, pause for the user's one action, then resume after `已完成` |
+| Crawler is `waiting_login` | Validate task/detail/QR API state, show the production QR entry, wait for the user scan, then verify Worker progress |
+| WSL temporary profile reports missing Owner cookie | Classify as an automation-context failure; do not relogin, create another temporary browser, or weaken auth |
+| User reports `已完成` but server state has not changed | Fail closed, inspect the official API/task/session evidence, and report the precise missing transition; never bypass it |
+| Protected Research API returns 401 from an unauthenticated diagnostic client | Treat as expected access control; do not claim production failure or fabricate task data |
+| Any authenticated detail/events/QR response is 500, malformed, stale, or inconsistent with task status | Stop the acceptance stage, add a regression test, fix the real boundary, and repeat the bounded production verification |
+
+### 5. Good / Base / Bad Cases
+
+- Good: tell the user to open the exact production Research page, wait for one
+  Owner confirmation or platform scan, then validate the server task, worker,
+  database, and typed API response without touching browser state.
+- Base: no intervention is needed; Codex starts or resumes the bounded task
+  through the official application path and verifies the server checkpoints.
+- Bad: launch a fresh WSL Playwright profile, see no cookie, ask the user to
+  configure it or export a cookie, and report the user's normal login as
+  missing.
+
+### 6. Tests Required
+
+- Acceptance tests cover the authenticated `/api/research/tasks` list/create,
+  populated detail and events responses, and the exact nested 8D fields.
+- Crawler login tests cover task/detail and `waiting_login` QR status, HTTP
+  200 `image/png`, bounded QR path, polling, login completion, timeout, and
+  stale-QR behavior without reading or exporting state.
+- Server verification asserts Runtime/Worker progress, database rows,
+  recovery markers, and logs after the user acknowledgement.
+- Frontend visual acceptance is performed in the user's Windows browser for
+  the named production pages; it is not substituted with a new temporary
+  automation profile.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+start WSL Playwright with a new temporary profile
+→ receive 401
+→ ask the user to configure the profile or provide a cookie
+```
+
+Correct:
+
+```text
+name the exact production frontend page
+→ user performs one visible login/scan/confirmation
+→ user replies "已完成"
+→ verify server session, Worker/task state, database, and formal API
+→ continue from the existing acceptance checkpoint
+```

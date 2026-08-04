@@ -168,6 +168,88 @@ the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
 Never request an interactive sudo password, seek a root shell, or automatically
 install/overwrite the helper or sudoers.
 
+## Phase 8D Authentication and Production Acceptance
+
+The user's normal production workflow in Windows Chrome is valid. A missing
+Owner session in a WSL temporary Playwright profile is an automation-context
+failure, not evidence that the user failed to log in or that the production
+server cannot continue. Never treat that condition as a product-authentication
+failure or repeatedly ask the user to log in.
+
+### Ownership boundaries
+
+Keep the two authentication domains separate:
+
+- **Windows browser**: view the production frontend, complete an Owner login,
+  scan a third-party platform QR code, solve a captcha, make one explicit
+  confirmation, and perform the final visual product check.
+- **Production server**: run the Research Runtime and single-concurrency
+  Crawler Worker, persist platform login state, generate and score Discovery
+  candidates, apply feedback, associate Research Spaces, recover state, and
+  provide the authoritative database, API, task, and log evidence.
+- **Codex**: develop, deploy when authorized, start bounded tasks through the
+  official application path, wait for server execution, inspect formal API and
+  server evidence, repair real defects, and write the acceptance report.
+
+Codex must not read or export Windows Chrome cookies, session tokens, browser
+state, or profile files; take over the user's daily browser; connect to a
+Chrome debugging port; or create a test backdoor. Do not start a new WSL
+temporary browser merely because it has no Owner cookie. Do not mix the
+Personal Media Ops Owner Workbench session with Bilibili, Zhihu, Xiaohongshu,
+Weibo, Tieba, or other platform login state.
+
+### Human intervention boundary
+
+User intervention is limited to an actual visual authentication or approval
+requirement. When one occurs:
+
+1. Tell the user the exact production frontend page to open.
+2. Show the login page, QR code, captcha, or confirmation entry through the
+   production frontend.
+3. The user completes only the scan, login, captcha, or one explicit
+   confirmation in their Windows browser.
+4. After the user replies `已完成`, resume from the existing checkpoint and
+   verify the corresponding server session, platform login state, task state,
+   database rows, and formal API response.
+
+Never ask the user to configure WSL, create a Playwright profile, connect
+remote debugging, copy or export cookies/browser state, provide a session
+token, execute server commands, install a plugin, or handle CSRF manually.
+Do not restart a browser or repeat a login after the user has completed the
+required visual action. If no real login, QR, captcha, or confirmation is
+needed, continue the server-side acceptance autonomously.
+
+### 8D acceptance status and path
+
+The current Phase 8D status is:
+
+```text
+implementation: complete
+automated_tests: passed
+production_deployment: passed
+remaining: real production tasks and product-experience acceptance
+authentication_intervention: only when actually required, through the
+  Windows production frontend for one scan, login, captcha, or confirmation
+```
+
+Remaining acceptance must use the existing application and server flow:
+
+```text
+Windows frontend visual action (only when required)
+  → user replies "已完成"
+  → server Owner/platform state verification
+  → Research Runtime / Crawler Worker execution
+  → formal API, database, task, and log validation
+  → frontend visual result check
+```
+
+The absence of an Owner cookie in a newly created WSL temporary profile is
+not a remaining product defect and is not a reason to rerun the whole suite.
+Preserve the current task checkpoint and continue from the last verified
+server state. Platform QR login is completed by the user through the
+production frontend and then persisted by the server MediaCrawler Worker;
+Owner confirmation is completed through the normal frontend and business API.
+
 ## Production Data Loading and Login-QR Acceptance
 
 An authenticated page showing `数据加载失败` or `请求失败（HTTP 500）` is a
