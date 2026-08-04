@@ -1,2 +1,11 @@
 {"file":".trellis/spec/backend/research-discovery-8d1.md","reason":"Discovery seed provenance, depth, production-verified platform gating, event aggregation, lifecycle, and owner isolation contracts."}
 {"file":".trellis/spec/frontend/research-workbench-8d.md","reason":"Primary workbench routes, honest Discovery detail states, and two-step research creation contracts."}
+{"command":"cd frontend && npm run lint","result":"passed"}
+{"command":"cd frontend && npm run test","result":"passed: 27 test files, 67 tests"}
+{"command":"cd frontend && npm run build","result":"passed: TypeScript build and Vite production build"}
+{"command":"cd frontend && npm ci --include=dev","result":"passed: 300 packages installed from the lockfile"}
+{"command":"cd frontend && npm run lint && npm run test && npm run build","result":"passed: lint; 27 test files, 67 tests; TypeScript and Vite production build"}
+{"command":"cd backend && .venv/bin/pytest","result":"passed: 429 tests"}
+{"command":"bash -n scripts/server/*.sh","result":"passed"}
+{"command":"cd backend && uv sync --frozen","result":"not executed: uv is unavailable in the local shell; the existing backend/.venv was used for the passing pytest gate"}
+{"command":"cd frontend && npm run lint && npm run test && npm run build","result":"passed after final test-wait and label adjustments: lint; 27 test files, 67 tests; TypeScript and Vite production build"}

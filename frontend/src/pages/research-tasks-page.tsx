@@ -8,7 +8,6 @@ import {
   RotateCcw,
   Search,
   Send,
-  ShieldAlert,
   Square,
 } from "lucide-react";
 import DOMPurify from "dompurify";
@@ -17,6 +16,7 @@ import { Link } from "react-router";
 
 import type { CrawlerPlatformCapability } from "../api/crawler";
 import type {
+  DiscoveryCandidateSummary,
   ResearchTaskDetail,
   ResearchTaskInput,
   ResearchTaskSummary,
@@ -41,6 +41,7 @@ import {
   useReviseResearchIntentMutation,
   useResumeResearchTaskMutation,
 } from "../features/research/hooks/use-research-queries";
+import { useDiscoveriesQuery } from "../features/research/hooks/use-discovery-queries";
 import { errorMessage } from "../lib/utils";
 
 const statusLabels: Record<ResearchTaskSummary["status"], string> = {
@@ -70,6 +71,207 @@ const statusVariant: Record<ResearchTaskSummary["status"], "neutral" | "info" | 
   Failed: "danger",
   Cancelled: "neutral",
 };
+
+const researchStepLabels: Record<string, string> = {
+  awaiting_review: "等待确认",
+  budget_review: "预算检查",
+  coverage_review: "覆盖度检查",
+  discovery: "发现候选",
+  evidence_selection: "整理证据",
+  final_report: "生成报告",
+  intent_interpretation: "理解研究目标",
+  plan_generation: "制定研究计划",
+  search_library: "检索已有资料",
+  tool_call: "调用研究工具",
+};
+
+const queryTypeLabels: Record<string, string> = {
+  comparison: "对比方向",
+  generic_topic: "泛化主题",
+  product: "产品方向",
+  scenario: "使用场景",
+  topic: "主题方向",
+};
+
+const querySourceLabels: Record<string, string> = {
+  finding: "来自结论",
+  user_goal: "来自用户目标",
+  model: "来自研究规划",
+};
+
+const queryDecisionLabels: Record<string, string> = {
+  allow: "允许执行",
+  hold: "等待判断",
+  reject: "拒绝执行",
+  transform: "已转换",
+};
+
+const queryGateLabels: Record<string, string> = {
+  not_applicable: "不适用",
+  passed: "通过闸门",
+  rejected: "未通过闸门",
+};
+
+const discoveryTypeLabels: Record<string, string> = {
+  entity: "实体",
+  creator: "创作者",
+  topic: "主题",
+  event: "事件",
+  query: "查询方向",
+  pain_point: "痛点",
+  need: "需求",
+  product_opportunity_signal: "产品机会",
+  content_opportunity_signal: "内容机会",
+};
+
+const discoveryStateLabels: Record<string, string> = {
+  generated: "已生成",
+  scored: "已评分",
+  queued: "待处理",
+  accepted: "已采纳",
+  ignored: "已忽略",
+  deferred: "已延后",
+  converted_to_research: "已转为研究",
+  added_to_space: "已加入空间",
+  dismissed_duplicate: "已标记重复",
+  expired: "已过期",
+};
+
+const entityTypeLabels: Record<string, string> = {
+  product: "产品",
+  creator: "创作者",
+  topic: "主题",
+  company: "公司",
+  person: "人物",
+  event: "事件",
+  technology: "技术",
+};
+
+const entityCandidateStatusLabels: Record<string, string> = {
+  candidate_discovery: "待验证",
+  accepted: "已采纳",
+  dismissed: "已忽略",
+};
+
+const eventTypeLabels: Record<string, string> = {
+  new_version: "版本更新",
+  launch: "发布",
+  funding: "融资",
+  policy_change: "政策变化",
+  trend_shift: "趋势变化",
+};
+
+const eventStatusLabels: Record<string, string> = {
+  candidate: "待确认",
+  accepted: "已确认",
+  dismissed: "已忽略",
+};
+
+const memoryTypeLabels: Record<string, string> = {
+  fact: "事实",
+  inference: "推测",
+  entity: "实体",
+  change: "变化",
+};
+
+const actionStatusLabels: Record<string, string> = {
+  pending: "待确认",
+  approved: "已批准",
+  rejected: "已拒绝",
+};
+
+function researchStepLabel(value: string | null | undefined): string {
+  if (!value) return "等待调度";
+  return researchStepLabels[value] ?? "研究进行中";
+}
+
+const traceEventLabels: Record<string, string> = {
+  task_created: "创建任务",
+  intent_interpreted: "理解意图",
+  plan_generated: "制定计划",
+  memory_searched: "检索记忆",
+  query_generated: "生成查询",
+  crawler_task_created: "平台采集",
+  content_evaluated: "评估信息",
+  evidence_organized: "组织证据",
+  alignment_reviewed: "对齐检查",
+  tool_call: "调用研究工具",
+};
+
+function traceEventLabel(value: string): string {
+  return traceEventLabels[value] ?? "研究步骤";
+}
+
+function queryLifecycleLabel(value: string | null | undefined): string {
+  if (!value) return "历史状态";
+  if (value === "completed") return "已执行";
+  if (value === "running") return "执行中";
+  if (value === "pending") return "等待执行";
+  if (value === "rejected") return "已拒绝";
+  if (value === "skipped_low_marginal_value") return "因边际价值低跳过";
+  if (value === "skipped_budget") return "因预算跳过";
+  if (value === "skipped_duplicate") return "因重复跳过";
+  if (value.startsWith("rejected")) return "已拒绝";
+  if (value.startsWith("skipped")) return "因质量闸门跳过";
+  return "已记录";
+}
+
+function queryTypeLabel(value: string): string {
+  return queryTypeLabels[value] ?? "研究方向";
+}
+
+function querySourceLabel(value: string): string {
+  return querySourceLabels[value] ?? "研究来源";
+}
+
+function queryDecisionLabel(value: string | null | undefined): string {
+  return value ? queryDecisionLabels[value] ?? "已记录" : "历史记录";
+}
+
+function queryGateLabel(value: string | null | undefined): string {
+  return value ? queryGateLabels[value] ?? "已检查" : "历史记录";
+}
+
+function discoveryTypeLabel(value: string): string {
+  return discoveryTypeLabels[value] ?? "发现项";
+}
+
+function discoveryStateLabel(value: string): string {
+  return discoveryStateLabels[value] ?? "已记录";
+}
+
+function entityTypeLabel(value: string): string {
+  return entityTypeLabels[value] ?? "实体";
+}
+
+function entityCandidateStatusLabel(value: string): string {
+  return entityCandidateStatusLabels[value] ?? "已记录";
+}
+
+function eventTypeLabel(value: string): string {
+  return eventTypeLabels[value] ?? "事件信号";
+}
+
+function eventStatusLabel(value: string): string {
+  return eventStatusLabels[value] ?? "已记录";
+}
+
+function memoryTypeLabel(value: string): string {
+  return memoryTypeLabels[value] ?? "研究记忆";
+}
+
+function actionStatusLabel(value: string): string {
+  return actionStatusLabels[value] ?? "已记录";
+}
+
+function platformCoverageLabel(value: string): string {
+  return {
+    completed: "已完成",
+    failed: "失败",
+    pending: "等待执行",
+    running: "执行中",
+  }[value] ?? "已记录";
+}
 
 const defaultBudget: ResearchTaskInput["budget"] = {
     crawl_limit: 6,
@@ -156,9 +358,10 @@ function resultString(result: ResearchTaskDetail["result"], key: string): string
 
 export function ResearchTasksPage() {
   const tasks = useResearchTasksQuery();
+  const discoveries = useDiscoveriesQuery();
   const capabilities = useCrawlerCapabilitiesQuery();
   const [selectedId, setSelectedId] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(true);
   const effectiveSelectedId = selectedId && tasks.data?.some((task) => task.id === selectedId)
     ? selectedId
     : tasks.data?.[0]?.id || "";
@@ -181,13 +384,21 @@ export function ResearchTasksPage() {
         title="AI 研究工作台"
         description="从一个问题开始：AI 先说明它理解了什么，再在预算和来源边界内研究，把证据、发现、反馈和长期记忆连成可继续推进的上下文。"
         action={
-          <Button onClick={() => setShowCreate((value) => !value)}>
-            <Plus className="size-4" /> 新建研究任务
+          <Button variant="secondary" onClick={() => setShowCreate((value) => !value)}>
+            <Plus className="size-4" /> {showCreate ? "收起目标输入" : "开始新的研究"}
           </Button>
         }
       />
 
       <ResearchFlow />
+
+      <ResearchHomePulse
+        tasks={tasks.data ?? []}
+        discoveries={discoveries.data ?? []}
+        discoveriesPending={discoveries.isPending}
+        discoveriesError={discoveries.error}
+        onRetryDiscoveries={() => void discoveries.refetch()}
+      />
 
       {showCreate ? (
         <ResearchCreateForm
@@ -209,6 +420,74 @@ export function ResearchTasksPage() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function ResearchHomePulse({
+  tasks,
+  discoveries,
+  discoveriesPending,
+  discoveriesError,
+  onRetryDiscoveries,
+}: {
+  tasks: ResearchTaskSummary[];
+  discoveries: DiscoveryCandidateSummary[];
+  discoveriesPending: boolean;
+  discoveriesError: unknown;
+  onRetryDiscoveries: () => void;
+}) {
+  const recentTasks = tasks.slice(0, 3);
+  const reviewTasks = tasks.filter(
+    (task) => task.status === "AwaitingReview" || task.action_count > 0,
+  ).slice(0, 3);
+  const pendingDiscoveries = discoveries.slice(0, 3);
+  return (
+    <section className="grid gap-4 lg:grid-cols-3" aria-label="研究首页摘要">
+      <Card>
+        <CardHeader>
+          <p className="section-kicker">Recent research</p>
+          <h2 className="mt-1 font-display text-xl font-semibold">最近研究</h2>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {recentTasks.length === 0 ? <p className="text-sm text-muted">暂无最近研究</p> : recentTasks.map((task) => (
+            <div key={task.id} className="rounded-xl bg-paper p-3">
+              <p className="line-clamp-2 text-sm font-semibold">{task.objective}</p>
+              <p className="mt-1 text-xs text-muted">{statusLabels[task.status]} · {researchStepLabel(task.current_step)}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <p className="section-kicker">Discovery inbox</p>
+          <h2 className="mt-1 font-display text-xl font-semibold">待处理发现</h2>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {discoveriesError ? <ErrorState title="待处理发现加载失败" error={discoveriesError} onRetry={onRetryDiscoveries} /> : discoveriesPending ? <p className="text-sm text-muted">正在加载待处理发现…</p> : pendingDiscoveries.length === 0 ? <p className="text-sm text-muted">暂无待处理发现</p> : pendingDiscoveries.map((candidate) => (
+            <Link key={candidate.id} to={`/discoveries/${encodeURIComponent(candidate.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5">
+              <p className="line-clamp-2 text-sm font-semibold">{candidate.title}</p>
+              <p className="mt-1 text-xs text-muted">{discoveryTypeLabel(candidate.candidate_type)} · {Math.round(candidate.final_score * 100)} 分</p>
+            </Link>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <p className="section-kicker">Owner decisions</p>
+          <h2 className="mt-1 font-display text-xl font-semibold">需要用户确认</h2>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {reviewTasks.length === 0 ? <p className="text-sm text-muted">暂无待确认事项</p> : reviewTasks.map((task) => (
+            <div key={task.id} className="rounded-xl border border-warning/20 bg-warning/5 p-3">
+              <p className="line-clamp-2 text-sm font-semibold">{task.objective}</p>
+              <p className="mt-1 text-xs text-muted">{task.action_count > 0 ? `${task.action_count} 项动作待确认` : "研究结果待确认"}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -292,6 +571,7 @@ function ResearchCreateForm({
   );
   const [form, setForm] = useState<ResearchTaskInput>(() => createInitialForm([]));
   const [reviewing, setReviewing] = useState(false);
+  const [supplement, setSupplement] = useState("");
   const initializedPlatforms = useRef(false);
 
   useEffect(() => {
@@ -310,7 +590,12 @@ function ResearchCreateForm({
       setReviewing(true);
       return;
     }
-    onSubmit({ ...form, objective: form.objective.trim() });
+    const objective = form.objective.trim();
+    const additionalRequirements = supplement.trim();
+    onSubmit({
+      ...form,
+      objective: additionalRequirements ? `${objective}\n\n补充要求：${additionalRequirements}` : objective,
+    });
   }
   function setBudget(key: keyof ResearchTaskInput["budget"], value: string) {
     if (key === "cost_limit" || key === "cost_currency") {
@@ -408,11 +693,11 @@ function ResearchCreateForm({
             </div>
           </details>
           <p className="text-xs leading-5 text-muted">每轮会先查已有资料；跨平台采集仍由单 Worker 串行执行。</p>
-          {reviewing ? <ResearchIntentPreview objective={form.objective} platforms={form.platforms} budget={form.budget} /> : null}
+          {reviewing ? <ResearchIntentPreview objective={form.objective} platforms={form.platforms} budget={form.budget} supplement={supplement} onSupplementChange={setSupplement} /> : null}
           {error ? <p className="text-sm text-danger">{errorMessage(error)}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
-            {reviewing ? <Button type="button" variant="secondary" disabled={pending} onClick={() => setReviewing(false)}>返回修改</Button> : null}
+            {reviewing ? <Button type="button" variant="secondary" disabled={pending} onClick={() => setReviewing(false)}>修改理解</Button> : null}
             <Button disabled={pending || capabilitiesPending || Boolean(capabilitiesError) || form.platforms.length === 0 || form.objective.trim().length < 5}><Send className="size-4" />{pending ? "创建中…" : reviewing ? "确认理解并开始" : "查看研究理解"}</Button>
           </div>
         </form>
@@ -421,7 +706,7 @@ function ResearchCreateForm({
   );
 }
 
-function ResearchIntentPreview({ objective, platforms, budget }: { objective: string; platforms: string[]; budget: ResearchTaskInput["budget"] }) {
+function ResearchIntentPreview({ objective, platforms, budget, supplement, onSupplementChange }: { objective: string; platforms: string[]; budget: ResearchTaskInput["budget"]; supplement: string; onSupplementChange: (value: string) => void }) {
   const intent = previewIntent(objective);
   return <div role="region" className="rounded-2xl border border-signal/25 bg-signal/[0.04] p-4" aria-label="研究理解预览">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -439,6 +724,16 @@ function ResearchIntentPreview({ objective, platforms, budget }: { objective: st
       <PreviewItem label="排除项" value={intent.exclusions.join("；")} />
       <PreviewItem label="预期输出" value={intent.output} />
     </div>
+    <label className="mt-4 block text-sm font-semibold">
+      补充要求
+      <textarea
+        aria-label="补充要求"
+        className="mt-2 min-h-24 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:border-signal focus:ring-2 focus:ring-signal/15"
+        value={supplement}
+        onChange={(event) => onSupplementChange(event.currentTarget.value)}
+        placeholder="可补充必须回答的问题、排除项或输出格式。"
+      />
+    </label>
     <p className="mt-3 text-xs leading-5 text-muted">预算边界：{budget.crawl_limit} 次采集 · {budget.content_limit} 条新增内容 · {budget.token_limit.toLocaleString()} Token。创建后仍可在草稿阶段修改理解。</p>
   </div>;
 }
@@ -460,7 +755,7 @@ function TaskList({ tasks, selectedId, loading, onSelect }: { tasks: ResearchTas
         {!loading && tasks.length === 0 ? <p className="rounded-xl bg-paper p-5 text-sm text-muted">还没有研究任务，先创建一个目标。</p> : null}
         {tasks.map((task) => <button key={task.id} type="button" onClick={() => onSelect(task.id)} className={`w-full rounded-xl border p-3 text-left transition ${selectedId === task.id ? "border-signal/35 bg-signal/7" : "border-transparent hover:bg-paper"}`}>
           <div className="flex items-start justify-between gap-2"><span className="line-clamp-2 text-sm font-semibold">{task.objective}</span><Badge variant={statusVariant[task.status]}>{statusLabels[task.status]}</Badge></div>
-          <div className="mt-3 flex items-center justify-between text-xs text-muted"><span>第 {task.current_round} 轮 · {task.current_step ?? "等待调度"}</span><span>{(task.consumption.input_tokens + task.consumption.output_tokens).toLocaleString()} tok</span></div>
+          <div className="mt-3 flex items-center justify-between text-xs text-muted"><span>第 {task.current_round} 轮 · {researchStepLabel(task.current_step)}</span><span>{task.finding_count} 条结论 · {task.action_count} 项待确认</span></div>
         </button>)}
       </CardContent>
     </Card>
@@ -477,23 +772,23 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
   const reviseIntent = useReviseResearchIntentMutation();
   const busy = pause.isPending || resume.isPending || cancel.isPending || rerun.isPending || complete.isPending || decide.isPending || reviseIntent.isPending;
   const isTerminal = ["Done", "Failed", "Cancelled"].includes(task.status);
-  const route = useMemo(() => task.route_snapshot.primary as { provider?: string; model?: string } | undefined, [task.route_snapshot.primary]);
-  const [activeTab, setActiveTab] = useState<"overview" | "evidence" | "discovery" | "plan" | "trace">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "process" | "discovery" | "evidence" | "queries" | "budget" | "technical">("overview");
   const tabs = [
     ["overview", "总览"],
-    ["evidence", "证据与结论"],
-    ["discovery", "发现与记忆"],
-    ["plan", "计划与资源"],
-    ["trace", "执行轨迹"],
+    ["process", "研究过程"],
+    ["discovery", "发现"],
+    ["evidence", "证据"],
+    ["queries", "查询"],
+    ["budget", "预算"],
+    ["technical", "技术详情"],
   ] as const;
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader className="border-b border-line pb-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><p className="section-kicker">Research dossier</p><h2 className="mt-1 break-words font-display text-2xl font-semibold">{task.objective}</h2><p className="mt-2 font-mono text-xs text-muted">{task.id}</p></div><Badge variant={statusVariant[task.status]}>{statusLabels[task.status]}</Badge></div><div className="mt-5 flex flex-wrap gap-2">{!isTerminal && !task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => pause.mutate(task.id)}><CirclePause className="size-4" />暂停</Button> : null}{!isTerminal && task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => resume.mutate(task.id)}><CirclePlay className="size-4" />继续</Button> : null}{task.status === "AwaitingReview" ? <><Button size="sm" disabled={busy} onClick={() => complete.mutate(task.id)}><Check className="size-4" />确认完成</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => rerun.mutate(task.id)}><RotateCcw className="size-4" />再跑一轮</Button></> : null}{!isTerminal ? <Button variant="danger" size="sm" disabled={busy} onClick={() => cancel.mutate(task.id)}><Square className="size-3.5" />取消任务</Button> : null}</div></CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric label="阶段" value={task.current_step ?? "等待调度"} /><Metric label="研究轮次" value={`第 ${task.current_round} 轮`} /><Metric label="采集 / 内容" value={`${task.consumption.crawl_count} / ${task.consumption.content_count}`} /><Metric label="运行时长" value={formatDuration(task.consumption.duration_seconds)} /><Metric label="Token" value={`${(task.consumption.input_tokens + task.consumption.output_tokens).toLocaleString()} / ${task.budget.token_limit.toLocaleString()}`} /><Metric label="估算成本" value={formatCost(task.consumption.estimated_cost, task.consumption.cost_currency)} /><Metric label="主路由" value={route?.model ?? "尚未快照"} /><Metric label="来源平台" value={task.platforms.join("、")} /></CardContent>
+        <CardHeader className="border-b border-line pb-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><p className="section-kicker">Research dossier</p><h2 className="mt-1 break-words font-display text-2xl font-semibold">{task.objective}</h2></div><Badge variant={statusVariant[task.status]}>{statusLabels[task.status]}</Badge></div><div className="mt-5 flex flex-wrap gap-2">{!isTerminal && !task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => pause.mutate(task.id)}><CirclePause className="size-4" />暂停</Button> : null}{!isTerminal && task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => resume.mutate(task.id)}><CirclePlay className="size-4" />继续</Button> : null}{task.status === "AwaitingReview" ? <><Button size="sm" disabled={busy} onClick={() => complete.mutate(task.id)}><Check className="size-4" />确认完成</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => rerun.mutate(task.id)}><RotateCcw className="size-4" />重新研究</Button></> : null}{!isTerminal ? <Button variant="danger" size="sm" disabled={busy} onClick={() => cancel.mutate(task.id)}><Square className="size-3.5" />取消任务</Button> : null}</div></CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric label="阶段" value={researchStepLabel(task.current_step)} /><Metric label="研究轮次" value={`第 ${task.current_round} 轮`} /><Metric label="采集 / 内容" value={`${task.consumption.crawl_count} / ${task.consumption.content_count}`} /><Metric label="运行时长" value={formatDuration(task.consumption.duration_seconds)} /><Metric label="关键结论" value={`${task.findings.length} 条`} /><Metric label="待确认动作" value={`${task.action_count} 项`} /><Metric label="发现候选" value={`${task.discovery_candidates?.length ?? 0} 条`} /><Metric label="来源平台" value={task.platforms.join("、")} /></CardContent>
       </Card>
 
-      {task.failure_reason ? <div className="flex gap-3 rounded-2xl border border-danger/20 bg-danger/5 p-4 text-sm text-danger"><ShieldAlert className="size-5 shrink-0" /><span>{task.failure_reason}</span></div> : null}
       <ResearchSummaryStrip task={task} />
       <div className="flex gap-1 overflow-x-auto border-b border-line pb-px" role="tablist" aria-label="研究详情分区">
         {tabs.map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={activeTab === value} onClick={() => setActiveTab(value)} className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold transition ${activeTab === value ? "border-signal text-signal-strong" : "border-transparent text-muted hover:text-ink"}`}>{label}</button>)}
@@ -503,21 +798,19 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
         <div className="grid gap-5 lg:grid-cols-2"><AlignmentReviewCard task={task} /><CoverageCard task={task} /></div>
         {task.result ? <ResearchResultCard task={task} /> : null}
       </div> : null}
+      {activeTab === "process" ? <TraceCard trace={task.trace} /> : null}
+      {activeTab === "discovery" ? <div className="space-y-5">
+        <div className="grid gap-5 lg:grid-cols-2"><DiscoveryCandidatesCard task={task} /><EventCandidatesCard task={task} /></div>
+        <MemoryCard task={task} />
+      </div> : null}
       {activeTab === "evidence" ? <div className="space-y-5">
         <InformationUtilityCard task={task} />
         <EvidencePoolCard task={task} />
         <div className="grid gap-5 lg:grid-cols-2"><FindingsCard task={task} /><ActionsCard taskId={task.id} actions={task.actions} busy={busy} onDecide={(actionId, decision) => decide.mutate({ taskId: task.id, actionId, decision })} /></div>
       </div> : null}
-      {activeTab === "discovery" ? <div className="space-y-5">
-        <div className="grid gap-5 lg:grid-cols-2"><DiscoveryCandidatesCard task={task} /><EventCandidatesCard task={task} /></div>
-        <MemoryCard task={task} />
-      </div> : null}
-      {activeTab === "plan" ? <div className="space-y-5">
-        <QueryTrajectoryCard queries={task.queries ?? []} />
-        <BudgetTraceCard task={task} />
-        <Card><CardHeader><p className="section-kicker">Research plan & context</p><h3 className="mt-1 font-display text-xl font-semibold">研究计划与执行上下文</h3></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.research_plan ?? task.plan, null, 2)}</pre><pre className="max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.context, null, 2)}</pre></CardContent></Card>
-      </div> : null}
-      {activeTab === "trace" ? <TraceCard trace={task.trace} /> : null}
+      {activeTab === "queries" ? <QueryTrajectoryCard queries={task.queries ?? []} /> : null}
+      {activeTab === "budget" ? <BudgetTraceCard task={task} /> : null}
+      {activeTab === "technical" ? <TechnicalDetailsCard task={task} /> : null}
     </div>
   );
 }
@@ -526,7 +819,7 @@ function ResearchSummaryStrip({ task }: { task: ResearchTaskDetail }) {
   const alignment = task.alignment_review;
   const newContent = task.result?.new_content_count;
   const discoveries = task.discovery_candidates?.length ?? 0;
-  return <Card className="border-signal/15 bg-signal/[0.025]"><CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6"><div className="sm:col-span-2 lg:col-span-2"><p className="text-xs font-semibold text-muted">研究目标</p><p className="mt-1 line-clamp-2 text-sm font-semibold">{task.objective}</p></div><Metric label="对齐度" value={alignment ? `${Math.round(alignment.alignment_score * 100)}%` : "进行中"} /><Metric label="结论" value={`${task.findings.length} 条`} /><Metric label="新增内容" value={typeof newContent === "number" ? String(newContent) : "—"} /><Metric label="发现候选" value={String(discoveries)} /><Metric label="关键状态" value={task.status === "AwaitingReview" ? "等待确认" : task.status === "Done" ? "已完成" : "持续研究"} /></CardContent></Card>;
+  return <Card className="border-signal/15 bg-signal/[0.025]"><CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6"><div className="sm:col-span-2 lg:col-span-2"><p className="text-xs font-semibold text-muted">研究目标</p><p className="mt-1 line-clamp-2 text-sm font-semibold">{task.objective}</p></div><Metric label="研究目标覆盖度" value={alignment ? `${Math.round(alignment.alignment_score * 100)}%` : "进行中"} /><Metric label="结论" value={`${task.findings.length} 条`} /><Metric label="新增内容" value={typeof newContent === "number" ? String(newContent) : "—"} /><Metric label="发现候选" value={String(discoveries)} /><Metric label="关键状态" value={task.status === "AwaitingReview" ? "等待确认" : task.status === "Done" ? "已完成" : "持续研究"} /></CardContent></Card>;
 }
 
 const intentLabels: Record<string, string> = {
@@ -555,10 +848,55 @@ const utilityLabels: Record<string, string> = {
   duplicate: "重复",
 };
 
+const intentSourceLabels: Record<string, string> = {
+  model: "AI 解析",
+  fallback_default: "默认假设",
+  legacy_migrated: "历史任务迁移",
+  owner_revised: "用户修改",
+};
+
+const timeScopeLabels: Record<string, string> = {
+  recent: "近期",
+  year: "年度",
+  ongoing: "持续范围",
+  custom: "自定义范围",
+};
+
+const contentDecisionLabels: Record<string, string> = {
+  adopted: "已采用",
+  not_adopted: "未采用",
+};
+
+const sourceIndependenceLabels: Record<string, string> = {
+  independent: "独立来源",
+  repost: "转载来源",
+  unknown: "来源未确认",
+};
+
+const contentCompletenessLabels: Record<string, string> = {
+  complete: "完整",
+  partial: "部分完整",
+  missing: "缺失",
+  unknown: "未确认",
+};
+
+const evidenceQualityLabels: Record<string, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+  unknown: "未确认",
+};
+
 function intentValue(value: unknown): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (value === null || value === undefined) return "—";
   return JSON.stringify(value) ?? "—";
+}
+
+function objectStringField(value: unknown, key: string): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : null;
 }
 
 function IntentUnderstandingCard({
@@ -636,7 +974,7 @@ function IntentUnderstandingCard({
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <InfoList title="需要发现的未知项" values={intent.unknowns_to_discover} empty="未记录未知项" />
-          <div className="rounded-xl border border-line p-4 text-sm"><p className="font-semibold">默认范围与计划平台</p><p className="mt-2 text-muted">{intentValue(timeScope.type)}{defaultDays !== null ? ` · ${defaultDays} 天` : ""}{scopeYear !== null ? ` · ${scopeYear} 年` : ""}</p><p className="mt-2 break-words text-muted">{intent.platform_preferences.length > 0 ? intent.platform_preferences.join("、") : task.platforms.join("、")}</p>{intent.target_audience ? <p className="mt-2 text-muted">目标人群：{intent.target_audience}</p> : null}</div>
+          <div className="rounded-xl border border-line p-4 text-sm"><p className="font-semibold">默认范围与计划平台</p><p className="mt-2 text-muted">{timeScopeLabels[String(timeScope.type)] ?? "自定义范围"}{defaultDays !== null ? ` · ${defaultDays} 天` : ""}{scopeYear !== null ? ` · ${scopeYear} 年` : ""}</p><p className="mt-2 break-words text-muted">{intent.platform_preferences.length > 0 ? intent.platform_preferences.join("、") : task.platforms.join("、")}</p>{intent.target_audience ? <p className="mt-2 text-muted">目标人群：{intent.target_audience}</p> : null}</div>
         </div>
         {knownEntities.length > 0 ? <InfoList title="用户已知实体" values={knownEntities} empty="无" /> : null}
         <div className="grid gap-4 md:grid-cols-2">
@@ -646,7 +984,7 @@ function IntentUnderstandingCard({
         <div className="grid gap-4 md:grid-cols-2"><InfoList title="排除内容" values={intent.exclusions} empty="未指定" /><InfoList title="预期输出" values={intent.desired_output} empty="未指定" /></div>
         {intent.assumptions.length > 0 ? <InfoList title="默认假设" values={intent.assumptions} empty="无" /> : null}
         {intent.ambiguities.length > 0 ? <div className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm"><p className="font-semibold text-warning">待确认的歧义</p><ul className="mt-2 space-y-1 text-muted">{intent.ambiguities.map((value) => <li key={value}>· {value}</li>)}</ul>{intent.clarification_question ? <p className="mt-3 font-semibold">澄清问题：{intent.clarification_question}</p> : null}</div> : null}
-        <p className="text-xs leading-5 text-muted">来源：{intent.intent_source} · 当前研究假设：{intent.current_research_hypothesis} · 未静默覆盖原始目标。</p>
+        <p className="text-xs leading-5 text-muted">理解来源：{intentSourceLabels[intent.intent_source] ?? "研究理解"} · 当前研究假设：{intent.current_research_hypothesis} · 未静默覆盖原始目标。</p>
       </CardContent>
     </Card>
   );
@@ -666,22 +1004,21 @@ function InformationUtilityCard({ task }: { task: ResearchTaskDetail }) {
 function DiscoveryCandidatesCard({ task }: { task: ResearchTaskDetail }) {
   const candidates = task.entity_candidates ?? [];
   const discoveries = task.discovery_candidates ?? [];
-  const candidateTypeLabels: Record<string, string> = { entity: "实体", creator: "创作者", topic: "主题", event: "事件", query: "查询方向", pain_point: "痛点", need: "需求", product_opportunity_signal: "产品机会", content_opportunity_signal: "内容机会" };
   return <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="section-kicker">Bounded discovery</p><h3 className="mt-1 font-display text-xl font-semibold">新发现与下一步</h3></div><Link className="text-xs font-semibold text-signal hover:underline" to="/discoveries">打开收件箱 →</Link></div></CardHeader><CardContent className="space-y-3">
-    {discoveries.length > 0 ? discoveries.slice(0, 8).map((candidate) => <article key={candidate.id} className="rounded-xl border border-signal/15 bg-signal/[0.025] p-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-2"><Link to={`/discoveries/${encodeURIComponent(candidate.id)}`} className="font-semibold hover:text-signal">{candidate.title}</Link><Badge variant={candidate.state === "accepted" || candidate.state === "converted_to_research" ? "success" : candidate.state === "ignored" ? "neutral" : "info"}>{candidate.state}</Badge></div><p className="mt-1 text-xs leading-5 text-muted">{candidateTypeLabels[candidate.candidate_type] ?? candidate.candidate_type} · 排序 {(candidate.final_score * 100).toFixed(0)}% · {candidate.platform_count} 个平台 · {candidate.independent_source_count} 个独立来源</p><p className="mt-2 text-xs leading-5 text-muted">{candidate.summary}</p></article>) : null}
-    {candidates.length > 0 ? <><p className="text-xs font-semibold text-muted">阶段 8D-0 实体候选</p>{candidates.map((candidate) => <article key={candidate.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{candidate.normalized_name}</span><Badge variant="info">{candidate.status}</Badge></div><p className="mt-1 text-xs text-muted">{candidate.entity_type} · 新颖性 {(candidate.novelty * 100).toFixed(0)}% · 相关性 {(candidate.relevance_to_intent * 100).toFixed(0)}% · 置信度 {(candidate.confidence * 100).toFixed(0)}%</p>{candidate.suggested_next_action ? <p className="mt-2 text-xs leading-5 text-muted">建议：{candidate.suggested_next_action}</p> : null}{candidate.source_content_id ? <Link className="mt-2 inline-block text-xs text-signal hover:underline" to={`/memory/contents/${encodeURIComponent(candidate.source_content_id)}`}>查看来源内容</Link> : null}</article>)}</> : null}
+    {discoveries.length > 0 ? discoveries.slice(0, 8).map((candidate) => <article key={candidate.id} className="rounded-xl border border-signal/15 bg-signal/[0.025] p-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-2"><Link to={`/discoveries/${encodeURIComponent(candidate.id)}`} className="font-semibold hover:text-signal">{candidate.title}</Link><Badge variant={candidate.state === "accepted" || candidate.state === "converted_to_research" ? "success" : candidate.state === "ignored" ? "neutral" : "info"}>{discoveryStateLabel(candidate.state)}</Badge></div><p className="mt-1 text-xs leading-5 text-muted">{discoveryTypeLabel(candidate.candidate_type)} · 排序 {(candidate.final_score * 100).toFixed(0)}% · {candidate.platform_count} 个平台 · {candidate.independent_source_count} 个独立来源</p><p className="mt-2 text-xs leading-5 text-muted">{candidate.summary}</p></article>) : null}
+    {candidates.length > 0 ? <><p className="text-xs font-semibold text-muted">阶段 8D-0 实体候选</p>{candidates.map((candidate) => <article key={candidate.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{candidate.normalized_name}</span><Badge variant="info">{entityCandidateStatusLabel(candidate.status)}</Badge></div><p className="mt-1 text-xs text-muted">{entityTypeLabel(candidate.entity_type)} · 新颖性 {(candidate.novelty * 100).toFixed(0)}% · 相关性 {(candidate.relevance_to_intent * 100).toFixed(0)}% · 置信度 {(candidate.confidence * 100).toFixed(0)}%</p>{candidate.suggested_next_action ? <p className="mt-2 text-xs leading-5 text-muted">建议：{candidate.suggested_next_action}</p> : null}{candidate.source_content_id ? <Link className="mt-2 inline-block text-xs text-signal hover:underline" to={`/memory/contents/${encodeURIComponent(candidate.source_content_id)}`}>查看来源内容</Link> : null}</article>)}</> : null}
     {discoveries.length === 0 && candidates.length === 0 ? <p className="text-sm text-muted">尚未产生有来源约束的发现。</p> : null}
   </CardContent></Card>;
 }
 
 function EventCandidatesCard({ task }: { task: ResearchTaskDetail }) {
   const events = task.event_candidates ?? [];
-  return <Card><CardHeader><p className="section-kicker">Event candidates</p><h3 className="mt-1 font-display text-xl font-semibold">事件与变化信号</h3></CardHeader><CardContent className="space-y-3">{events.length === 0 ? <p className="text-sm text-muted">尚未记录事件候选。</p> : events.map((event) => <article key={event.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{event.title}</span><Badge variant="warning">{event.event_type}</Badge></div><p className="mt-2 text-xs leading-5 text-muted">{event.summary}</p><p className="mt-2 text-xs text-muted">置信度 {(event.confidence * 100).toFixed(0)}% · 状态 {event.status}{event.source_content_id ? ` · 来源 ${event.source_content_id}` : ""}</p></article>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">Event candidates</p><h3 className="mt-1 font-display text-xl font-semibold">事件与变化信号</h3></CardHeader><CardContent className="space-y-3">{events.length === 0 ? <p className="text-sm text-muted">尚未记录事件候选。</p> : events.map((event) => <article key={event.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{event.title}</span><Badge variant="warning">{eventTypeLabel(event.event_type)}</Badge></div><p className="mt-2 text-xs leading-5 text-muted">{event.summary}</p><p className="mt-2 text-xs text-muted">置信度 {(event.confidence * 100).toFixed(0)}% · 状态 {eventStatusLabel(event.status)}{event.source_content_id ? ` · 来源 ${event.source_content_id}` : ""}</p></article>)}</CardContent></Card>;
 }
 
 function MemoryCard({ task }: { task: ResearchTaskDetail }) {
   const memories = task.memory_items ?? [];
-  return <Card><CardHeader><p className="section-kicker">Long-term research memory</p><h3 className="mt-1 font-display text-xl font-semibold">长期研究记忆</h3><p className="mt-2 text-sm text-muted">已确认事实、推测和实体变化会保留来源，下一次研究可区分已知与新变化。</p></CardHeader><CardContent className="space-y-2">{memories.length === 0 ? <p className="text-sm text-muted">尚未写入长期记忆。</p> : memories.map((memory) => <article key={memory.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold break-words">{memory.memory_key}</span><Badge variant={memory.is_current ? "info" : "neutral"}>{memory.is_current ? "当前" : "历史"}</Badge></div><p className="mt-1 text-xs text-muted">{memory.memory_type} · 置信度 {(memory.confidence * 100).toFixed(0)}% · {intentValue(memory.value)}</p><p className="mt-1 text-xs text-muted">来源：{memory.source_content_id ?? memory.source_query_id ?? memory.source_finding_id ?? "—"}</p></article>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">Long-term research memory</p><h3 className="mt-1 font-display text-xl font-semibold">长期研究记忆</h3><p className="mt-2 text-sm text-muted">已确认事实、推测和实体变化会保留来源，下一次研究可区分已知与新变化。</p></CardHeader><CardContent className="space-y-2">{memories.length === 0 ? <p className="text-sm text-muted">尚未写入长期记忆。</p> : memories.map((memory) => <article key={memory.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold break-words">{memory.memory_key}</span><Badge variant={memory.is_current ? "info" : "neutral"}>{memory.is_current ? "当前" : "历史"}</Badge></div><p className="mt-1 text-xs text-muted">{memoryTypeLabel(memory.memory_type)} · 置信度 {(memory.confidence * 100).toFixed(0)}% · {intentValue(memory.value)}</p><p className="mt-1 text-xs text-muted">来源：{memory.source_content_id ?? memory.source_query_id ?? memory.source_finding_id ?? "—"}</p></article>)}</CardContent></Card>;
 }
 
 function AlignmentReviewCard({ task }: { task: ResearchTaskDetail }) {
@@ -724,7 +1061,7 @@ function CoverageCard({ task }: { task: ResearchTaskDetail }) {
             <div key={platform.id ?? platform.platform} className="rounded-xl border border-line p-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-semibold">{platform.platform}</span>
-                <Badge variant={platform.status === "completed" ? "success" : platform.status === "failed" ? "danger" : "warning"}>{platform.status}</Badge>
+                <Badge variant={platform.status === "completed" ? "success" : platform.status === "failed" ? "danger" : "warning"}>{platformCoverageLabel(platform.status)}</Badge>
               </div>
               <p className="mt-2 text-muted">查询 {platform.actual_query_count} · 结果 {platform.result_count} · 新增 {platform.new_content_count} · 独立证据 {platform.independent_evidence_count}</p>
               {platform.failure_reason ? <p className="mt-1 text-danger">失败原因：{platform.failure_reason}</p> : null}
@@ -735,7 +1072,7 @@ function CoverageCard({ task }: { task: ResearchTaskDetail }) {
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">已发现实体</p>
           {entities.length === 0 ? <p className="text-sm text-muted">尚未发现明确实体。</p> : entities.map((entity) => (
             <div key={`${entity.entity_type}-${entity.canonical_name}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-paper p-3 text-xs">
-              <span className="min-w-0 break-words font-semibold">{entity.canonical_name} <span className="font-normal text-muted">· {entity.entity_type}</span></span>
+              <span className="min-w-0 break-words font-semibold">{entity.canonical_name} <span className="font-normal text-muted">· {entityTypeLabel(entity.entity_type)}</span></span>
               <span className="text-muted">证据 {entity.entity_evidence_count} · 平台 {entity.entity_platform_count} · 占比 {(entity.entity_coverage_ratio * 100).toFixed(0)}%{entity.saturated ? " · 饱和" : ""}</span>
             </div>
           ))}
@@ -781,9 +1118,9 @@ function EvidencePoolCard({ task }: { task: ResearchTaskDetail }) {
               <div key={item.content_id} className="rounded-xl border border-line p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Link to={`/memory/contents/${encodeURIComponent(item.content_id)}`} className="font-semibold hover:text-signal">{item.content_id}</Link>
-                  <span className="text-muted">{item.decision}{item.is_repost ? " · 转载" : ""}</span>
+                  <span className="text-muted">{contentDecisionLabels[item.decision] ?? "已记录"}{item.is_repost ? " · 转载" : ""}</span>
                 </div>
-                <p className="mt-1 text-muted">来源独立性：{item.source_independence} · 完整度：{item.content_completeness} · 质量：{item.evidence_quality}</p>
+                <p className="mt-1 text-muted">来源独立性：{sourceIndependenceLabels[item.source_independence] ?? "未确认"} · 完整度：{contentCompletenessLabels[item.content_completeness] ?? "未确认"} · 质量：{evidenceQualityLabels[item.evidence_quality] ?? "未确认"}</p>
                 {item.not_adopted_reason ? <p className="mt-1 text-danger">未采用原因：{reasonLabel(item.not_adopted_reason)}</p> : null}
               </div>
             ))}
@@ -795,26 +1132,18 @@ function EvidencePoolCard({ task }: { task: ResearchTaskDetail }) {
 }
 
 function BudgetTraceCard({ task }: { task: ResearchTaskDetail }) {
-  const usage = task.step_usage ?? [];
   const consumption = task.consumption;
-  const modeLabel: Record<string, string> = {
-    subscription_fixed: "年度套餐",
-    pay_as_you_go: "按量",
-    relay: "中转",
-    prepaid_balance: "预付余额",
-    quota_bundle: "额度包",
-    unknown: "未知价格",
-  };
   return (
     <Card>
       <CardHeader>
         <p className="section-kicker">Resource budget</p>
-        <h3 className="mt-1 font-display text-xl font-semibold">预算分类与模型轨迹</h3>
+        <h3 className="mt-1 font-display text-xl font-semibold">预算与资源使用</h3>
+        <p className="mt-2 text-sm text-muted">查看本次研究的资源边界和套餐归属；模型调用轨迹与原始参数位于技术详情。</p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="总 Token" value={`${(consumption.input_tokens + consumption.output_tokens).toLocaleString()} / ${task.budget.token_limit.toLocaleString()}`} />
-          <Metric label="模型调用" value={`${consumption.model_call_count ?? usage.length} / ${task.budget.max_model_calls ?? "—"}`} />
+          <Metric label="模型调用" value={`${consumption.model_call_count ?? task.step_usage?.length ?? 0} / ${task.budget.max_model_calls ?? "—"}`} />
           <Metric label="采集任务" value={`${consumption.crawl_count} / ${task.budget.crawl_limit}`} />
           <Metric label="按量金额" value={formatCost(consumption.estimated_cost, consumption.cost_currency)} />
         </div>
@@ -823,10 +1152,65 @@ function BudgetTraceCard({ task }: { task: ResearchTaskDetail }) {
           <div className="rounded-xl bg-paper p-3 text-xs"><p className="font-semibold">DeepSeek / 按量</p><p className="mt-1 text-muted">{(consumption.payg_calls ?? 0).toLocaleString()} 次 · {(consumption.payg_tokens ?? 0).toLocaleString()} Token · {formatCost(consumption.estimated_cost, consumption.cost_currency)}</p></div>
           <div className="rounded-xl bg-paper p-3 text-xs"><p className="font-semibold">中转 / 未知</p><p className="mt-1 text-muted">{(consumption.relay_calls ?? 0).toLocaleString()} 次中转 · {(consumption.uncosted_call_count ?? 0).toLocaleString()} 次不可计算</p></div>
         </div>
-        {usage.length === 0 ? <p className="text-sm text-muted">尚无步骤级模型用量。</p> : <div className="space-y-2">{usage.map((item) => <div key={`${item.sequence}-${item.step}`} className="rounded-xl border border-line p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">#{item.sequence} · {item.step}</span><span className="text-muted">{item.vendor ?? "未知厂商"} / {item.model ?? "未知模型"}</span></div><p className="mt-1 text-muted">{modeLabel[item.billing_mode ?? "unknown"]} · 输入 {item.input_tokens ?? 0} · 输出 {item.output_tokens ?? 0} · {item.latency_ms ?? "—"} ms · 费用 {item.estimated_cost === null || item.estimated_cost === undefined ? "不适用/不可计算" : `${item.estimated_cost} ${item.currency ?? ""}`.trim()}{item.fallback_reason ? ` · Fallback：${item.fallback_reason}` : ""}</p></div>)}</div>}
-        <p className="text-xs leading-5 text-muted">Context Compactor：{typeof task.context.compaction_stats === "object" && task.context.compaction_stats !== null ? JSON.stringify(task.context.compaction_stats) : "尚未运行"}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function TechnicalDetailsCard({ task }: { task: ResearchTaskDetail }) {
+  const [showContext, setShowContext] = useState(false);
+  const usage = task.step_usage ?? [];
+  const modeLabel: Record<string, string> = {
+    subscription_fixed: "年度套餐",
+    pay_as_you_go: "按量",
+    relay: "中转",
+    prepaid_balance: "预付余额",
+    quota_bundle: "额度包",
+    unknown: "未知价格",
+  };
+  const provider = objectStringField(task.route_snapshot.primary, "provider");
+  const model = objectStringField(task.route_snapshot.primary, "model");
+  const crawlerTaskIds = Array.from(new Set((task.queries ?? []).map((query) => query.crawler_task_id).filter((id): id is string => Boolean(id))));
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader><p className="section-kicker">Internal diagnostics</p><h3 className="mt-1 font-display text-xl font-semibold">技术详情</h3><p className="mt-2 text-sm text-muted">仅在这里查看任务标识、模型路由、Token 明细和原始执行上下文。</p></CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <Metric label="任务 UUID" value={task.id} />
+          <Metric label="Provider" value={provider ?? "尚未快照"} />
+          <Metric label="模型" value={model ?? "尚未快照"} />
+          <Metric label="Token 明细" value={`${task.consumption.input_tokens.toLocaleString()} 输入 · ${task.consumption.output_tokens.toLocaleString()} 输出 · ${task.consumption.cached_tokens.toLocaleString()} 缓存`} />
+          <Metric label="Fallback" value={task.step_usage?.some((item) => Boolean(item.fallback_reason)) ? "发生过" : "未记录"} />
+          <Metric label="采集任务数" value={String(task.consumption.crawl_count)} />
+          <Metric label="内部状态" value={`${task.status} · ${task.current_step ?? "—"}`} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><p className="section-kicker">Crawler references</p><h3 className="mt-1 font-display text-xl font-semibold">Crawler Task ID</h3></CardHeader>
+        <CardContent>
+          {crawlerTaskIds.length === 0 ? <p className="text-sm text-muted">尚未生成 Crawler Task ID。</p> : <ul className="space-y-2 text-xs text-muted">{crawlerTaskIds.map((id) => <li key={id} className="break-all rounded-lg bg-paper p-3 font-mono">{id}</li>)}</ul>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><p className="section-kicker">Model calls</p><h3 className="mt-1 font-display text-xl font-semibold">模型调用轨迹</h3></CardHeader>
+        <CardContent>
+          <details className="rounded-xl border border-line">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold">展开全部模型调用（{usage.length} 条）</summary>
+            <div className="space-y-2 border-t border-line p-3">
+              {usage.length === 0 ? <p className="text-sm text-muted">尚无步骤级模型用量。</p> : usage.map((item) => <div key={`${item.sequence}-${item.step}`} className="rounded-xl border border-line p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">#{item.sequence} · {item.step}</span><span className="text-muted">{item.vendor ?? "未知厂商"} / {item.model ?? "未知模型"}</span></div><p className="mt-1 text-muted">{modeLabel[item.billing_mode ?? "unknown"]} · 输入 {item.input_tokens ?? 0} · 输出 {item.output_tokens ?? 0} · {item.latency_ms ?? "—"} ms · 费用 {item.estimated_cost === null || item.estimated_cost === undefined ? "不适用/不可计算" : `${item.estimated_cost} ${item.currency ?? ""}`.trim()}{item.fallback_reason ? ` · Fallback：${item.fallback_reason}` : ""}</p></div>)}
+            </div>
+          </details>
+        </CardContent>
+      </Card>
+      <details className="rounded-2xl border border-danger/20 bg-danger/[0.03]">
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-danger">原始错误{task.failure_reason ? "（有记录）" : "（无记录）"}</summary>
+        <div className="border-t border-danger/20 p-5 text-sm leading-6 text-danger">{task.failure_reason ?? "当前任务没有原始错误记录。"}</div>
+      </details>
+      <Card>
+        <CardHeader><button type="button" className="flex w-full items-center justify-between gap-3 text-left" aria-expanded={showContext} onClick={() => setShowContext((value) => !value)}><span><span className="section-kicker">Raw runtime context</span><span className="mt-1 block font-display text-xl font-semibold">研究执行上下文</span></span><span className="text-xs text-muted">{showContext ? "收起" : "展开"}</span></button></CardHeader>
+        {showContext ? <CardContent className="grid gap-4 sm:grid-cols-2"><div><p className="mb-2 text-sm font-semibold">研究计划</p><pre className="max-h-80 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.research_plan ?? task.plan, null, 2)}</pre></div><div><p className="mb-2 text-sm font-semibold">运行上下文</p><pre className="max-h-80 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(task.context, null, 2)}</pre></div></CardContent> : null}
+      </Card>
+    </div>
   );
 }
 
@@ -898,19 +1282,19 @@ function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDet
     }
     if (query.source_content_id) return `来源内容：${query.source_content_id}`;
     if (query.record_type === "user_goal" || query.source_type === "user_goal") return "用户目标（不进入执行闸门）";
-    return query.source_type;
+    return querySourceLabel(query.source_type);
   };
-  const roleLabel = (query: (typeof queries)[number]) => query.query_role ? ({ seed_discovery: "发现种子", entity_expansion: "实体扩展", cross_platform_validation: "跨平台验证", counterevidence: "反向证据", competitor_scan: "竞品扫描", trend_probe: "趋势探测", creator_scan: "创作者扫描", pain_point_probe: "痛点探测" }[query.query_role] ?? query.query_role) : "历史查询";
+  const roleLabel = (query: (typeof queries)[number]) => query.query_role ? ({ seed_discovery: "发现种子", entity_expansion: "实体扩展", cross_platform_validation: "跨平台验证", counterevidence: "反向证据", competitor_scan: "竞品扫描", trend_probe: "趋势探测", creator_scan: "创作者扫描", pain_point_probe: "痛点探测" }[query.query_role] ?? "研究扩展") : "历史查询";
   const row = (query: (typeof queries)[number]) => {
     const currentLifecycle = lifecycle(query);
     const isUnexecuted = !query.crawler_task_id && !["completed", "failed", "cancelled"].includes(currentLifecycle);
     return <article key={query.id} className="rounded-xl border border-line p-4">
-    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm font-semibold">{query.query}</p><p className="mt-1 text-xs text-muted">{query.query_type} · {roleLabel(query)} · {sourceLabel(query)} · {query.platform}</p></div><Badge variant={currentLifecycle.startsWith("rejected") ? "danger" : currentLifecycle === "completed" ? "success" : currentLifecycle.startsWith("skipped") ? "warning" : "info"}>{currentLifecycle}</Badge></div>
+    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm font-semibold">{query.query}</p><p className="mt-1 text-xs text-muted">{queryTypeLabel(query.query_type)} · {roleLabel(query)} · {sourceLabel(query)} · {query.platform}</p></div><Badge variant={currentLifecycle.startsWith("rejected") ? "danger" : currentLifecycle === "completed" ? "success" : currentLifecycle.startsWith("skipped") ? "warning" : "info"}>{queryLifecycleLabel(currentLifecycle)}</Badge></div>
     <p className="mt-2 text-xs leading-5 text-muted">生成理由：{query.generation_reason}</p>
     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><Metric label="相关性" value={query.relevance_score === null ? "—" : query.relevance_score.toFixed(2)} /><Metric label="具体性" value={query.specificity_score.toFixed(2)} /><Metric label="新颖性" value={query.novelty_score.toFixed(2)} /><Metric label="新增率" value={query.new_content_rate === null || query.new_content_rate === undefined ? "—" : `${(query.new_content_rate * 100).toFixed(0)}%`} /><Metric label="边际价值" value={query.marginal_value_score === null || query.marginal_value_score === undefined ? "—" : query.marginal_value_score.toFixed(2)} /></div>
     {query.rejection_reason ? <p className="mt-3 rounded-lg bg-danger/5 px-3 py-2 text-xs leading-5 text-danger">拒绝原因：{query.rejection_reason}</p> : null}
     {isUnexecuted && query.unexecuted_reason ? <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">未执行原因：{query.unexecuted_reason}</p> : null}
-    <p className="mt-3 text-xs text-muted">决策 {query.decision ?? "历史"} · 闸门 {query.gate_status ?? "历史"} · 结果 {query.result_count} · 新增 {query.new_content_count} · 已存在 {query.existing_content_count} · 已更新 {query.updated_content_count} · 重复证据 {query.duplicate_evidence_count}</p>
+    <p className="mt-3 text-xs text-muted">决策 {queryDecisionLabel(query.decision)} · 闸门 {queryGateLabel(query.gate_status)} · 结果 {query.result_count} · 新增 {query.new_content_count} · 已存在 {query.existing_content_count} · 已更新 {query.updated_content_count} · 重复证据 {query.duplicate_evidence_count}</p>
   </article>;
   };
   return <Card><CardHeader><p className="section-kicker">Query quality gate</p><h3 className="mt-1 font-display text-xl font-semibold">查询轨迹与质量闸门</h3><p className="mt-2 text-sm text-muted">平台查询按预期价值排序；已执行和拒绝分组默认收起，避免执行细节遮住研究结论。</p></CardHeader><CardContent className="space-y-4">{queries.length === 0 ? <p className="text-sm text-muted">暂无查询轨迹（历史任务兼容）。</p> : <>{userGoals.length > 0 ? <div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">用户目标（仅作意图来源，不进入平台闸门）</p><div className="space-y-2">{userGoals.map(row)}</div></div> : null}<div className="rounded-xl border border-line"><button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-semibold" aria-expanded={showExecuted} onClick={() => setShowExecuted((value) => !value)}><span>平台执行查询 · 已执行 / 通过</span><span className="text-xs font-normal text-muted">{executed.length} 条 · {showExecuted ? "收起" : "展开"}</span></button>{showExecuted ? <div className="space-y-2 border-t border-line p-3">{executed.length > 0 ? executed.map(row) : <p className="text-sm text-muted">暂无已执行查询。</p>}</div> : null}</div>{rejectedExecution.length > 0 ? <div className="rounded-xl border border-danger/20"><button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-semibold text-danger" aria-expanded={showRejected} onClick={() => setShowRejected((value) => !value)}><span>平台执行查询 · 已拒绝（全部保留）</span><span className="text-xs font-normal">{rejectedExecution.length} 条 · {showRejected ? "收起" : "展开"}</span></button>{showRejected ? <div className="space-y-2 border-t border-danger/20 p-3">{rejectedExecution.map(row)}</div> : null}</div> : null}</>}</CardContent></Card>;
@@ -923,7 +1307,7 @@ function FindingsCard({ task }: { task: ResearchTaskDetail }) {
 }
 
 function ActionsCard({ actions, busy, onDecide }: { taskId: string; actions: ResearchTaskDetail["actions"]; busy: boolean; onDecide: (actionId: string, decision: "approve" | "reject") => void }) {
-  return <Card><CardHeader><p className="section-kicker">Owner approval</p><h3 className="mt-1 font-display text-xl font-semibold">待确认动作</h3></CardHeader><CardContent className="space-y-3">{actions.length === 0 ? <p className="text-sm text-muted">暂无待确认动作。</p> : actions.map((action) => <div key={action.id} className="rounded-xl border border-line p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{action.action}</p><p className="mt-1 text-xs leading-5 text-muted">{action.reason}</p></div><Badge variant={action.status === "pending" ? "warning" : action.status === "approved" ? "success" : "neutral"}>{action.status}</Badge></div>{action.status === "pending" ? <div className="mt-3 flex gap-2"><Button size="sm" disabled={busy} onClick={() => onDecide(action.id, "approve")}>批准</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => onDecide(action.id, "reject")}>拒绝</Button></div> : null}</div>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">Owner approval</p><h3 className="mt-1 font-display text-xl font-semibold">待确认动作</h3></CardHeader><CardContent className="space-y-3">{actions.length === 0 ? <p className="text-sm text-muted">暂无待确认动作。</p> : actions.map((action) => <div key={action.id} className="rounded-xl border border-line p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{action.action}</p><p className="mt-1 text-xs leading-5 text-muted">{action.reason}</p></div><Badge variant={action.status === "pending" ? "warning" : action.status === "approved" ? "success" : "neutral"}>{actionStatusLabel(action.status)}</Badge></div>{action.status === "pending" ? <div className="mt-3 flex gap-2"><Button size="sm" disabled={busy} onClick={() => onDecide(action.id, "approve")}>批准</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => onDecide(action.id, "reject")}>拒绝</Button></div> : null}</div>)}</CardContent></Card>;
 }
 
 function TraceCard({ trace }: { trace: ResearchTaskDetail["trace"] }) {
@@ -935,12 +1319,12 @@ function TraceCard({ trace }: { trace: ResearchTaskDetail["trace"] }) {
   });
   const groups = new Map<string, typeof trace>();
   filtered.forEach((entry) => {
-    const key = entry.step ?? "其他步骤";
+    const key = entry.step ? researchStepLabel(entry.step) : "其他步骤";
     const current = groups.get(key) ?? [];
     current.push(entry);
     groups.set(key, current);
   });
-  return <Card><CardHeader><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">Execution trace</p><h3 className="mt-1 font-display text-xl font-semibold">执行轨迹（{trace.length} 步）</h3><p className="mt-2 text-sm text-muted">按研究步骤分组；空的 tool、reason、token 字段不会占据详情区域。</p></div><div className="relative w-full sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="搜索轨迹" aria-label="搜索执行轨迹" /></div></div></CardHeader><CardContent className="space-y-2">{trace.length === 0 ? <p className="text-sm text-muted">暂无轨迹。</p> : filtered.length === 0 ? <p className="text-sm text-muted">没有匹配的轨迹。</p> : Array.from(groups.entries()).map(([group, entries]) => { const elapsed = entries.reduce((total, entry) => total + (entry.elapsed_ms ?? 0), 0); return <details key={group} className="group rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm"><ChevronDown className="size-4 transition group-open:rotate-180" /><span className="font-semibold">{group}</span><span className="text-xs text-muted">{entries.length} 步</span><span className="ml-auto text-xs text-muted">{elapsed > 0 ? `${elapsed} ms` : "耗时未记录"}</span></summary><div className="space-y-2 border-t border-line p-3">{entries.map((entry) => <details key={entry.sequence} className="rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 text-sm"><span className="font-mono text-xs text-muted">#{entry.sequence}</span><span className="font-semibold">{entry.event}</span><span className="ml-auto text-xs text-muted">{entry.status ?? ""}</span></summary><div className="grid gap-3 border-t border-line bg-paper/50 p-3 text-xs sm:grid-cols-2"><div>{entry.reason ? <><p className="text-muted">原因</p><p className="mt-1">{entry.reason}</p></> : null}{entry.provider || entry.model ? <><p className="mt-3 text-muted">模型</p><p className="mt-1">{entry.provider ?? "—"} / {entry.model ?? "—"}</p></> : null}</div><div>{entry.input_tokens !== null || entry.output_tokens !== null || entry.elapsed_ms !== null ? <><p className="text-muted">Token / 耗时</p><p className="mt-1">{entry.input_tokens ?? "—"} / {entry.output_tokens ?? "—"} · {entry.elapsed_ms ?? "—"} ms</p></> : null}{entry.tool_arguments ? <><p className="mt-3 text-muted">实际工具参数</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap">{JSON.stringify(entry.tool_arguments, null, 2)}</pre></> : null}</div></div></details>)}</div></details>; })}</CardContent></Card>;
+  return <Card><CardHeader><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">Execution trace</p><h3 className="mt-1 font-display text-xl font-semibold">执行轨迹（{trace.length} 步）</h3><p className="mt-2 text-sm text-muted">按研究步骤分组；空的 tool、reason、token 字段不会占据详情区域。</p></div><div className="relative w-full sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="搜索轨迹" aria-label="搜索执行轨迹" /></div></div></CardHeader><CardContent className="space-y-2">{trace.length === 0 ? <p className="text-sm text-muted">暂无轨迹。</p> : filtered.length === 0 ? <p className="text-sm text-muted">没有匹配的轨迹。</p> : Array.from(groups.entries()).map(([group, entries]) => { const elapsed = entries.reduce((total, entry) => total + (entry.elapsed_ms ?? 0), 0); return <details key={group} className="group rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm"><ChevronDown className="size-4 transition group-open:rotate-180" /><span className="font-semibold">{group}</span><span className="text-xs text-muted">{entries.length} 步</span><span className="ml-auto text-xs text-muted">{elapsed > 0 ? `${elapsed} ms` : "耗时未记录"}</span></summary><div className="space-y-2 border-t border-line p-3">{entries.map((entry) => <details key={entry.sequence} className="rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 text-sm"><span className="font-mono text-xs text-muted">#{entry.sequence}</span><span className="font-semibold">{traceEventLabel(entry.event)}</span><span className="ml-auto text-xs text-muted">{entry.status ? statusLabels[entry.status] : ""}</span></summary><div className="grid gap-3 border-t border-line bg-paper/50 p-3 text-xs sm:grid-cols-2"><div>{entry.reason ? <><p className="text-muted">原因</p><p className="mt-1">{entry.reason}</p></> : null}{entry.provider || entry.model ? <><p className="mt-3 text-muted">模型</p><p className="mt-1">{entry.provider ?? "—"} / {entry.model ?? "—"}</p></> : null}</div><div>{entry.input_tokens !== null || entry.output_tokens !== null || entry.elapsed_ms !== null ? <><p className="text-muted">Token / 耗时</p><p className="mt-1">{entry.input_tokens ?? "—"} / {entry.output_tokens ?? "—"} · {entry.elapsed_ms ?? "—"} ms</p></> : null}{entry.tool_arguments ? <><p className="mt-3 text-muted">实际工具参数</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap">{JSON.stringify(entry.tool_arguments, null, 2)}</pre></> : null}</div></div></details>)}</div></details>; })}</CardContent></Card>;
 }
 
 function EmptyDetail() { return <Card className="grid min-h-80 place-items-center"><div className="text-center"><FileSearch className="mx-auto size-8 text-muted" /><p className="mt-3 text-sm text-muted">选择一个任务查看真实执行状态与证据。</p></div></Card>; }

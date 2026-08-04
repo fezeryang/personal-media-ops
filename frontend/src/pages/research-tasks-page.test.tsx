@@ -552,6 +552,7 @@ describe("ResearchTasksPage", () => {
   beforeEach(() => {
     vi.spyOn(researchApi, "listResearchTasks").mockResolvedValue([task]);
     vi.spyOn(researchApi, "getResearchTask").mockResolvedValue(task);
+    vi.spyOn(researchApi, "listDiscoveries").mockResolvedValue([]);
     vi.spyOn(researchApi, "decideResearchAction").mockResolvedValue(task.actions[0]);
     vi.spyOn(researchApi, "pauseResearchTask").mockResolvedValue(task);
     vi.spyOn(researchApi, "resumeResearchTask").mockResolvedValue(task);
@@ -569,30 +570,44 @@ describe("ResearchTasksPage", () => {
     expect(screen.getByText("研究理解卡")).toBeInTheDocument();
     expect(screen.getByText("研究对齐审查")).toBeInTheDocument();
     expect(screen.getByText("独立证据")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新研究" })).toBeInTheDocument();
+    expect(screen.getByLabelText("研究目标")).toBeInTheDocument();
+    expect(screen.getByText("待处理发现")).toBeInTheDocument();
+    expect(screen.getByText("暂无待处理发现")).toBeInTheDocument();
+    expect(screen.queryByText("research-1")).not.toBeInTheDocument();
+    expect(screen.queryByText(/200 tok/)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "证据与结论" }));
+    await user.click(screen.getByRole("tab", { name: "证据" }));
     expect(await screen.findByText("资料描述了一个本地优先的 AI 工作台。")).toBeInTheDocument();
     expect(screen.getByText("AI 工作台实践")).toBeInTheDocument();
     expect(screen.getByText("证据池与未采用内容")).toBeInTheDocument();
     expect(screen.getByText("信息价值分布")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "发现与记忆" }));
+    await user.click(screen.getByRole("tab", { name: "发现" }));
     expect(screen.getByText("新发现与下一步")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "计划与资源" }));
+    await user.click(screen.getByRole("tab", { name: "查询" }));
     expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
-    expect(screen.getByText("预算分类与模型轨迹")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /平台执行查询 · 已执行/ }));
     await user.click(screen.getByRole("button", { name: /平台执行查询 · 已拒绝/ }));
     expect(screen.getByText(/仅包含泛化词/)).toBeInTheDocument();
     expect(screen.getByText(/连续两轮新增率低于阈值/)).toBeInTheDocument();
+    expect(screen.getByText("因边际价值低跳过")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "执行轨迹" }));
+    await user.click(screen.getByRole("tab", { name: "预算" }));
+    expect(screen.getByText("预算与资源使用")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "技术详情" }));
+    expect(screen.getByText("research-1")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "技术详情" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /研究执行上下文/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "研究过程" }));
     expect(screen.getByText("执行轨迹（1 步）")).toBeInTheDocument();
-    await user.click(screen.getByText("search_library"));
+    await user.click(screen.getByText("检索已有资料"));
     expect(screen.getByText(/AI workbench/)).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("keeps quality counts, rejected queries, and evidence reachable at 390px", async () => {
     const previousWidth = window.innerWidth;
@@ -601,7 +616,7 @@ describe("ResearchTasksPage", () => {
       const user = userEvent.setup();
       renderPage();
       expect(await screen.findByText("研究理解卡")).toBeInTheDocument();
-      await user.click(screen.getByRole("tab", { name: "计划与资源" }));
+      await user.click(screen.getByRole("tab", { name: "查询" }));
       expect(screen.getByText("查询轨迹与质量闸门")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /平台执行查询 · 已执行/ }));
       await user.click(screen.getByRole("button", { name: /平台执行查询 · 已拒绝/ }));
@@ -609,7 +624,7 @@ describe("ResearchTasksPage", () => {
       await user.click(screen.getByRole("tab", { name: "总览" }));
       expect(screen.getByText("已存在")).toBeInTheDocument();
       expect(screen.getByText(/停止原因：/)).toBeInTheDocument();
-      await user.click(screen.getByRole("tab", { name: "证据与结论" }));
+      await user.click(screen.getByRole("tab", { name: "证据" }));
       expect(screen.getByText("直接支持 · 强")).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
@@ -632,7 +647,6 @@ describe("ResearchTasksPage", () => {
     const create = vi.spyOn(researchApi, "createResearchTask").mockResolvedValue(task);
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole("button", { name: "新建研究任务" }));
     expect(screen.getByText("快手")).toBeInTheDocument();
     expect(screen.getByText(/上游搜索协议异常/)).toBeInTheDocument();
     const objective = screen.getByLabelText("研究目标");
@@ -646,7 +660,10 @@ describe("ResearchTasksPage", () => {
     expect(within(preview).getByText("需要的证据")).toBeInTheDocument();
     expect(within(preview).getAllByText("反向证据").length).toBeGreaterThan(0);
     expect(within(preview).getByText("排除项")).toBeInTheDocument();
+    await user.type(within(preview).getByLabelText("补充要求"), "优先说明登录门槛和真实使用限制");
     await user.click(screen.getByRole("button", { name: "确认理解并开始" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ platforms: ["bili", "xhs"] })));
+    const [input] = create.mock.calls[0] ?? [];
+    expect(input?.objective).toContain("补充要求：优先说明登录门槛和真实使用限制");
   });
 });

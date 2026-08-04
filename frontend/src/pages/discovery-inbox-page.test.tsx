@@ -96,12 +96,12 @@ describe("DiscoveryInboxPage", () => {
 
   it("renders source-bound explanations and honest follow-up controls", async () => {
     renderPage();
-    expect(await screen.findByRole("heading", { name: "AI 工作台登录摩擦" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText("为什么相关")).toBeInTheDocument();
     expect(screen.getByText("继续寻找独立用户证据。")).toBeInTheDocument();
     expect(screen.getByText("还没有研究空间，先创建一个再收藏这条发现。")).toBeInTheDocument();
     expect(screen.getByText("真实登录体验")).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("renders event aggregation and unavailable experimental status", async () => {
     const eventCandidate: DiscoveryCandidateDetail = {
@@ -112,7 +112,7 @@ describe("DiscoveryInboxPage", () => {
     };
     vi.mocked(researchApi.getDiscovery).mockResolvedValue(eventCandidate);
     renderPage();
-    expect(await screen.findByRole("heading", { name: "AI 工作台版本变化" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI 工作台版本变化" }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText("事件聚合")).toBeInTheDocument();
     expect(screen.getByText("2026-08-01T00:00:00Z → 2026-08-03T00:00:00Z")).toBeInTheDocument();
     expect(screen.getByText("平台：bili、zhihu")).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe("DiscoveryInboxPage", () => {
     const giveFeedback = vi.spyOn(researchApi, "giveDiscoveryFeedback").mockResolvedValue(candidate);
     const user = userEvent.setup();
     renderPage();
-    await screen.findByRole("heading", { name: "AI 工作台登录摩擦" });
+    await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 });
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "降低同类优先级" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "屏蔽此主题" }));

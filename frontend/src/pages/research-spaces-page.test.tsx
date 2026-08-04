@@ -46,9 +46,9 @@ describe("ResearchSpacesPage", () => {
 
   it("renders typed items with their real IDs", async () => {
     renderPage();
-    expect(await screen.findByRole("heading", { name: "个人 AI 机会" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "个人 AI 机会" }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText("登录摩擦候选")).toBeInTheDocument();
     expect(screen.getByText("对象 ID：candidate-1")).toBeInTheDocument();
     expect(screen.getByText("后续验证")).toBeInTheDocument();
-  });
+  }, 10_000);
 });

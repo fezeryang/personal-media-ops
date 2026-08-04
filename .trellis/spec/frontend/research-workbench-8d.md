@@ -31,11 +31,20 @@ not primary navigation entries.
 - The primary sidebar and mobile rail contain only AI Research, Discovery
   Inbox, Research Spaces, Memory & Evidence, Tools, and Settings. The list is
   filtered by the server feature flags; legacy surfaces are hidden by default.
-- The AI Research home starts with the natural-language goal, then exposes the
-  understanding card, bounded progress, and links to evidence/discovery.
-- Research detail uses tabs: Overview, Evidence & Findings, Discovery &
-  Memory, Plan & Resources, and Execution Trace. Overview is the default and
-  shows goal/status/alignment/coverage/finding/new-content/discovery summary.
+- The AI Research home starts with the natural-language goal, then exposes
+  Recent Research, pending Discovery, owner decisions, the understanding card,
+  bounded progress, and links to evidence/discovery. Advanced boundaries
+  remain collapsed.
+- Research creation is a two-step owner confirmation: the first submit displays
+  a deterministic understanding preview; the preview accepts optional
+  supplementary requirements; only the explicit confirmation starts the task,
+  while “back to edit” does not call the create API.
+- Research detail uses tabs: Overview, Research Process, Discovery, Evidence,
+  Queries, Budget, and Technical Details. Overview is the default and shows
+  goal/status/coverage/finding/new-content/discovery summary. Technical UUID,
+  provider/model route, token detail, crawler IDs, internal status, raw errors,
+  model-call trace, and raw context are not rendered in the default summary or
+  user-facing tabs.
 - Query execution groups are collapsed by default and sorted by
   `expected_value_score` descending. Rejected queries remain available with
   their durable reason. Trace groups are collapsed, searchable, and do not
@@ -54,9 +63,9 @@ not primary navigation entries.
   monitoring task.
 - Space items are typed and display the resolved item summary plus the real
   object ID. A missing item/error is visible; it is not replaced by a fixture.
-- Research creation is a two-step owner confirmation: the first submit displays
-  a deterministic understanding preview; only the explicit confirmation starts
-  the task, while “back to edit” does not call the create API.
+- Budget views expose semantic resource totals and billing categories;
+  model-call trace and raw execution context remain collapsed under Technical
+  Details.
 - Research HTML is still passed through the existing DOMPurify allow-list.
   JSON/API error and Zod mismatch states remain visible to the owner.
 - Route-level page imports are lazy-loaded behind the existing Suspense
@@ -95,9 +104,11 @@ not primary navigation entries.
   and Research Space summaries with Zod.
 - Shell tests assert exactly the six canonical primary entries and no default
   legacy labels at 390px.
-- Research page tests assert default Overview, tab switching, collapsed query
-  groups, searchable/grouped trace, partial-completion copy, and real empty or
-  API-error states.
+- Research page tests assert default Overview, the natural-language home and
+  supplementary requirements, tab switching across process/discovery/
+  evidence/queries/budget/technical detail, collapsed query groups/model-call
+  trace/raw context, searchable/grouped trace, partial-completion copy, and
+  real empty or API-error states.
 - Discovery/Space page tests assert source explanations, feedback/undo,
   continue-to-research, add-to-space, owner-safe errors, and typed item forms.
 - Run `npm run lint`, `npm run test`, and `npm run build` after route changes.

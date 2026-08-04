@@ -1,2 +1,4 @@
 {"file":".trellis/spec/backend/research-discovery-8d1.md","reason":"Implementation reference for bounded source-bound Discovery generation and production platform capability boundaries."}
 {"file":".trellis/spec/frontend/research-workbench-8d.md","reason":"Implementation reference for canonical navigation, candidate explanation rendering, and explicit owner confirmation."}
+{"file":"frontend/src/pages/research-tasks-page.tsx","reason":"Research home now starts with the natural-language input and owner pulse cards; detail tabs match the 8D product information architecture; technical fields are isolated and raw execution details are progressively disclosed."}
+{"file":"frontend/src/pages/research-tasks-page.test.tsx","reason":"Regression coverage for the default research home, supplementary requirements, semantic tab labels, technical isolation, and 390px behavior."}
