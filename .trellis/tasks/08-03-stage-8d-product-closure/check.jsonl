@@ -19,3 +19,7 @@
 {"commit":"2a9c4a2","result":"production code deployed: follow-up lineage and scoped-feedback validation"}
 {"commit":"9e72e15","result":"acceptance-contract tests and discovery spec pushed; test-only change not deployed"}
 {"production_backup":"/var/backups/mediaops/20260804T062801Z","sha256":"e48e2659554b060c74ba47c668e8036cdbfce964deaee2d82f9c6bd770020627","result":"pre-deployment SQLite backup verified"}
+{"command":"cd backend && .venv/bin/pytest -q tests/test_research_runtime.py tests/test_phase8c_runtime_edges.py tests/test_research_intent_8d0.py tests/test_discovery.py","result":"passed: 58 targeted 8C/8D runtime, intent, and discovery tests"}
+{"command":"cd backend && .venv/bin/pytest --cov=app --cov-report=term-missing","result":"passed: 432 tests; total coverage 86.22%, required 86%"}
+{"command":"cd frontend && npm run lint && npm run test && npm run build","result":"passed: ESLint; 28 test files, 68 tests; TypeScript and Vite production build"}
+{"production_diagnosis":"Owner session metadata was active; no server browser process existed; the new product-tool task reached AwaitingReview with zero crawler tasks because all initial Bilibili execution-query candidates were historical duplicates and the runtime did not rotate platforms","result":"fixed with bounded quality-gate platform rotation and regression coverage; no auth, cookie, token, browser-state, or database changes"}

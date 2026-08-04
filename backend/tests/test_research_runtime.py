@@ -21,7 +21,7 @@ from app.repositories.library import LibraryRepository
 from app.repositories.research import ResearchTaskConflict, ResearchTaskRepository
 from app.security.passwords import hash_password
 from app.services.ai.providers import ProviderError
-from app.services.ai.research_quality import normalize_query
+from app.services.ai.research_quality import normalize_query, platform_query_variants
 from app.services.ai.research_runtime import (
     ResearchRuntime,
     _elapsed_from,
@@ -1644,6 +1644,118 @@ def test_modern_initial_directions_are_platform_transformed_after_history_duplic
     detail = repository.get_for_runtime(task_id, detail=True)
     assert detail is not None
     assert any(item["lifecycle_status"] == "executing" for item in detail["queries"])
+
+
+def test_production_quality_gate_rotates_after_initial_platform_duplicates(
+    tmp_path: Path,
+    test_settings,
+) -> None:
+    database, owner_id = setup_database(tmp_path)
+    repository = ResearchTaskRepository(database)
+    objective = "最近有哪些值得关注的个人 AI 工具？"
+    previous = create_task(database, owner_id, objective=objective, platforms=["bili"])
+    for query in platform_query_variants(objective, "bili"):
+        bounded_query = f"{query} 哔哩哔哩"
+        repository.create_query(
+            task_id=str(previous["id"]),
+            query=bounded_query,
+            normalized_query=normalize_query(bounded_query),
+            query_type="product",
+            platform="bili",
+            source_type="intent_plan",
+            source_content_id=None,
+            source_finding_id=None,
+            parent_query_id=None,
+            generation_reason="previous production acceptance query",
+            specificity_score=0.8,
+            novelty_score=1.0,
+            noise_risk_score=0.1,
+            status="approved",
+        )
+
+    task = create_task(database, owner_id, objective=objective, platforms=["bili", "zhihu"])
+    task_id = str(task["id"])
+    from app.services.ai.intent_interpreter import build_default_intent
+
+    repository.save_intent(
+        task_id,
+        build_default_intent(objective, ["bili", "zhihu"]).model_dump(mode="json"),
+        change_reason="test",
+    )
+    repository.save_plan(
+        task_id,
+        plan={
+            "initial_query": objective,
+            "execution_query_directions": [
+                {"query": objective, "query_role": "seed_discovery"}
+                for _ in range(4)
+            ],
+            "derived_keywords": [],
+        },
+        route_snapshot={"primary": {"model_record_id": "model-1"}},
+        round_number=1,
+    )
+    repository.transition(task_id, status="Researching", reason="test", step="research_round")
+    current = repository.get_for_runtime(task_id, detail=True)
+    assert current is not None
+
+    gateway = FakeResearchGateway(
+        [
+            ModelResponse(
+                content='{"relevance_scores":[0.9,0.9,0.9,0.9]}',
+                provider="MiniMax",
+                model="MiniMax-M3",
+                usage=ModelUsage(input_tokens=5, output_tokens=3),
+            )
+        ]
+    )
+    ai_repository = Mock()
+    ai_repository.invocation_cost.return_value = None
+    ai_repository.invocation_billing.return_value = {}
+    tools = ResearchToolService(
+        settings=test_settings,
+        library_tools=Mock(),
+        crawler=Mock(),
+        research=repository,
+    )
+    runtime = ResearchRuntime(
+        research=repository,
+        ai_repository=ai_repository,
+        gateway=gateway,
+        tools=tools,
+    )
+
+    prepared = asyncio.run(
+        runtime._prepare_quality_query(
+            current,
+            round_number=1,
+            context={},
+            plan=current["plan"],  # type: ignore[arg-type]
+            crawl_count=0,
+        )
+    )
+
+    assert prepared is not None
+    selected_query, selected_query_id, selected_platform = prepared
+    assert selected_platform == "zhihu"
+    assert "知乎" in selected_query
+    assert len(gateway.requests) == 1
+    detail = repository.get_for_runtime(task_id, detail=True)
+    assert detail is not None
+    assert all(
+        item["lifecycle_status"] == "rejected_duplicate"
+        for item in detail["queries"]
+        if item["platform"] == "bili" and item["record_type"] == "execution_query"
+    )
+    selected = repository.get_query(selected_query_id)
+    assert selected["platform"] == "zhihu"
+    assert selected["lifecycle_status"] == "executing"
+    assert any(
+        item["event"] == "quality_gate_platform_rotated"
+        and item["tool_arguments"]["from_platform"] == "bili"
+        and item["tool_arguments"]["to_platform"] == "zhihu"
+        for item in detail["execution_trace"]
+    )
 
 
 def test_modern_runtime_reuses_held_direction_after_platform_round(

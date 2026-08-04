@@ -1019,6 +1019,7 @@ class ResearchRuntime:
         context: dict[str, object],
         plan: dict[str, object],
         crawl_count: int,
+        _attempted_platform_indexes: set[int] | None = None,
     ) -> tuple[str, str, str] | None:
         """Persist deterministic candidates, reject noise, then batch-score."""
 
@@ -1279,6 +1280,54 @@ class ResearchRuntime:
             historical.append(quality.normalized_query)
         approved = await self._score_quality_candidates(task, persisted)
         if not approved:
+            raw_platforms = task.get("platforms")
+            platforms = (
+                [
+                    str(item).casefold()
+                    for item in raw_platforms
+                    if isinstance(item, str) and item.strip()
+                ]
+                if isinstance(raw_platforms, list)
+                else []
+            )
+            current_platform_index = platform_index % len(platforms) if platforms else 0
+            attempted_platform_indexes = set(_attempted_platform_indexes or ())
+            attempted_platform_indexes.add(current_platform_index)
+            # A repeated objective can exhaust one platform's historical query
+            # variants without producing a crawl. For a bounded multi-platform
+            # research task, continue through the requested platform set before
+            # converging to a partial result. A recorded crawler failure follows
+            # the separate login/retry path and must not be silently reclassified
+            # as a quality-gate rotation.
+            if platforms and not isinstance(context.get("last_crawl_failure"), str):
+                for offset in range(1, len(platforms)):
+                    next_platform_index = (current_platform_index + offset) % len(platforms)
+                    if next_platform_index in attempted_platform_indexes:
+                        continue
+                    next_platform = platforms[next_platform_index]
+                    context["next_crawl_platform_index"] = next_platform_index
+                    self.research.append_trace(
+                        task_id,
+                        event="quality_gate_platform_rotated",
+                        status="Researching",
+                        reason="当前平台的查询候选均未通过质量门，继续尝试下一个请求平台",
+                        round_number=round_number,
+                        step="query_gate",
+                        tool_arguments={
+                            "from_platform": platform,
+                            "to_platform": next_platform,
+                            "from_platform_index": current_platform_index,
+                            "to_platform_index": next_platform_index,
+                        },
+                    )
+                    return await self._prepare_quality_query(
+                        task,
+                        round_number=round_number,
+                        context=context,
+                        plan=plan,
+                        crawl_count=crawl_count,
+                        _attempted_platform_indexes=attempted_platform_indexes,
+                    )
             return None
         selected = approved[0]
         self.research.set_query_lifecycle(
