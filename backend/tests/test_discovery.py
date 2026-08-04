@@ -647,3 +647,139 @@ def test_discovery_marks_cross_platform_near_duplicate_as_repost(
     repost_detection = detail["score_explanation"]["repost_detection"]
     assert repost_detection["suspected_repost_count"] == 1
     assert repost_detection["reasons"]
+
+
+def test_phase_8d_acceptance_objectives_produce_bounded_product_and_pain_discoveries(
+    test_settings,
+) -> None:
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="phase-8d-acceptance-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    research = ResearchTaskRepository(test_settings.database_path)
+    discovery = DiscoveryRepository(test_settings.database_path)
+
+    product_task = _task(
+        test_settings.database_path,
+        owner_id,
+        platforms=["bili", "zhihu"],
+        objective="最近有哪些值得关注的个人 AI 工具？",
+    )
+    products = ["LocalFlow", "NotePilot", "TaskWeave"]
+    for index, product in enumerate(products):
+        primary_id = f"acceptance-product-primary-{index}"
+        secondary_id = f"acceptance-product-secondary-{index}"
+        _content(
+            test_settings.database_path,
+            content_id=primary_id,
+            title=f"{product} AI 工具真实体验",
+            platform="bili",
+            description="用户记录了真实使用场景、工作流收益和当前限制，内容来自独立体验者。",
+        )
+        _content(
+            test_settings.database_path,
+            content_id=secondary_id,
+            title=f"{product} 使用分析与适用人群",
+            platform="zhihu",
+            description="另一位用户分析了产品定位、实际工作流和适用边界，并提出了不同的使用反馈。",
+        )
+        entity = research.save_entity_candidate(
+            task_id=str(product_task["id"]),
+            entity_type="product",
+            normalized_name=product,
+            source_content_id=primary_id,
+            relevance_to_intent=0.92,
+            novelty=0.86,
+            confidence=0.9,
+            suggested_next_action="继续验证真实用户反馈",
+        )
+        assert entity["source_content_id"] == primary_id
+        research.record_information_utility(
+            task_id=str(product_task["id"]),
+            content_id=primary_id,
+            utility_type="discovery_seed",
+            rationale="来源记录了真实产品体验和使用场景。",
+            confidence=0.9,
+        )
+
+    product_result = DiscoveryEngine(
+        discovery=discovery,
+        research=research,
+        production_verified_platforms=("bili", "zhihu"),
+    ).generate_for_task(str(product_task["id"]))
+    product_candidates = [
+        item
+        for item in product_result["candidates"]
+        if item["candidate_type"] == "entity" and item["final_score"] >= 0.55
+    ]
+    assert len(product_candidates) >= 3
+    assert all(item["depth"] == 1 for item in product_candidates)
+    product_details = [
+        discovery.get_candidate(owner_id=owner_id, candidate_id=str(item["id"]))
+        for item in product_candidates[:3]
+    ]
+    assert all(detail is not None for detail in product_details)
+    assert all(detail["score_explanation"]["why_relevant"] for detail in product_details if detail)
+    assert all(detail["sources"] for detail in product_details if detail)
+    assert any(
+        detail["platform_count"] >= 2 and detail["independent_source_count"] >= 2
+        for detail in product_details
+        if detail
+    )
+
+    pain_task = _task(
+        test_settings.database_path,
+        owner_id,
+        platforms=["xhs", "zhihu"],
+        objective="小红书和知乎用户在抱怨哪些 AI 工具不好用？",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="acceptance-pain-xhs",
+        title="AI 工具不好用的用户吐槽",
+        platform="xhs",
+        description="小红书账号当前不可作为生产验证来源；这条内容不应进入本次 Discovery。",
+    )
+    _content(
+        test_settings.database_path,
+        content_id="acceptance-pain-zhihu",
+        title="AI 工具真实踩坑记录",
+        platform="zhihu",
+        description="用户直接描述工具不好用、经常失败、结果不稳定和工作流问题，属于负向体验证据。",
+    )
+    pain_entity = research.save_entity_candidate(
+        task_id=str(pain_task["id"]),
+        entity_type="product",
+        normalized_name="Painful AI Tool",
+        source_content_id="acceptance-pain-zhihu",
+        relevance_to_intent=0.94,
+        novelty=0.8,
+        confidence=0.88,
+        suggested_next_action="寻找其他作者的直接负向证据",
+    )
+    assert pain_entity["source_content_id"] == "acceptance-pain-zhihu"
+    research.record_information_utility(
+        task_id=str(pain_task["id"]),
+        content_id="acceptance-pain-zhihu",
+        utility_type="discovery_seed",
+        rationale="来源包含直接负向体验和可复核的使用限制。",
+        confidence=0.88,
+    )
+
+    pain_result = DiscoveryEngine(
+        discovery=discovery,
+        research=research,
+        production_verified_platforms=("zhihu",),
+    ).generate_for_task(str(pain_task["id"]))
+    pain_candidates = [
+        item for item in pain_result["candidates"] if item["candidate_type"] == "pain_point"
+    ]
+    assert pain_candidates
+    assert pain_result["run"]["depth"] == 1
+    for item in pain_candidates:
+        detail = discovery.get_candidate(owner_id=owner_id, candidate_id=str(item["id"]))
+        assert detail is not None
+        assert {str(source["platform"]) for source in detail["sources"]} == {"zhihu"}
+        assert "不好用" in detail["summary"] or "负向" in detail["summary"]

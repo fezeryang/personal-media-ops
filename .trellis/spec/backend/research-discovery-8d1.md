@@ -148,6 +148,10 @@ query excludes terminal low-value states (`ignored`, `dismissed_duplicate`, and
   components/explanations, exact and near-duplicate repost grouping with
   explainable reasons, cross-platform counts, pain-point generation, and no
   candidate without a source.
+- Acceptance-contract tests cover the product-discovery objective with at least
+  three high-scoring entities and a cross-platform source, plus the
+  pain-point objective with direct negative evidence and an honest
+  production-platform gate.
 - Repository tests assert owner isolation, upsert uniqueness, lifecycle
   transitions, score snapshots, feedback rule creation/deactivation, and
   typed space-item validation.
