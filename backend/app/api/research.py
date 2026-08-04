@@ -401,6 +401,10 @@ def _create_follow_up_task(
     context.update(
         {
             "discovery_parent_candidate_id": str(candidate["id"]),
+            "discovery_source_task_id": str(candidate.get("research_task_id") or "") or None,
+            "discovery_source_seed_id": str(candidate.get("source_seed_id") or "") or None,
+            "discovery_source_candidate_type": str(candidate.get("candidate_type") or ""),
+            "discovery_source_normalized_key": str(candidate.get("normalized_key") or ""),
             "discovery_source_content_ids": list(dict.fromkeys(source_ids))[:20],
             "discovery_source_summary": str(candidate.get("summary") or "")[:1_000],
         }
@@ -666,6 +670,10 @@ def give_discovery_feedback(
         else:
             if payload.feedback_type is None:
                 raise DiscoveryConflict("feedback_type is required unless undo_feedback_id is supplied")
+            if payload.scope == "global" and payload.scope_key:
+                raise DiscoveryConflict("global feedback must not include scope_key")
+            if payload.scope != "global" and not payload.scope_key:
+                raise DiscoveryConflict("scoped feedback requires scope_key")
             discovery.record_feedback(
                 owner_id=auth.user_id,
                 candidate_id=candidate_id,

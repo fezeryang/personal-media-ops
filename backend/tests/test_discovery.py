@@ -183,6 +183,11 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
         experimental_status=None,
     )
     candidate_id = str(candidate["id"])
+    invalid_scope_response = client.post(
+        f"/api/research/discoveries/{candidate_id}/feedback",
+        json={"feedback_type": "follow", "scope": "platform"},
+    )
+    assert invalid_scope_response.status_code == 409
     feedback_response = client.post(
         f"/api/research/discoveries/{candidate_id}/feedback",
         json={"feedback_type": "irrelevant", "reason": "与当前目标无关"},
@@ -192,13 +197,16 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
     assert feedback_payload["state"] == "ignored"
     feedback_id = feedback_payload["feedback"][0]["id"]
     assert feedback_payload["score_explanation"]["feedback"]
+    assert feedback_payload["final_score"] < candidate["final_score"]
 
     undo_response = client.post(
         f"/api/research/discoveries/{candidate_id}/feedback",
         json={"undo_feedback_id": feedback_id},
     )
     assert undo_response.status_code == 200, undo_response.text
-    assert undo_response.json()["feedback"][0]["undone_at"]
+    undo_payload = undo_response.json()
+    assert undo_payload["feedback"][0]["undone_at"]
+    assert undo_payload["final_score"] > feedback_payload["final_score"]
     assert discovery.list_preferences(owner_id=owner_id) == []
 
     continue_response = client.post(
@@ -208,6 +216,10 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
     assert continue_response.status_code == 200, continue_response.text
     follow_up = continue_response.json()
     assert follow_up["id"] != task["id"]
+    assert follow_up["context"]["discovery_parent_candidate_id"] == candidate_id
+    assert follow_up["context"]["discovery_source_task_id"] == task["id"]
+    assert follow_up["context"]["discovery_source_candidate_type"] == "entity"
+    assert follow_up["context"]["discovery_source_content_ids"] == []
     assert client.get(f"/api/research/tasks/{follow_up['id']}").status_code == 200
     original_detail = client.get(f"/api/research/tasks/{task['id']}")
     assert original_detail.status_code == 200, original_detail.text

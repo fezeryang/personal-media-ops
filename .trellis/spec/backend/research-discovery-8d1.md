@@ -46,7 +46,9 @@ Every candidate stores a normalized key, source task, source seed/content,
 bounded score components, final score, counts, and an explanation containing
 why it is relevant/new, evidence and independence, counterevidence, risks,
 feedback impact, and a recommended next step. Sources retain platform,
-content, URL/author, repost status, similarity, and independent group.
+content, URL/author, repost status, similarity, and independent group. Repost
+match reasons are retained in the candidate's score explanation rather than
+being added as an unversioned source-table field.
 
 Feedback types are `valuable`, `irrelevant`, `already_known`, `duplicate`,
 `follow`, `mute_topic`, `deprioritize_similar`, `needs_more_evidence`,
@@ -56,9 +58,11 @@ undone and deactivates the preference rule created from that feedback before
 rescoring the candidate.
 
 `continue` creates a new independent Research Task, records the follow-up task
-on feedback, and marks the candidate `converted_to_research`. It does not
-mutate the original Research Task. `add-to-space` stores a typed
-`discovery_candidate` item and records the space-scoped preference.
+on feedback, and marks the candidate `converted_to_research`. The new task
+context retains the parent candidate ID, source task ID, source seed ID,
+candidate type/normalized key, source content IDs, and a bounded source
+summary. It does not mutate the original Research Task. `add-to-space` stores
+a typed `discovery_candidate` item and records the space-scoped preference.
 
 Research Spaces accept only these item types: `research_task`,
 `discovery_candidate`, `evidence`, `entity`, `event`, `finding`,
@@ -110,6 +114,7 @@ query excludes terminal low-value states (`ignored`, `dismissed_duplicate`, and
 | Candidate is accepted/converted/added and receives a new score | Preserve the explicit owner state |
 | Owner reads another owner's candidate/task/space | Return not found/owner-scoped failure; never leak existence |
 | Feedback omits `feedback_type` without an undo ID | Return a validation/conflict error |
+| Non-global feedback omits `scope_key` or global feedback supplies one | Return a validation/conflict error; never create a no-op preference rule |
 | Undo belongs to another candidate or owner | Reject the undo and leave both feedback and preference active |
 | Undo succeeds | Mark `undone_at`, deactivate its preference rule, then rescore |
 | Continue request is blank/short/oversized | Reject; use the candidate title only when request is omitted |
@@ -128,7 +133,8 @@ query excludes terminal low-value states (`ignored`, `dismissed_duplicate`, and
 - Good: `valuable` raises feedback score, `irrelevant` lowers it, and undoing
   the feedback restores the neutral preference state.
 - Good: continuing a candidate creates a separate task while preserving the
-  original task and candidate lifecycle.
+  original task and candidate lifecycle, with bounded source lineage in the
+  follow-up context.
 - Bad: creating a candidate from a model noun with no content/source, using
   search verification as detail/creator/comment verification, or making an
   old content collection serve as a research space without typed ownership.
