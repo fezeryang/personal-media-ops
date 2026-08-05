@@ -33,7 +33,7 @@ trap 'deployment_failure "$?" "$LINENO"' ERR
 usage() {
     cat <<'EOF'
 Usage: deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
-                 [--resume] [--dry-run | --execute]
+                 [--release-candidate FILE] [--resume] [--dry-run | --execute]
 
 Run a controlled, staged deployment of GitHub main through the restricted
 release helper. Every stage uses its own short-lived SSH connection and records
@@ -46,6 +46,9 @@ Options:
                     Permit reviewed Alembic migrations after backup and tests
   --resume           Skip stages already recorded as done on the server for the
                      same target commit (preflight and verify always run)
+  --release-candidate FILE
+                    Required for --execute; manifest from
+                    scripts/release/prepare-release.sh
   --dry-run          Print the deployment plan without connecting (default)
   --execute          Back up, pull, test, build, finalize, and verify
 
@@ -66,14 +69,16 @@ Stages (each in its own SSH session, recorded in /var/lib/mediaops/deploy-state/
   runner-sync: install the reviewed MediaCrawler runner copy the Worker executes
                (/var/lib/mediaops/bin/run_mediacrawler.py), backing up any
                differing installed copy first
-  backend-test: uv sync --frozen; backend pytest
-  frontend-build: npm ci; frontend lint, test, build; write the frontend release marker
+  backend-test: uv sync --frozen; backend compile check
+  frontend-build: npm ci; frontend build; write the frontend release marker
   migrate: uv run alembic upgrade head (only for explicitly authorized migrations)
   finalize: restricted release helper finalize (marker-verified fallback for the
             deployed helper's known .user.ini publish failure)
   verify: internal API health, public health checks, deployment record
 
 Transport hardening:
+  local tests are proven by the Release Candidate; remote stages install/build
+  and verify the production environment rather than repeat the full suite
   long-running stages use SSH keepalives (ServerAliveInterval=15, CountMax=8)
   an SSH exit of 255 triggers one reconnect to recheck the remote stage marker
   --resume skips stages already marked done for the same target commit
@@ -317,7 +322,7 @@ export PATH="${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 cd -- "${repository}/backend"
 uv sync --frozen
-uv run pytest
+uv run python -m compileall -q app
 mkdir -p -- "$state_dir"
 printf 'backend-test=done %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> "${state_dir}/${target_commit}.stages"
@@ -337,8 +342,6 @@ export PATH="${node_bin_dir}:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 cd -- "${repository}/frontend"
 npm ci --include=dev --cache "${HOME}/.npm-cache"
-npm run lint
-npm run test
 npm run build
 [[ -f "${repository}/frontend/dist/index.html" ]] || {
     printf 'ERROR: frontend build did not create dist/index.html\n' >&2
@@ -562,6 +565,7 @@ REMOTE
 
 host_override=""
 target_ref="origin/main"
+release_candidate=""
 execute=false
 dry_run=false
 allow_migrations=false
@@ -577,6 +581,11 @@ while (($# > 0)); do
         --target-ref)
             mediaops_require_value "$1" "${2:-}"
             target_ref="$2"
+            shift 2
+            ;;
+        --release-candidate)
+            mediaops_require_value "$1" "${2:-}"
+            release_candidate="$2"
             shift 2
             ;;
         --execute)
@@ -616,6 +625,7 @@ mediaops_stage "Deployment plan"
 printf 'Target server: %s\n' "$host"
 printf 'Repository: %s\n' "$MEDIAOPS_APP_ROOT"
 printf 'Target ref: %s\n' "$target_ref"
+printf 'Release Candidate manifest: %s\n' "${release_candidate:-required for execute}"
 printf 'Current commit: inspect during execute preflight\n'
 printf 'Target commit: resolve during execute preflight\n'
 printf 'Database migration: inspect during execute preflight\n'
@@ -625,7 +635,8 @@ else
     printf 'Migration authorization: required when detected\n'
 fi
 printf 'Database backup: required before pull\n'
-printf 'Tests: uv sync --frozen; backend pytest; frontend npm ci, lint, test, build\n'
+printf 'Local gate: backend pytest; frontend lint, test, build; migration; shell; visual\n'
+printf 'Remote preparation: backend dependency sync/compile; frontend npm ci/build\n'
 printf 'Helper path: %s\n' "$MEDIAOPS_RELEASE_HELPER"
 printf 'Helper subcommand: finalize\n'
 if [[ "$resume" == true ]]; then
@@ -640,6 +651,28 @@ if [[ "$execute" != true ]]; then
     printf 'Dry run only. No SSH connection or production mutation was attempted.\n'
     exit 0
 fi
+
+if [[ -z "$release_candidate" ]]; then
+    deployment_abort "--release-candidate is required for execute mode"
+fi
+[[ -f "$release_candidate" ]] ||
+    deployment_abort "Release Candidate manifest does not exist: ${release_candidate}"
+
+release_candidate_value() {
+    local key="$1"
+    awk -F= -v expected_key="$key" \
+        '$1 == expected_key {print substr($0, index($0, "=") + 1); exit}' \
+        "$release_candidate"
+}
+
+rc_status="$(release_candidate_value release_candidate_status)"
+rc_commit="$(release_candidate_value release_commit)"
+rc_gate="$(release_candidate_value local_gate_status)"
+rc_visual="$(release_candidate_value local_visual_status)"
+[[ "$rc_status" == ready ]] || deployment_abort "Release Candidate is not ready"
+[[ "$rc_gate" == passed ]] || deployment_abort "Release Candidate local gate is not passed"
+[[ "$rc_visual" == passed ]] || deployment_abort "Release Candidate local visual check is not passed"
+mediaops_validate_full_commit "$rc_commit"
 
 DEPLOY_STAGE="ssh-preflight"
 mediaops_require_ssh "$host"
@@ -758,6 +791,8 @@ migration_authorized="$(
 helper_version="$(awk -F= '$1 == "helper_version" {print $2}' <<<"$preflight")"
 mediaops_validate_full_commit "$old_commit"
 mediaops_validate_full_commit "$target_commit"
+[[ "$target_commit" == "$rc_commit" ]] ||
+    deployment_abort "target commit does not match the Release Candidate manifest"
 if [[ "$migration_state" == "yes" && "$migration_authorized" != "true" ]]; then
     deployment_abort "database migration was not explicitly authorized"
 fi
@@ -768,6 +803,7 @@ mediaops_stage "Confirmed production deployment"
 printf 'Target server: %s\n' "$host"
 printf 'Current commit: %s\n' "$old_commit"
 printf 'Target commit: %s\n' "$target_commit"
+printf 'Release Candidate: %s\n' "$rc_commit"
 printf 'Database migration: %s\n' "$migration_state"
 printf 'Migration authorization: %s\n' "$migration_authorized"
 printf 'Database backup: pending\n'

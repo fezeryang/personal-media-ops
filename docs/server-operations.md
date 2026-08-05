@@ -117,18 +117,28 @@ git rev-parse origin/main
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 ```
 
-真实部署必须单独获得授权，并显式执行：
+先通过本地门禁并准备已经 push 的 Release Candidate：
 
 ```bash
-scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
+scripts/test/local-gate.sh
+scripts/release/prepare-release.sh --output .release/rc.env
+```
+
+真实部署必须单独获得授权，并显式执行固定 RC：
+
+```bash
+scripts/server/deploy.sh \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
+  --execute
 ```
 
 脚本按阶段执行：`preflight`（身份、工作树、目标、迁移检测、helper 版本）、
 `backup`、`git-sync`、`model-gateway-key`（幂等创建或验证 Model Gateway
 master key，固定 0700/0600 权限，不回显秘密）、`runner-sync`（把仓库审查版 runner 同步到 Worker 实际
 执行的 `/var/lib/mediaops/bin/run_mediacrawler.py`，不一致时先做时间戳备份；
-该副本曾漂移并导致真实小红书任务 argparse 失败）、`backend-test`、
-`frontend-build`、`migrate`（仅授权时）、
+该副本曾漂移并导致真实小红书任务 argparse 失败）、`backend-test`（依赖同步与
+compile check）、`frontend-build`（npm ci 与 build；完整测试由本地 RC 门禁完成）、`migrate`（仅授权时）、
 `finalize`、`verify`。每个阶段使用独立 SSH 会话，长时间运行的阶段附加
 keepalive；`backup` 到 `finalize` 这些标记阶段在远端成功后才在
 `/var/lib/mediaops/deploy-state/<target-commit>.stages` 记录
@@ -139,14 +149,17 @@ sudo -n /usr/local/sbin/mediaops-release finalize
 ```
 
 包含 migration/schema 路径的发布默认停止。迁移和回滚方案经审查后，使用
-`--allow-migrations --execute` 显式授权；脚本会在备份、测试和构建成功后执行
+`--allow-migrations` 显式授权；脚本会在本地门禁、备份、远端准备和构建成功后执行
 `uv run alembic upgrade head`，校验 revision 后才调用 `finalize`。
 
 中断后的重试可加 `--resume`：脚本读取目标 commit 的阶段标记，跳过已完成阶段，
 `preflight` 和 `verify` 始终重新执行。不带 `--resume` 的 execute 运行会先清空
 该目标 commit 的标记文件，避免历史标记干扰本次判定。某阶段 SSH 以 255 退出
 时，脚本重连一次检查远端标记；标记为 `done` 则输出 `SSH transport anomaly`
-警告并继续，否则按阶段名报告失败。
+警告并继续，否则按阶段名报告失败。SSH banner、握手失败、连接重置、超时、EOF
+或客户端失联统一记录为 `deployment_status=deployment_transport_failed`，不改变已
+通过的 implementation/local-test/local-visual 状态；恢复前先检查 marker、commit、
+迁移、服务和健康证据。
 
 已部署 helper v1 的 finalize 会因静态目录中不可变的 BaoTa `.user.ini` 在
 rsync `--delete` 时以 exit 23 中止。deploy.sh 会在 finalize 失败后核对发布端与

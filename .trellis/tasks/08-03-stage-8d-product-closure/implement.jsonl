@@ -11,3 +11,6 @@
 {"file":"frontend/src/pages/trends-page.tsx","reason":"Kept historical deterministic trends read-only and added the compatibility notice."}
 {"file":"frontend/src/pages/overview-page.test.tsx","reason":"Regression coverage for runtime operations metrics and absence of legacy command-center metrics."}
 {"file":"frontend/src/pages/subscriptions-page.test.tsx","reason":"Regression coverage for the explicit legacy notice and read-only action boundary."}
+{"file": "docs/development-workflow.md", "reason": "Permanent local-first, fixture, RC, acceptance, and authentication workflow for all future changes."}
+{"file": "scripts/test/local-gate.sh", "reason": "Executable local-only quality gate required before every Release Candidate."}
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Deployment contract now requires a pushed RC and classifies transport failures."}

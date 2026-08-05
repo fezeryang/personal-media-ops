@@ -31,6 +31,10 @@ Git 是代码唯一事实来源。生产中的临时修改必须回到仓库、�
 
 ## Quality and Delivery
 
+项目级本地优先、Fixture、三级 AI 验证、Release Candidate、SSH 状态分类和生产验收
+规则集中维护在 [`docs/development-workflow.md`](development-workflow.md)；每个任务都必须
+遵循该手册和根目录 `AGENTS.md`，不能把生产服务器当作普通开发环境。
+
 基础质量门：
 
 ```bash
@@ -50,6 +54,10 @@ schema 版本，不自动迁移；迁移发布需要单独审查并显式授权�
 
 完成报告必须说明实现内容、主要文件、数据库/后端/前端/Worker/部署影响、测试和
 构建结果、遗留事项、提交哈希、push 状态、工作树状态、生产命令和回滚注意事项。
+
+部署前还必须运行 `scripts/test/local-gate.sh`、完成 1440×900、1280×720 和 390×844
+的本地浏览器检查，并用 `scripts/release/prepare-release.sh` 为已 push 的完整 commit
+生成 RC manifest；SSH 传输异常只更新 `deployment_status`，不能覆盖已经通过的本地状态。
 
 ## Production Responsibility
 

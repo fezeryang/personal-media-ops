@@ -26,6 +26,11 @@ cookies/
 **/cookies/
 qrcode*.png
 
+# Local development and release evidence (never production state)
+.local-dev/
+.release/
+docs/evidence/
+
 # Local editor and OS files
 .DS_Store
 .idea/

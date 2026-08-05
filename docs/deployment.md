@@ -147,8 +147,9 @@ SHA-256，再使用 `--allow-migrations` 发布。迁移后必须核对 Alembic 
 
 阶段 8D-0 的 `0014_research_intent_and_information_utility` 发布前必须确认生产仍在
 `0013_cross_platform_research_completion`，先执行 SQLite 备份并记录备份路径与
-SHA-256，再审查迁移中的历史意图投影、查询 `user_goal` 标记和外键约束，使用
-`--allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
+SHA-256，再审查迁移中的历史意图投影、查询 `user_goal` 标记和外键约束，先通过
+本地门禁并准备已 push 的 `.release/rc.env`，再使用
+`--release-candidate .release/rc.env --allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
 `0014_research_intent_and_information_utility`、`PRAGMA integrity_check` 为 `ok`，
 并比较旧 Research、Finding、Evidence、Query、AI Invocation 行数没有减少。不要执行
 未经审查的 downgrade；数据库回滚只能通过前向修复或经授权的恢复操作完成。
@@ -156,8 +157,9 @@ SHA-256，再审查迁移中的历史意图投影、查询 `user_goal` 标记和
 阶段 8D-1/2/3 的 `0015_limited_discovery_and_feedback` 与
 `0016_research_spaces` 发布前必须确认生产仍在
 `0014_research_intent_and_information_utility`，先执行 SQLite 一致性备份并记录备份
-路径与 SHA-256，再审查候选深度/来源约束、反馈撤销和空间 item 类型，使用
-`--allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
+路径与 SHA-256，再审查候选深度/来源约束、反馈撤销和空间 item 类型，先通过
+本地门禁并准备已 push 的 `.release/rc.env`，再使用
+`--release-candidate .release/rc.env --allow-migrations --execute` 发布。迁移后必须核对 Alembic head 为
 `0016_research_spaces`、`PRAGMA integrity_check` 为 `ok`，并比较旧 Research、Finding、
 Evidence、Query、AI Invocation 与 Library 行数没有减少。验收至少调用认证的
 `/api/research/tasks`、每个验收任务的 detail/events、`/api/research/discoveries`、
@@ -387,7 +389,11 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 确认目标主机、当前/目标 commit、迁移检测、备份和测试计划后，真实发布必须显式执行：
 
 ```bash
-scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
+scripts/release/prepare-release.sh --output .release/rc.env
+scripts/server/deploy.sh \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
+  --execute
 ```
 
 如果待发布 diff 包含 Alembic、模型或 schema 路径，默认会在备份前停止。审查迁移与
@@ -395,7 +401,8 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
 
 ```bash
 scripts/server/deploy.sh \
-  --target-ref <origin-main-sha> \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
   --allow-migrations \
   --execute
 ```
@@ -410,8 +417,8 @@ preflight：身份、工作树、目标 commit、迁移检测、helper 版本
   目录/文件权限固定为 0700/0600，不回显内容且不使用 root helper
 → runner-sync：将仓库审查版 scripts/crawler/run_mediacrawler.py 同步到
   /var/lib/mediaops/bin/run_mediacrawler.py（Worker 实际执行的已安装副本）
-→ backend-test：uv sync --frozen 与后端 pytest
-→ frontend-build：npm ci 与前端 lint/test/build，写入 .mediaops-release 标记
+→ backend-test：uv sync --frozen 与后端 compile check（完整 pytest 已由本地 RC 门禁通过）
+→ frontend-build：npm ci 与前端 build（完整 lint/test 已由本地 RC 门禁通过），写入 .mediaops-release 标记
 → migrate：已授权时执行 Alembic upgrade 并校验 head
 → finalize：restricted helper finalize
 → verify：内部健康检查、公网健康检查、记录新旧 commit
@@ -458,7 +465,8 @@ Agent 修复、测试、提交、push 后从安全检查点继续。
   commit 时 `git pull --ff-only` 为 no-op，pytest/npm 重跑安全），也可单独重跑：
 
   ```bash
-  scripts/server/deploy.sh --target-ref <origin-main-sha> --resume --execute
+  scripts/server/deploy.sh --target-ref <release-commit> \
+    --release-candidate .release/rc.env --resume --execute
   ```
 
 - 某阶段 SSH 以 255（传输错误）退出时，脚本不会立即判定失败，而是重连一次并
@@ -468,6 +476,11 @@ Agent 修复、测试、提交、push 后从安全检查点继续。
   revision、进程与健康状态，从最近安全检查点修复并恢复；不因单一退出码要求用户选择
   技术方案，也不重复已经验证成功的迁移。其他非零退出码同样先保持该阶段 fail-closed，
   再进入证据驱动的修复/重试循环。
+
+SSH banner、握手失败、连接重置、超时、EOF 或客户端失联统一记录为
+`deployment_status=deployment_transport_failed`。它不否定本地实现、测试或视觉状态；
+只有目标 commit、marker、数据库 revision、服务和健康证据显示发布未完成时，才从最近
+checkpoint 恢复。不得因为传输问题重做全部本地门禁或重复迁移。
 
 ### 外部观察者健康检查例外
 

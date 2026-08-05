@@ -193,7 +193,7 @@ const discoveryFeedbackSchema = z.object({
   created_at: z.string(),
 });
 
-const discoveryCandidateSummarySchema = z.object({
+export const discoveryCandidateSummarySchema = z.object({
   id: z.string(),
   research_task_id: z.string(),
   candidate_type: discoveryCandidateTypeSchema,
@@ -230,7 +230,7 @@ const discoveryCandidateSummarySchema = z.object({
   updated_at: z.string(),
 });
 
-const discoveryCandidateDetailSchema = discoveryCandidateSummarySchema.extend({
+export const discoveryCandidateDetailSchema = discoveryCandidateSummarySchema.extend({
   sources: z.array(discoverySourceSchema),
   scores: z.array(discoveryScoreSchema),
   feedback: z.array(discoveryFeedbackSchema),
@@ -280,7 +280,7 @@ const researchSpaceItemSchema = z.object({
   updated_at: z.string(),
 });
 
-const researchSpaceSummarySchema = z.object({
+export const researchSpaceSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
@@ -290,7 +290,7 @@ const researchSpaceSummarySchema = z.object({
   updated_at: z.string(),
 });
 
-const researchSpaceDetailSchema = researchSpaceSummarySchema.extend({
+export const researchSpaceDetailSchema = researchSpaceSummarySchema.extend({
   items: z.array(researchSpaceItemSchema),
 });
 

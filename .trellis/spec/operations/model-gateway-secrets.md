@@ -9,8 +9,9 @@ secret encryption format, migration `0010` or later, or API startup wiring.
 
 ### 2. Signatures
 
+`scripts/release/prepare-release.sh --output .release/rc.env` followed by
 `scripts/server/deploy.sh --target-ref <full-origin-main-sha>
---allow-migrations --execute` adds the marker-tracked
+--release-candidate .release/rc.env --allow-migrations --execute` adds the marker-tracked
 `model-gateway-key` stage after `git-sync` and before tests/migration/finalize.
 
 ### 3. Contracts

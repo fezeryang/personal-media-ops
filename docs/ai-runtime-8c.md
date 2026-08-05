@@ -209,8 +209,9 @@ Before production migration:
 1. Run backend tests with coverage, frontend lint/test/build and shell syntax.
 2. Run the reviewed SQLite backup and retain its SHA-256.
 3. Dry-run the target commit and review the 0013 migration/downgrade guard.
-4. Deploy with independent SSH stages and explicit
-   `--allow-migrations --execute`.
+4. Prepare a pushed local Release Candidate, then deploy with the reviewed
+   release script and explicit
+   `--release-candidate .release/rc.env --allow-migrations --execute`.
 5. Verify Alembic head, `PRAGMA integrity_check`, API/Worker health, zero active
    crawler/research tasks and zero browser residue.
 

@@ -16,7 +16,7 @@ healthcheck.sh [--base-url URL] [--with-ssh] [--host SSH_ALIAS]
 logs.sh SOURCE [--lines 1..5000] [--follow] [--host SSH_ALIAS]
 backup.sh [--host SSH_ALIAS] [--dry-run | --execute]
 deploy.sh [--host SSH_ALIAS] [--target-ref REF] [--allow-migrations]
-          [--resume] [--dry-run | --execute]
+          [--release-candidate FILE] [--resume] [--dry-run | --execute]
 mediaops-release {version|status|publish-frontend|restart-services|nginx-check|nginx-reload|verify|finalize}
 command -v xvfb-run
 ```
@@ -32,10 +32,17 @@ command -v xvfb-run
 - Migration/schema paths stop deployment unless the reviewed release receives
   explicit `--allow-migrations`.
 - SQLite backup completes before pull.
-- Backend sync/pytest and frontend ci/lint/test/build complete before helper
-  invocation.
-- Authorized migrations run `uv run alembic upgrade head` after backup and all
-  tests/builds, then verify runtime schema head before helper invocation.
+- `scripts/test/local-gate.sh` must pass before a Release Candidate is prepared;
+  it runs backend pytest, frontend lint/test/build, temporary SQLite migration,
+  shell checks, and local visual checks at 1440×900, 1280×720, and 390×844.
+- `scripts/release/prepare-release.sh` records one full pushed commit and the
+  local gate result. Execute mode requires that manifest and refuses a target
+  commit mismatch.
+- Remote stages install/sync dependencies, compile the backend, build the
+  frontend, and verify the environment; they do not repeat the full local test
+  suite as a substitute for the local gate.
+- Authorized migrations run `uv run alembic upgrade head` after backup, then
+  verify runtime schema head before helper invocation.
 - Deployment runs as isolated stages (`preflight`, `backup`, `git-sync`,
   `runner-sync`, `backend-test`, `frontend-build`, `migrate`, `finalize`,
   `verify`), each in its own SSH session; long-running stages add SSH
@@ -65,6 +72,10 @@ command -v xvfb-run
   the Agent inspects commits, markers, migrations, processes, and health,
   repairs within the authorized scope, and resumes from the nearest verified
   checkpoint.
+- SSH banner, handshake, reset, timeout, EOF, or lost connection is classified
+  as `deployment_transport_failed`; it does not invalidate implementation or
+  local-test status. Do not restart the full workflow until marker, commit,
+  migration, service, and health evidence shows which stage remains.
 - The deploy script normally calls only
   `sudo -n /usr/local/sbin/mediaops-release finalize` for privileged work.
   When the deployed helper v1 finalize fails but both `.mediaops-release`
@@ -110,7 +121,9 @@ command -v xvfb-run
 | `sudo -n ... version` fails | Report the controlled helper entry as unavailable and stop before backup/pull |
 | Backup failure | Stop before pull |
 | Target changes after backup | Stop before pull |
-| Test/build failure | Do not invoke `finalize`; fix/test/commit/push and resume without a technical user pause |
+| Local gate failure | Do not prepare an RC or deploy; fix locally and rerun the affected gate |
+| Remote compile/build failure | Do not invoke `finalize`; inspect the remote environment and resume the RC stage |
+| SSH banner/handshake/reset/timeout/EOF | Set `deployment_transport_failed`; inspect markers and resume, without changing implementation status |
 | Stage SSH exit 255 with remote `done` marker | Warn and continue |
 | Stage SSH exit 255 without remote marker | Fail that attempt with the stage name, inspect real state, then repair/resume |
 | Helper finalize failure with both release markers at target | Complete via allowlisted `restart-services`/`nginx-reload`/`verify` |
@@ -125,8 +138,9 @@ command -v xvfb-run
 
 ## 5. Good / Base / Bad Cases
 
-- Good: `deploy.sh --target-ref <sha> --allow-migrations --dry-run` prints
-  migration authorization, gates, and helper subcommand without SSH.
+- Good: `scripts/test/local-gate.sh` passes, then
+  `scripts/release/prepare-release.sh --output .release/rc.env` records the
+  pushed commit before `deploy.sh --release-candidate .release/rc.env`.
 - Base: `--execute` backs up, fast-forwards, tests/builds, calls `finalize`,
   verifies, then prints old/new commits.
 - Good: a `root:root 0750` installed helper passes preflight through its exact
@@ -186,9 +200,10 @@ scripts/server/deploy.sh --execute || wait-for-user
 sudo -n /usr/local/sbin/mediaops-release version
 ssh -o BatchMode=yes mediaops-prod 'command -v xvfb-run'
 scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
+scripts/release/prepare-release.sh --output .release/rc.env
 scripts/server/deploy.sh \
   --target-ref <origin-main-sha> \
-  --allow-migrations \
+  --release-candidate .release/rc.env \
   --execute
 # On a recoverable failure: inspect remote markers/state, fix, commit, push,
 # then rerun with --resume from the verified checkpoint.
@@ -207,7 +222,8 @@ anonymous endpoints into session/API-key-protected resources.
 ### 2. Signatures
 
 ```text
-scripts/server/deploy.sh --target-ref <sha> --allow-migrations --execute
+scripts/server/deploy.sh --target-ref <sha> \
+  --release-candidate .release/rc.env --allow-migrations --execute
 cd /opt/personal-media-ops/backend
 uv run python -m app.cli create-owner --username owner
 GET /api/health

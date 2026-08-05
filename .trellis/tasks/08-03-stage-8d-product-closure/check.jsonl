@@ -31,3 +31,6 @@
 {"command":"cd backend && timeout 90s .venv/bin/pytest -vv -x -s -o faulthandler_timeout=10","result":"blocked by environment: first TestClient fixture hangs in starlette.testclient.TestClient.__enter__; a minimal FastAPI TestClient reproduces the same cross-thread AnyIO portal hang; prior recorded 432-test gate remains valid evidence"}
 {"command":"bash -n scripts/server/*.sh scripts/server/lib/common.bash scripts/server/tests/*.sh infra/release/mediaops-release && scripts/server/tests/test_release_scripts.sh","result":"passed: release_script_tests=passed"}
 {"command":".agents/skills/mediaops-server/scripts/run-server-tool.sh status; .agents/skills/mediaops-server/scripts/run-server-tool.sh healthcheck --with-ssh","result":"blocked: production SSH banner timeout to 47.105.36.220:22 and public health connection timeout; no deployment mutation performed"}
+{"file": "docs/development-workflow.md", "reason": "Verify the human-readable project workflow matches AGENTS and deployment behavior."}
+{"file": "scripts/test/local-gate.sh", "reason": "Verify local gate, timeout, no-production, migration, shell, and visual contracts."}
+{"file": ".trellis/spec/operations/server-deployment.md", "reason": "Verify release marker/resume and SSH state classification."}

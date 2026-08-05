@@ -47,6 +47,70 @@ code:
 Git is the only source of truth for code. Never leave production-only edits
 uncommitted or edit generated JS/CSS on the server.
 
+## Project Development, Validation and Release Policy
+
+This is a permanent project rule for every feature, bug fix, refactor, AI
+Runtime change, database migration, deployment, and acceptance—not only Phase
+8D. The production server is not the primary development environment.
+
+Use this order unless a documented risk assessment says a step is not
+applicable:
+
+```text
+requirement and acceptance criteria
+→ local implementation
+→ local automated tests and API integration
+→ local browser/product and responsive checks
+→ fixed Release Candidate commit
+→ production deployment
+→ production smoke
+→ a small real business acceptance
+→ user product review
+```
+
+Pages, navigation, field mapping, loading/error/empty states, ordinary status
+transitions, Discovery/Research/Feedback/Research Space behavior, and desktop
+or mobile layout must be found and fixed locally. Do not use production data to
+cover a failed local check and do not make production the first place where a
+normal UI or API contract is exercised.
+
+The product target is the AI-powered personal research and opportunity
+discovery workbench. Before adding a user-facing capability, map it to the
+canonical product vision in [`docs/product-vision.svg`](docs/product-vision.svg)
+and the detailed workflow in
+[`docs/development-workflow.md`](docs/development-workflow.md). Do not restore
+legacy first-class entries such as 指挥中心、今日情报、趋势雷达、订阅中心、
+创作者观察、采集中心 unless the product decision explicitly changes their
+hidden, merged, or tool-only status.
+
+`scripts/test/local-gate.sh` is the minimum pre-release gate. It must be local,
+repeatable, fail-closed, and must never contact production or read production
+secrets. A commit cannot become a Release Candidate or be deployed until the
+gate, required local visual checks at 1440×900, 1280×720, and 390×844, and the
+relevant product-vision check pass. The Release Candidate is one full commit
+hash that is pushed to `origin`; production may only receive that hash. A
+release manifest records the commit, local gate, visual evidence, migration
+state, previous production commit, and rollback/backup evidence.
+
+The required status dimensions are defined in
+[`docs/templates/phase-status.md`](docs/templates/phase-status.md):
+`implementation_status`, `local_test_status`, `local_visual_status`,
+`release_candidate_status`, `deployment_status`, `production_smoke_status`,
+`production_business_status`, and `user_product_review_status`. Never collapse
+an SSH or server transport problem into an implementation or local-test
+failure. Use `deployment_transport_failed` for an SSH banner, handshake,
+reset, timeout, or lost connection; inspect server markers and resume from the
+last verified stage before retrying. Do not repeat all tests, deployments, or
+browser logins mechanically when code and the completed checkpoint have not
+changed.
+
+The human-readable policy, local commands, fixture boundary, AI validation
+levels, Release Candidate contract, production smoke/business acceptance, and
+retry rules are maintained in
+[`docs/development-workflow.md`](docs/development-workflow.md). This file is
+the mandatory enforcement summary; it must not contain a hard-coded current
+phase result.
+
 ## Repository Structure
 
 - `backend/`: Python 3.11 FastAPI app, SQLite repository, Worker, and pytest.
@@ -134,6 +198,9 @@ npm run build
 
 Before deployment, all commands above must pass. Confirm Git status and scan
 for accidental data, logs, QR images, credentials, and generated runtime files.
+Run `scripts/test/local-gate.sh` so the database migration check, shell checks,
+release-script checks, and local-only safety assertions are executed together.
+The gate does not run a production server or a real platform task.
 
 ## Database Changes
 
@@ -158,6 +225,14 @@ Deployments containing migration/schema paths require the explicit
 `--allow-migrations` gate; never add that flag without reviewing migration and
 rollback behavior.
 
+Deployment must reference a prepared local Release Candidate manifest and use
+the reviewed `/usr/local/sbin/mediaops-release` helper plus its marker/resume
+state. Prefer one server-side release job with short status polling over many
+independent SSH commands; a transport interruption is recoverable only after
+checking the remote marker, commit, database revision, service state, and
+health. Remote dependency installation/build and environment checks are
+supplemental production preparation, not a replacement for the local gate.
+
 Do not edit production repository files, `/opt/mediacrawler`, browser login
 state, systemd, Nginx, or BaoTa configuration unless the task explicitly
 requires it. Do not restart every service without evidence. Prefer diagnosis
@@ -168,7 +243,7 @@ the reviewed `/usr/local/sbin/mediaops-release` subcommands through `sudo -n`.
 Never request an interactive sudo password, seek a root shell, or automatically
 install/overwrite the helper or sudoers.
 
-## Phase 8D Authentication and Production Acceptance
+## Authentication and Browser Boundaries
 
 The user's normal production workflow in Windows Chrome is valid. A missing
 Owner session in a WSL temporary Playwright profile is an automation-context
@@ -219,20 +294,10 @@ Do not restart a browser or repeat a login after the user has completed the
 required visual action. If no real login, QR, captcha, or confirmation is
 needed, continue the server-side acceptance autonomously.
 
-### 8D acceptance status and path
+### Production acceptance path
 
-The current Phase 8D status is:
-
-```text
-implementation: complete
-automated_tests: passed
-production_deployment: passed
-remaining: real production tasks and product-experience acceptance
-authentication_intervention: only when actually required, through the
-  Windows production frontend for one scan, login, captcha, or confirmation
-```
-
-Remaining acceptance must use the existing application and server flow:
+Current phase results are never hard-coded in this rule file. Record them in
+the active task report using the status template. Production acceptance uses:
 
 ```text
 Windows frontend visual action (only when required)

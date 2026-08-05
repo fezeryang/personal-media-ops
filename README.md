@@ -31,13 +31,29 @@ Codex 会在项目中自动发现它，无需复制到用户级 Skills 目录。
 权限边界和操作手册见：
 
 - [Agent workflow](docs/agent-workflow.md)
+- [Development, validation and release workflow](docs/development-workflow.md)
 - [Server operations](docs/server-operations.md)
 
 ## 本地开发
 
 需要 Python 3.11、[uv](https://docs.astral.sh/uv/) 和 Node.js 22。
 
-先启动后端：
+推荐使用统一入口启动本地 FastAPI、SQLite 和 Vite：
+
+```bash
+./scripts/dev/start-local.sh
+```
+
+访问 `http://127.0.0.1:5173`；本地状态覆盖入口为
+`http://127.0.0.1:5173/__local/fixtures`。停止服务使用
+`./scripts/dev/stop-local.sh`，只重置本地数据库使用
+`./scripts/dev/reset-local-db.sh`。完整本地发布门禁使用：
+
+```bash
+./scripts/test/local-gate.sh
+```
+
+如需手工调试后端，仍可使用：
 
 ```bash
 cd backend
@@ -56,7 +72,7 @@ cd backend
 uv run python -m app.cli create-owner --username owner
 ```
 
-另开一个终端启动前端：
+手工启动前端：
 
 ```bash
 cd frontend
@@ -123,6 +139,15 @@ scripts/server/deploy.sh --target-ref <origin-main-sha> --dry-run
 Real releases require an explicit `--execute` and use the manually installed
 restricted helper `/usr/local/sbin/mediaops-release`. Releases that contain
 reviewed database migrations additionally require `--allow-migrations`.
+先运行本地门禁并准备已经 push 的 Release Candidate：
+
+```bash
+./scripts/release/prepare-release.sh --output .release/rc.env
+scripts/server/deploy.sh \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
+  --execute
+```
 Reviewed, non-installed sources live under `infra/release/` and
 `infra/sudoers/`.
 

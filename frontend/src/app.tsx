@@ -5,6 +5,10 @@ import { AppShell } from "./components/app-shell";
 import { LoginPage } from "./pages/login-page";
 import { useAuth } from "./features/auth/auth-context";
 
+const LocalFixturesPage = import.meta.env.DEV
+  ? lazy(() => import("./dev/local-fixtures-page").then((module) => ({ default: module.LocalFixturesPage })))
+  : null;
+
 const AiModelCenterPage = lazy(() => import("./pages/ai-model-center-page").then((module) => ({ default: module.AiModelCenterPage })));
 const CapabilitiesPage = lazy(() => import("./pages/capabilities-page").then((module) => ({ default: module.CapabilitiesPage })));
 const CreatorWatchPage = lazy(() => import("./pages/creator-watch-page").then((module) => ({ default: module.CreatorWatchPage })));
@@ -47,6 +51,7 @@ export function LegacyTaskDetailRedirect() {
 export function App() {
   return (
     <Routes>
+      {LocalFixturesPage ? <Route path="/__local/fixtures" element={<LocalFixturesPage />} /> : null}
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/research" replace />} />

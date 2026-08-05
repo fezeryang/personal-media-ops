@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Personal Media Ops product vision</title>
+  <desc id="desc">An AI-powered personal research and opportunity discovery workbench with seven application modules.</desc>
+  <style>
+    .canvas { fill: #f4f5f2; }
+    .core { fill: #184b4b; stroke: #126d69; stroke-width: 4; }
+    .module { fill: #ffffff; stroke: #dce4e0; stroke-width: 3; }
+    .accent { fill: #e6f4ef; stroke: #178c87; stroke-width: 3; }
+    .title { fill: #ffffff; font: 700 28px Inter, Arial, sans-serif; }
+    .label { fill: #24302f; font: 700 22px Inter, Arial, sans-serif; }
+    .small { fill: #687674; font: 16px Inter, Arial, sans-serif; }
+    .edge { stroke: #178c87; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#178c87" />
+    </marker>
+  </defs>
+  <rect class="canvas" width="1200" height="760" rx="28" />
+  <rect class="core" x="415" y="295" width="370" height="170" rx="28" />
+  <text class="title" x="600" y="357" text-anchor="middle">AI 工作台</text>
+  <text class="title" x="600" y="398" text-anchor="middle">研究与机会发现 Runtime</text>
+  <text class="small" x="600" y="438" text-anchor="middle" fill="#d9f2ec">以用户任务为中心，而非采集后台</text>
+
+  <g>
+    <rect class="module" x="55" y="70" width="250" height="110" rx="20" />
+    <text class="label" x="180" y="120" text-anchor="middle">研究任务</text>
+    <text class="small" x="180" y="150" text-anchor="middle">意图、计划、执行与复盘</text>
+    <rect class="accent" x="895" y="70" width="250" height="110" rx="20" />
+    <text class="label" x="1020" y="120" text-anchor="middle">发现收件箱</text>
+    <text class="small" x="1020" y="150" text-anchor="middle">候选、评分、反馈与行动</text>
+    <rect class="module" x="55" y="570" width="250" height="110" rx="20" />
+    <text class="label" x="180" y="620" text-anchor="middle">研究空间</text>
+    <text class="small" x="180" y="650" text-anchor="middle">围绕机会组织材料</text>
+    <rect class="module" x="895" y="570" width="250" height="110" rx="20" />
+    <text class="label" x="1020" y="620" text-anchor="middle">记忆与证据</text>
+    <text class="small" x="1020" y="650" text-anchor="middle">可追溯、可反驳、可复用</text>
+    <rect class="module" x="330" y="75" width="250" height="110" rx="20" />
+    <text class="label" x="455" y="125" text-anchor="middle">监控任务</text>
+    <text class="small" x="455" y="155" text-anchor="middle">低资源主动观察（8E）</text>
+    <rect class="module" x="620" y="75" width="250" height="110" rx="20" />
+    <text class="label" x="745" y="125" text-anchor="middle">工具与设置</text>
+    <text class="small" x="745" y="155" text-anchor="middle">模型、平台与安全边界</text>
+    <rect class="accent" x="475" y="555" width="250" height="110" rx="20" />
+    <text class="label" x="600" y="605" text-anchor="middle">机会与行动</text>
+    <text class="small" x="600" y="635" text-anchor="middle">8F：从发现走向下一步</text>
+  </g>
+
+  <path class="edge" d="M305 145 C380 180 430 230 475 295" />
+  <path class="edge" d="M895 145 C820 180 770 230 725 295" />
+  <path class="edge" d="M305 625 C390 580 430 520 475 465" />
+  <path class="edge" d="M895 625 C810 580 770 520 725 465" />
+  <path class="edge" d="M455 185 C485 225 510 255 535 295" />
+  <path class="edge" d="M745 185 C715 225 690 255 665 295" />
+  <path class="edge" d="M600 555 L600 465" />
+</svg>

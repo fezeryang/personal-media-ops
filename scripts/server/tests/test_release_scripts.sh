@@ -8,6 +8,7 @@ COMMON="${REPOSITORY_ROOT}/scripts/server/lib/common.bash"
 STATUS="${REPOSITORY_ROOT}/scripts/server/status.sh"
 HELPER="${REPOSITORY_ROOT}/infra/release/mediaops-release"
 SUDOERS="${REPOSITORY_ROOT}/infra/sudoers/mediaops-release.example"
+LOCAL_GATE="${REPOSITORY_ROOT}/scripts/test/local-gate.sh"
 
 usage() {
     cat <<'EOF'
@@ -51,6 +52,7 @@ assert_rejects() {
 
 [[ -x "$DEPLOY" ]] || fail "deploy script is not executable"
 [[ -x "$HELPER" ]] || fail "release helper source is not executable"
+[[ -x "$LOCAL_GATE" ]] || fail "local gate script is not executable"
 [[ -f "$SUDOERS" ]] || fail "release sudoers source is missing"
 
 bash -n "$DEPLOY" "$HELPER" "$COMMON" "$STATUS"
@@ -70,6 +72,7 @@ assert_contains "$dry_run_output" "Target ref: 0123456789abcdef0123456789abcdef0
 assert_contains "$dry_run_output" "Database migration: inspect during execute preflight"
 assert_contains "$dry_run_output" "Migration authorization: required when detected"
 assert_contains "$dry_run_output" "Database backup: required before pull"
+assert_contains "$dry_run_output" "Release Candidate manifest: required for execute"
 assert_contains "$dry_run_output" "Helper subcommand: finalize"
 assert_contains "$dry_run_output" "runner-sync: install the reviewed MediaCrawler runner copy the Worker executes"
 assert_contains "$dry_run_output" "Dry run only"
@@ -142,10 +145,15 @@ finalize_line="$(
     fail "deploy script must call helper finalize exactly once"
 
 for gate in 'uv run pytest' 'npm run lint' 'npm run test' 'npm run build'; do
-    gate_line="$(grep -nF "$gate" "$DEPLOY" | head -n 1 | cut -d: -f1)"
-    [[ "$gate_line" =~ ^[0-9]+$ && "$gate_line" -lt "$finalize_line" ]] ||
-        fail "gate must appear before helper finalize: ${gate}"
+    gate_line="$(grep -nF "$gate" "$LOCAL_GATE" | head -n 1 | cut -d: -f1)"
+    [[ "$gate_line" =~ ^[0-9]+$ ]] ||
+        fail "local gate must contain the required command: ${gate}"
 done
+remote_build_line="$(grep -nF 'npm run build' "$DEPLOY" | head -n 1 | cut -d: -f1)"
+[[ "$remote_build_line" =~ ^[0-9]+$ && "$remote_build_line" -lt "$finalize_line" ]] ||
+    fail "remote frontend build must appear before helper finalize"
+grep -Fq 'uv run python -m compileall -q app' "$DEPLOY" ||
+    fail "remote backend preparation must include a compile check"
 
 migration_line="$(
     grep -nF 'uv run alembic upgrade head' "$DEPLOY" |
@@ -190,6 +198,15 @@ trap 'rm -rf "$STUB_ROOT"' EXIT
 STUB_BIN="${STUB_ROOT}/bin"
 mkdir -p -- "$STUB_BIN"
 readonly TARGET_COMMIT="0123456789abcdef0123456789abcdef01234567"
+
+STUB_RC="${STUB_ROOT}/rc.env"
+cat >"$STUB_RC" <<EOF
+release_manifest_version=1
+release_candidate_status=ready
+release_commit=${TARGET_COMMIT}
+local_gate_status=passed
+local_visual_status=passed
+EOF
 
 cat > "${STUB_BIN}/ssh" <<'STUB'
 #!/usr/bin/env bash
@@ -412,6 +429,7 @@ run_stubbed_deploy() {
         "$DEPLOY" \
         --host stub-mediaops \
         --target-ref "$TARGET_COMMIT" \
+        --release-candidate "$STUB_RC" \
         "$@" 2>&1
 }
 
