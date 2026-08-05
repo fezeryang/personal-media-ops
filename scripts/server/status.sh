@@ -11,7 +11,8 @@ usage() {
 Usage: status.sh [--host SSH_ALIAS] [--research-task UUID | --latest-research]
 
 Run a read-only production status survey: Git, services, port 8000, API,
-Nginx config, disk, memory, failed task count, and static frontend presence.
+browser process residue count, Nginx config, disk, memory, failed task count,
+and static frontend presence.
 
 Options:
   --host SSH_ALIAS  Override MEDIAOPS_SSH_HOST (default: mediaops-prod)
@@ -149,6 +150,17 @@ if command -v ss >/dev/null 2>&1; then
   fi
 else
   printf 'port_check=ss-unavailable\n'
+fi
+
+section "Browser residue"
+if command -v ps >/dev/null 2>&1; then
+  browser_processes="$(
+    ps -eo comm= 2>/dev/null |
+      awk 'tolower($0) ~ /^(chrome|chromium|firefox|webkit)/ {count += 1} END {print count + 0}'
+  )"
+  printf 'browser_processes=%s\n' "${browser_processes:-unknown}"
+else
+  printf 'browser_processes=unknown\n'
 fi
 
 section "Local API"
