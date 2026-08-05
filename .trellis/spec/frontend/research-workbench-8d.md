@@ -56,8 +56,9 @@ not primary navigation entries.
   `expected_value_score` descending. Rejected queries remain available with
   their durable reason. Trace groups are collapsed, searchable, and do not
   render empty tool/reason/token detail rows.
-- Discovery cards show candidate type/state, final score, explanation, source
-  counts, feedback actions, continue-to-research, and add-to-space. No card
+- Discovery cards show candidate type/state, final score, why-relevant/why-new
+  explanations, independent-source/platform/repost counts, a suggested next
+  action, feedback actions, continue-to-research, and add-to-space. No card
   invents a title, source, score, or count when the API is empty or invalid.
 - Discovery detail renders event aggregation (`first_seen`, `latest_seen`,
   platforms, related entities, and positive/negative/unknown evidence counts)
@@ -66,8 +67,9 @@ not primary navigation entries.
   recommendation.
 - Candidate feedback controls expose valuable, defer/follow, more-evidence,
   lower-similar-priority, mute-topic, known, irrelevant, and duplicate actions;
-  the follow action states that it stores intent only and does not start an 8E
-  monitoring task.
+  topic-level actions send an explicit normalized topic scope, and the follow
+  action states that it stores intent only and does not start an 8E monitoring
+  task. Undo always targets the newest active feedback returned by the API.
 - Space items are typed and display the resolved item summary plus the real
   object ID. A missing item/error is visible; it is not replaced by a fixture.
 - Budget views expose semantic resource totals and billing categories;

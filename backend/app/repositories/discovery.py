@@ -939,10 +939,15 @@ class DiscoveryRepository:
         with connect_database(self.database_path) as connection:
             rows = connection.execute(
                 """
-                SELECT feedback_type, scope, scope_key, adjustment, rationale
-                FROM research_discovery_preference_rules
-                WHERE owner_id = ? AND active = 1
-                ORDER BY created_at DESC, id DESC
+                SELECT rules.feedback_type, rules.scope, rules.scope_key,
+                       rules.adjustment, rules.rationale,
+                       feedback.candidate_id, feedback.target_type,
+                       feedback.target_key
+                FROM research_discovery_preference_rules rules
+                LEFT JOIN research_discovery_feedback feedback
+                  ON feedback.id = rules.source_feedback_id
+                WHERE rules.owner_id = ? AND rules.active = 1
+                ORDER BY rules.created_at DESC, rules.id DESC
                 """,
                 (owner_id,),
             ).fetchall()
@@ -960,11 +965,23 @@ class DiscoveryRepository:
         total = 0.0
         for row in rows:
             scope = str(row["scope"])
-            key = row["scope_key"]
+            key = str(row["scope_key"] or "")
+            target_key = str(row["target_key"] or "")
+            target_matches = bool(
+                target_key
+                and topic_key
+                and target_key.casefold() == topic_key.casefold()
+            ) or bool(
+                candidate_id
+                and str(row["candidate_id"] or "") == candidate_id
+            )
             matches = (
-                scope == "global"
+                # Candidate feedback is reusable for the same target, but a
+                # single candidate action must not become a preference for
+                # every unrelated candidate.
+                scope == "global" and target_matches
                 or (scope == "platform" and key == platform)
-                or (scope == "topic" and key == topic_key)
+                or (scope == "topic" and key.casefold() == str(topic_key or "").casefold())
                 or (scope == "research_intent" and key == intent_id)
                 or (scope == "research_space" and key in space_ids)
             )

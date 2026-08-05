@@ -55,7 +55,10 @@ Feedback types are `valuable`, `irrelevant`, `already_known`, `duplicate`,
 `converted_to_research`, and `added_to_space`. Scopes are `global`, `platform`,
 `research_intent`, `research_space`, and `topic`. An undo marks the feedback
 undone and deactivates the preference rule created from that feedback before
-rescoring the candidate.
+rescoring the candidate. A candidate-targeted feedback record is matched by
+its candidate ID/normalized target key even when its scope is `global`; it
+must not silently become a preference for unrelated candidates. Topic-level
+actions explicitly use the `topic` scope and a normalized key.
 
 `continue` creates a new independent Research Task, records the follow-up task
 on feedback, and marks the candidate `converted_to_research`. The new task

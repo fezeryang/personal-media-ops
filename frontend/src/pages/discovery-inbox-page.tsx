@@ -100,6 +100,14 @@ function asCount(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "未记录";
 }
 
+function explanationText(
+  candidate: DiscoveryCandidateSummary,
+  key: string,
+): string | null {
+  const value = candidate.score_explanation[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 export function DiscoveryInboxPage() {
   const navigate = useNavigate();
   const { candidateId } = useParams<{ candidateId: string }>();
@@ -128,11 +136,25 @@ export function DiscoveryInboxPage() {
 
   function giveFeedback(feedbackType: DiscoveryFeedbackType) {
     if (!effectiveId) return;
-    feedback.mutate({ candidateId: effectiveId, feedback: { feedback_type: feedbackType } });
+    const topicFeedback = new Set<DiscoveryFeedbackType>([
+      "follow",
+      "mute_topic",
+      "deprioritize_similar",
+    ]);
+    const feedbackInput = topicFeedback.has(feedbackType) && detail.data
+      ? {
+          feedback_type: feedbackType,
+          scope: "topic" as const,
+          scope_key: detail.data.normalized_key,
+        }
+      : { feedback_type: feedbackType };
+    feedback.mutate({ candidateId: effectiveId, feedback: feedbackInput });
   }
 
   const activeFeedback = detail.data?.feedback.filter((item) => !item.undone_at) ?? [];
-  const lastFeedback = activeFeedback.at(-1);
+  // The API returns feedback newest-first; undo must target the actual most
+  // recent action rather than the oldest item in the list.
+  const lastFeedback = activeFeedback[0];
 
   return (
     <div className="space-y-7">
@@ -208,6 +230,19 @@ export function DiscoveryInboxPage() {
                     <span>{candidateTypeLabels[candidate.candidate_type] ?? candidate.candidate_type} · {candidate.source_platform ?? "多平台"}</span>
                     <span className="font-semibold text-signal-strong">{percent(candidate.final_score)}</span>
                   </div>
+                  <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-muted">
+                    <span>独立来源 {candidate.independent_source_count} · 平台 {candidate.platform_count}</span>
+                    <span>内容 {candidate.content_count} · 转载 {candidate.suspected_repost_count}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-muted">
+                    相关：{explanationText(candidate, "why_relevant") ?? "暂无相关性解释"}
+                  </p>
+                  <p className="line-clamp-2 text-[11px] leading-5 text-muted">
+                    新颖：{explanationText(candidate, "why_new") ?? "暂无新颖性解释"}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-signal-strong">
+                    下一步：{candidate.suggested_next_action ?? explanationText(candidate, "recommendation") ?? "等待更多证据"}
+                  </p>
                 </button>
               ))}
             </CardContent>

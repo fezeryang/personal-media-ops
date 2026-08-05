@@ -1021,7 +1021,7 @@ class DiscoveryEngine:
         }
         if isinstance(intent, dict):
             intent_names.update(str(value) for value in intent.get("secondary_intents", []) if isinstance(value, str))
-        topic_key = _norm(input_item.get("title"))
+        topic_key = _norm(input_item.get("normalized_key") or input_item.get("title"))
         intent_id = str(intent.get("id")) if isinstance(intent, dict) and intent.get("id") else None
         feedback_adjustment, feedback_rules = self.discovery.active_feedback_adjustment(
             owner_id=owner_id,
@@ -1144,7 +1144,7 @@ class DiscoveryEngine:
             owner_id=owner_id,
             candidate_type=str(candidate.get("candidate_type")),
             platform=(str(candidate.get("source_platform")) if candidate.get("source_platform") else None),
-            topic_key=_norm(candidate.get("title")),
+            topic_key=_norm(candidate.get("normalized_key") or candidate.get("title")),
             intent_id=intent_id,
             candidate_id=candidate_id,
         )

@@ -101,6 +101,10 @@ describe("DiscoveryInboxPage", () => {
     expect(screen.getByText("继续寻找独立用户证据。")).toBeInTheDocument();
     expect(screen.getByText("还没有研究空间，先创建一个再收藏这条发现。")).toBeInTheDocument();
     expect(screen.getByText("真实登录体验")).toBeInTheDocument();
+    expect(screen.getByText("独立来源 2 · 平台 2")).toBeInTheDocument();
+    expect(screen.getByText(/相关：与当前研究目标相关/)).toBeInTheDocument();
+    expect(screen.getByText(/新颖：历史记忆中尚无同键记录/)).toBeInTheDocument();
+    expect(screen.getByText("下一步：继续验证")).toBeInTheDocument();
   }, 10_000);
 
   it("renders event aggregation and unavailable experimental status", async () => {
@@ -127,6 +131,55 @@ describe("DiscoveryInboxPage", () => {
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "降低同类优先级" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "屏蔽此主题" }));
-    await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", { feedback_type: "mute_topic" }));
+    await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", {
+      feedback_type: "mute_topic",
+      scope: "topic",
+      scope_key: "pain:login",
+    }));
+  });
+
+  it("undoes the newest feedback action", async () => {
+    const latestCandidate: DiscoveryCandidateDetail = {
+      ...candidate,
+      feedback: [
+        {
+          id: "feedback-new",
+          candidate_id: "candidate-1",
+          target_type: "candidate",
+          target_key: "pain:login",
+          feedback_type: "irrelevant",
+          scope: "global",
+          scope_key: null,
+          weight: 1,
+          reason: "newest",
+          follow_up_task_id: null,
+          undone_at: null,
+          created_at: "2026-08-03T00:00:02Z",
+        },
+        {
+          id: "feedback-old",
+          candidate_id: "candidate-1",
+          target_type: "candidate",
+          target_key: "pain:login",
+          feedback_type: "valuable",
+          scope: "global",
+          scope_key: null,
+          weight: 1,
+          reason: "oldest",
+          follow_up_task_id: null,
+          undone_at: null,
+          created_at: "2026-08-03T00:00:01Z",
+        },
+      ],
+    };
+    const giveFeedback = vi.spyOn(researchApi, "giveDiscoveryFeedback").mockResolvedValue(latestCandidate);
+    vi.mocked(researchApi.getDiscovery).mockResolvedValue(latestCandidate);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 });
+    await user.click(screen.getByRole("button", { name: /撤销最近反馈/ }));
+    await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", {
+      undo_feedback_id: "feedback-new",
+    }));
   });
 });

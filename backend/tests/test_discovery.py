@@ -246,6 +246,97 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
     )
 
 
+def test_candidate_feedback_does_not_leak_to_unrelated_candidates(
+    test_settings,
+) -> None:
+    """A candidate action must not silently mute every future candidate."""
+
+    run_alembic_command(test_settings.database_path, "upgrade", "head")
+    owner = AuthRepository(test_settings.database_path).create_owner(
+        username="feedback-scope-owner",
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+    )
+    owner_id = str(owner["id"])
+    task = _task(test_settings.database_path, owner_id)
+    discovery = DiscoveryRepository(test_settings.database_path)
+    run = discovery.create_run(task_id=str(task["id"]))
+    score_values = {
+        "relevance_score": 0.7,
+        "novelty_score": 0.8,
+        "evidence_strength_score": 0.5,
+        "source_independence_score": 0.5,
+        "cross_platform_score": 0.5,
+        "counterevidence_score": 0.2,
+        "actionability_score": 0.6,
+        "feedback_score": 0.5,
+        "noise_risk_score": 0.1,
+        "marketing_risk_score": 0.1,
+        "saturation_score": 0.1,
+        "resource_cost_score": 0.2,
+        "final_score": 0.58,
+    }
+
+    def create_candidate(normalized_key: str) -> dict[str, object]:
+        return discovery.upsert_candidate(
+            owner_id=owner_id,
+            task_id=str(task["id"]),
+            run_id=str(run["id"]),
+            candidate_type="entity",
+            title=normalized_key.title(),
+            summary="需要用户判断的候选。",
+            normalized_key=normalized_key,
+            parent_candidate_id=None,
+            source_seed_id=None,
+            source_content_id=None,
+            source_platform="bili",
+            scores=score_values,
+            score_explanation={"recommendation": "继续研究"},
+            counts={
+                "content_count": 0,
+                "independent_source_count": 0,
+                "platform_count": 0,
+                "suspected_repost_count": 0,
+            },
+            depth=1,
+            state="queued",
+            suggested_next_action="继续研究",
+            experimental_status=None,
+        )
+
+    first = create_candidate("first candidate")
+    second = create_candidate("second candidate")
+    discovery.record_feedback(
+        owner_id=owner_id,
+        candidate_id=str(first["id"]),
+        feedback_type="irrelevant",
+        scope="global",
+        scope_key=None,
+        weight=1,
+        reason="只针对这一条候选",
+    )
+
+    first_adjustment, _ = discovery.active_feedback_adjustment(
+        owner_id=owner_id,
+        candidate_type="entity",
+        platform="bili",
+        topic_key=str(first["normalized_key"]),
+        intent_id=None,
+        candidate_id=str(first["id"]),
+    )
+    second_adjustment, second_rules = discovery.active_feedback_adjustment(
+        owner_id=owner_id,
+        candidate_type="entity",
+        platform="bili",
+        topic_key=str(second["normalized_key"]),
+        intent_id=None,
+        candidate_id=str(second["id"]),
+    )
+
+    assert first_adjustment < 0
+    assert second_adjustment == 0
+    assert second_rules == []
+
+
 def test_discovery_collects_favorite_accepted_space_and_confirmed_event_seeds(
     test_settings,
 ) -> None:
