@@ -728,3 +728,39 @@ Diagnosed the frontend response-format error after the HTTP 500 fix: SQLite nume
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Finish 8D local-first governance and product review
+
+**Date**: 2026-08-05
+**Task**: Finish 8D local-first governance and product review
+**Branch**: `main`
+
+### Summary
+
+Established permanent local-first project governance, Fixture and visual gates, Release Candidate deployment rules, SSH/auth state classification, and production status checks; pushed and deployed RC ac0e322. Final production smoke passed, Windows Chrome product review completed, and XHS captcha remains truthfully recorded as blocked_by_platform.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08bc85f` | (see git log) |
+| `f429b77` | (see git log) |
+| `43cd139` | (see git log) |
+| `ac0e322` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

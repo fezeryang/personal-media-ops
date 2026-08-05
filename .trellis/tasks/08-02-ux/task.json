@@ -3,7 +3,7 @@
   "name": "ux",
   "title": "研究任务UX优化：查询轨迹展示与质量闸门改进",
   "description": "",
-  "status": "planning",
+  "status": "paused",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "因前置功能尚未完成而暂停。需要等待其他板块就绪后再继续UX优化工作。",
   "meta": {}
 }
