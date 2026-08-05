@@ -186,6 +186,20 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "research_discovery_preference_rules",
             "research_spaces",
             "research_space_items",
+            "prompt_definitions",
+            "prompt_versions",
+            "ai_eval_cases",
+            "ai_eval_runs",
+            "ai_eval_results",
+            "monitoring_missions",
+            "monitoring_targets",
+            "monitoring_runs",
+            "monitoring_run_queries",
+            "monitoring_baselines",
+            "monitoring_changes",
+            "monitoring_change_sources",
+            "monitoring_memory_updates",
+            "monitoring_notifications",
         }.issubset({
             row[0]
             for row in connection.execute(
@@ -246,6 +260,13 @@ def test_upgrade_blank_database_to_head(tmp_path: Path) -> None:
             "idx_discovery_preference_owner_active",
             "idx_research_spaces_owner_status",
             "idx_research_space_items_space_position",
+            "idx_prompt_versions_key_status",
+            "idx_ai_eval_results_run",
+            "idx_monitoring_missions_owner_status_next",
+            "idx_monitoring_runs_mission_created",
+            "idx_monitoring_baselines_mission_version",
+            "idx_monitoring_changes_owner_attention",
+            "idx_monitoring_notifications_owner_status",
         }.issubset(indexes)
 
 

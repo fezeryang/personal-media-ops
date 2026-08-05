@@ -17,6 +17,7 @@ const IntegrationsPage = lazy(() => import("./pages/integrations-page").then((mo
 const LibraryContentPage = lazy(() => import("./pages/library-content-page").then((module) => ({ default: module.LibraryContentPage })));
 const LibraryCreatorPage = lazy(() => import("./pages/library-creator-page").then((module) => ({ default: module.LibraryCreatorPage })));
 const MemoryEvidencePage = lazy(() => import("./pages/memory-evidence-page").then((module) => ({ default: module.MemoryEvidencePage })));
+const MonitoringMissionsPage = lazy(() => import("./pages/monitoring-missions-page").then((module) => ({ default: module.MonitoringMissionsPage })));
 const OverviewPage = lazy(() => import("./pages/overview-page").then((module) => ({ default: module.OverviewPage })));
 const ResearchSpacesPage = lazy(() => import("./pages/research-spaces-page").then((module) => ({ default: module.ResearchSpacesPage })));
 const ResearchTasksPage = lazy(() => import("./pages/research-tasks-page").then((module) => ({ default: module.ResearchTasksPage })));
@@ -66,6 +67,8 @@ export function App() {
         <Route path="memory" element={<MemoryEvidencePage />} />
         <Route path="memory/contents/:contentId" element={<LibraryContentPage />} />
         <Route path="memory/creators/:creatorId" element={<LibraryCreatorPage />} />
+        <Route path="monitoring" element={<MonitoringMissionsPage />} />
+        <Route path="monitoring/:missionId" element={<MonitoringMissionsPage />} />
         <Route path="tools" element={<ToolsPage />} />
         <Route path="tools/overview" element={<OverviewPage />} />
         <Route path="tools/crawls" element={<TasksPage />} />

@@ -16,7 +16,7 @@ import { Link } from "react-router";
 
 import type { CrawlerPlatformCapability } from "../api/crawler";
 import type {
-  DiscoveryCandidateSummary,
+  DiscoveryInboxItem,
   ResearchTaskDetail,
   ResearchTaskInput,
   ResearchTaskSummary,
@@ -441,7 +441,7 @@ function ResearchHomePulse({
   onRetryDiscoveries,
 }: {
   tasks: ResearchTaskSummary[];
-  discoveries: DiscoveryCandidateSummary[];
+  discoveries: DiscoveryInboxItem[];
   discoveriesPending: boolean;
   discoveriesError: unknown;
   onRetryDiscoveries: () => void;
@@ -475,9 +475,9 @@ function ResearchHomePulse({
         </CardHeader>
         <CardContent className="space-y-2">
           {discoveriesError ? <ErrorState title="待处理发现加载失败" error={discoveriesError} onRetry={onRetryDiscoveries} /> : discoveriesPending ? <p className="text-sm text-muted">正在加载待处理发现…</p> : pendingDiscoveries.length === 0 ? <p className="text-sm text-muted">暂无待处理发现</p> : pendingDiscoveries.map((candidate) => (
-            <Link key={candidate.id} to={`/discoveries/${encodeURIComponent(candidate.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5">
+            <Link key={candidate.id} to={candidate.source_type === "monitoring" && candidate.mission_id ? `/monitoring/${encodeURIComponent(candidate.mission_id)}` : `/discoveries/${encodeURIComponent(candidate.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5">
               <p className="line-clamp-2 text-sm font-semibold">{candidate.title}</p>
-              <p className="mt-1 text-xs text-muted">{discoveryTypeLabel(candidate.candidate_type)} · {Math.round(candidate.final_score * 100)} 分</p>
+              <p className="mt-1 text-xs text-muted">{candidate.source_type === "monitoring" ? "监控变化" : discoveryTypeLabel(candidate.candidate_type)} · {Math.round(candidate.final_score * 100)} 分</p>
             </Link>
           ))}
         </CardContent>

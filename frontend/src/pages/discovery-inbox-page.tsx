@@ -7,6 +7,7 @@ import {
   Filter,
   FolderPlus,
   RotateCcw,
+  Radar,
   Search,
   Sparkles,
   ThumbsDown,
@@ -20,6 +21,7 @@ import type {
   DiscoveryCandidateDetail,
   DiscoveryCandidateSummary,
   DiscoveryFeedbackType,
+  DiscoveryInboxItem,
   ResearchSpaceSummary,
 } from "../api/research";
 import { ErrorState } from "../components/error-state";
@@ -76,11 +78,17 @@ const stateVariants: Record<string, "neutral" | "info" | "success" | "warning" |
   expired: "neutral",
 };
 
+const attentionLabels: Record<string, string> = {
+  immediate_attention: "立即关注",
+  daily_digest: "今日摘要",
+  normal_record: "普通记录",
+};
+
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function candidateMatches(candidate: DiscoveryCandidateSummary, query: string): boolean {
+function candidateMatches(candidate: DiscoveryInboxItem, query: string): boolean {
   if (!query) return true;
   const haystack = `${candidate.title} ${candidate.summary} ${candidate.candidate_type} ${candidate.source_platform ?? ""}`.toLowerCase();
   return haystack.includes(query.toLowerCase());
@@ -101,7 +109,7 @@ function asCount(value: unknown): string {
 }
 
 function explanationText(
-  candidate: DiscoveryCandidateSummary,
+  candidate: Pick<DiscoveryCandidateSummary, "score_explanation">,
   key: string,
 ): string | null {
   const value = candidate.score_explanation[key];
@@ -120,7 +128,8 @@ export function DiscoveryInboxPage() {
     [discoveries.data, search],
   );
   const effectiveId = candidateId ?? selectedId ?? effectiveItems[0]?.id ?? "";
-  const detail = useDiscoveryQuery(effectiveId);
+  const selectedItem = effectiveItems.find((item) => item.id === effectiveId);
+  const detail = useDiscoveryQuery(effectiveId, selectedItem?.source_type !== "monitoring");
   const spaces = useResearchSpacesQuery();
   const feedback = useDiscoveryFeedbackMutation();
   const continueResearch = useContinueDiscoveryMutation();
@@ -129,9 +138,13 @@ export function DiscoveryInboxPage() {
   const [followUpRequest, setFollowUpRequest] = useState("");
   const effectiveSpaceId = spaceId || spaces.data?.[0]?.id || "";
 
-  function selectCandidate(id: string) {
-    setSelectedId(id);
-    void navigate(`/discoveries/${encodeURIComponent(id)}`);
+  function selectCandidate(item: DiscoveryInboxItem) {
+    setSelectedId(item.id);
+    if (item.source_type === "monitoring" && item.mission_id) {
+      void navigate(`/monitoring/${encodeURIComponent(item.mission_id)}`);
+      return;
+    }
+    void navigate(`/discoveries/${encodeURIComponent(item.id)}`);
   }
 
   function giveFeedback(feedbackType: DiscoveryFeedbackType) {
@@ -214,20 +227,20 @@ export function DiscoveryInboxPage() {
             <CardContent className="space-y-2 p-3">
               {discoveries.isPending ? Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-paper" />) : null}
               {!discoveries.isPending && effectiveItems.length === 0 ? <p className="rounded-xl bg-paper p-5 text-sm text-muted">暂时没有符合筛选条件的发现。完成一轮有真实来源的研究后，候选会自动进入这里。</p> : null}
-              {effectiveItems.map((candidate) => (
+            {effectiveItems.map((candidate) => (
                 <button
                   key={candidate.id}
                   type="button"
-                  onClick={() => selectCandidate(candidate.id)}
+                  onClick={() => selectCandidate(candidate)}
                   className={`w-full rounded-xl border p-3 text-left transition ${effectiveId === candidate.id ? "border-signal/35 bg-signal/7" : "border-transparent hover:bg-paper"}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="line-clamp-2 text-sm font-semibold">{candidate.title}</span>
-                    <Badge variant={stateVariants[candidate.state] ?? "neutral"}>{stateLabels[candidate.state] ?? candidate.state}</Badge>
+                    <Badge variant={candidate.source_type === "monitoring" ? "info" : stateVariants[candidate.state] ?? "neutral"}>{candidate.source_type === "monitoring" ? attentionLabels[candidate.attention_level ?? ""] ?? "监控变化" : stateLabels[candidate.state] ?? candidate.state}</Badge>
                   </div>
                   <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{candidate.summary}</p>
                   <div className="mt-3 flex items-center justify-between text-xs text-muted">
-                    <span>{candidateTypeLabels[candidate.candidate_type] ?? candidate.candidate_type} · {candidate.source_platform ?? "多平台"}</span>
+                    <span>{candidate.source_type === "monitoring" ? `监控 · ${candidate.change_type ?? "变化"}` : `${candidateTypeLabels[candidate.candidate_type] ?? candidate.candidate_type} · ${candidate.source_platform ?? "多平台"}`}</span>
                     <span className="font-semibold text-signal-strong">{percent(candidate.final_score)}</span>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-muted">
@@ -235,10 +248,10 @@ export function DiscoveryInboxPage() {
                     <span>内容 {candidate.content_count} · 转载 {candidate.suspected_repost_count}</span>
                   </div>
                   <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-muted">
-                    相关：{explanationText(candidate, "why_relevant") ?? "暂无相关性解释"}
+                    {candidate.source_type === "monitoring" ? `监控任务：${candidate.source_mission_title ?? "未命名"}` : `相关：${explanationText(candidate, "why_relevant") ?? "暂无相关性解释"}`}
                   </p>
                   <p className="line-clamp-2 text-[11px] leading-5 text-muted">
-                    新颖：{explanationText(candidate, "why_new") ?? "暂无新颖性解释"}
+                    {candidate.source_type === "monitoring" ? `独立来源 ${candidate.independent_source_count} · 平台 ${candidate.platform_count}` : `新颖：${explanationText(candidate, "why_new") ?? "暂无新颖性解释"}`}
                   </p>
                   <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-signal-strong">
                     下一步：{candidate.suggested_next_action ?? explanationText(candidate, "recommendation") ?? "等待更多证据"}
@@ -248,7 +261,9 @@ export function DiscoveryInboxPage() {
             </CardContent>
           </Card>
 
-          {detail.isError ? <ErrorState title="发现详情加载失败" error={detail.error} onRetry={() => void detail.refetch()} /> : detail.data ? (
+          {selectedItem?.source_type === "monitoring" ? (
+            <Card className="grid min-h-80 place-items-center p-8 text-center"><div><Radar className="mx-auto size-8 text-signal" /><h2 className="mt-3 font-display text-2xl font-semibold">这是监控任务产生的变化</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted">变化、事件更新、反向证据和长期记忆都保留在监控任务详情中。</p>{selectedItem.mission_id ? <Button className="mt-5" asChild><Link to={`/monitoring/${encodeURIComponent(selectedItem.mission_id)}`}>打开监控任务 <ExternalLink className="size-4" /></Link></Button> : null}</div></Card>
+          ) : detail.isError ? <ErrorState title="发现详情加载失败" error={detail.error} onRetry={() => void detail.refetch()} /> : detail.data ? (
             <DiscoveryDetail
               candidate={detail.data}
               spaces={spaces.data ?? []}

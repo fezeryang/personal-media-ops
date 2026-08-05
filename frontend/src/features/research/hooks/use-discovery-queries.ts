@@ -34,11 +34,11 @@ export function useDiscoveriesQuery(filters: { state?: string; researchTaskId?: 
   });
 }
 
-export function useDiscoveryQuery(candidateId: string) {
+export function useDiscoveryQuery(candidateId: string, enabled = true) {
   return useQuery({
     queryKey: discoveryQueryKeys.detail(candidateId),
     queryFn: ({ signal }) => getDiscovery(candidateId, signal),
-    enabled: Boolean(candidateId),
+    enabled: Boolean(candidateId) && enabled,
   });
 }
 

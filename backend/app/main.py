@@ -17,6 +17,8 @@ from app.api.crawler import router as crawler_router
 from app.api.health import router as health_router
 from app.api.intelligence import router as intelligence_router
 from app.api.library import router as library_router
+from app.api.monitoring import notifications_router
+from app.api.monitoring import router as monitoring_router
 from app.api.organization import router as organization_router
 from app.api.research import router as research_router
 from app.api.subscriptions import router as subscriptions_router
@@ -31,6 +33,7 @@ from app.repositories.crawler_tasks import CrawlerTaskRepository
 from app.repositories.discovery import DiscoveryRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
+from app.repositories.monitoring import MonitoringRepository
 from app.repositories.organization import OrganizationRepository
 from app.repositories.research import ResearchTaskRepository
 from app.security.provider_secrets import ProviderSecretCipher
@@ -43,6 +46,7 @@ from app.services.auth import AuthService
 from app.services.automation import AutomationCoordinator
 from app.services.intelligence.briefs import DeterministicBriefGenerator
 from app.services.intelligence.trends import TrendService
+from app.services.monitoring.service import MonitoringService
 
 
 def create_app(config: Settings | None = None) -> FastAPI:
@@ -57,6 +61,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     auth_service = AuthService(auth_repository, active_settings)
     ai_repository = AIRepository(active_settings.database_path)
     research_repository = ResearchTaskRepository(active_settings.database_path)
+    monitoring_repository = MonitoringRepository(active_settings.database_path)
+    monitoring_service = MonitoringService(monitoring_repository, research_repository)
     discovery_repository = DiscoveryRepository(active_settings.database_path)
     production_verified_search_platforms = platform_registry.production_verified_platforms_for_mode(
         "search",
@@ -115,6 +121,7 @@ def create_app(config: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         repository.initialize()
+        ai_repository.ensure_governance_defaults()
         await research_runtime.start()
         try:
             yield
@@ -148,6 +155,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.state.model_gateway = model_gateway
     application.state.automation_repository = automation_repository
     application.state.automation_coordinator = automation_coordinator
+    application.state.monitoring_repository = monitoring_repository
+    application.state.monitoring_service = monitoring_service
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(active_settings.frontend_origins),
@@ -202,6 +211,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.include_router(ai_router, prefix="/api")
     application.include_router(crawler_router, prefix="/api")
     application.include_router(library_router, prefix="/api")
+    application.include_router(monitoring_router, prefix="/api")
+    application.include_router(notifications_router, prefix="/api")
     application.include_router(organization_router, prefix="/api")
     application.include_router(research_router, prefix="/api")
     application.include_router(intelligence_router, prefix="/api")

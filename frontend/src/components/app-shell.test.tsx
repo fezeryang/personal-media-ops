@@ -59,9 +59,10 @@ describe("AppShell", () => {
       name: "移动端主导航",
     });
     expect(mobile).toHaveClass("overflow-x-auto");
-    expect(mobile.querySelectorAll("a")).toHaveLength(6);
+    expect(mobile.querySelectorAll("a")).toHaveLength(7);
     expect(container).toHaveTextContent("发现收件箱");
     expect(container).toHaveTextContent("记忆与证据");
+    expect(container).toHaveTextContent("监控任务");
     expect(container).toHaveTextContent("AI 研究");
     expect(container).not.toHaveTextContent("今日情报");
     expect(container).not.toHaveTextContent("AI 模型中心");

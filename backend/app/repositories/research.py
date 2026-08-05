@@ -1132,6 +1132,9 @@ class ResearchTaskRepository:
         estimated_resource_use: float = 0,
         unexecuted_reason: str | None = None,
         expected_evidence_role: str | None = None,
+        parent_goal: str | None = None,
+        parent_unknown: str | None = None,
+        scope_distance: float | None = None,
     ) -> dict[str, object]:
         identifier = self.new_id()
         now = utc_now()
@@ -1155,13 +1158,14 @@ class ResearchTaskRepository:
                     id, research_task_id, intent_id, record_type, gate_status,
                     decision, query_role, query, normalized_query, query_type,
                     platform, source_type, source_content_id, source_finding_id,
-                    parent_query_id, generation_reason, relevance_score,
+                    parent_query_id, parent_goal, parent_unknown, scope_distance,
+                    generation_reason, relevance_score,
                     specificity_score, novelty_score, noise_risk_score,
                     expected_value_score, status, rejection_reason,
                     lifecycle_status, unexecuted_reason, entity_diversity_bonus,
                     platform_diversity_bonus, negative_evidence_bonus,
                     estimated_resource_use, expected_evidence_role, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -1179,6 +1183,9 @@ class ResearchTaskRepository:
                     source_content_id,
                     source_finding_id,
                     parent_query_id,
+                    parent_goal,
+                    parent_unknown,
+                    max(0.0, min(1.0, scope_distance)) if scope_distance is not None else None,
                     generation_reason,
                     relevance_score,
                     specificity_score,

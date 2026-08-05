@@ -21,12 +21,15 @@ from pydantic import (
 )
 
 from app.models.ai import (
+    EvalCaseView,
     GatewayResponse,
     ModelInfo,
     ModelMessage,
     ModelRequest,
     ModelRouteRole,
     ModelToolDefinition,
+    PromptDefinitionView,
+    PromptVersionAction,
     ProviderHealth,
     ProviderProtocol,
 )
@@ -663,13 +666,57 @@ def get_health(request: Request, _: OwnerSession) -> list[dict[str, object]]:
     return _repository(request).list_health()
 
 
+@router.get("/prompts", response_model=list[PromptDefinitionView])
+def list_prompts(request: Request, _: OwnerSession) -> list[dict[str, object]]:
+    return _repository(request).list_prompt_definitions()
+
+
+@router.get("/evals", response_model=list[EvalCaseView])
+def list_evals(request: Request, _: OwnerSession) -> list[dict[str, object]]:
+    return _repository(request).list_eval_cases()
+
+
+@router.post("/prompts/{prompt_key}/activate", response_model=PromptDefinitionView)
+def activate_prompt(
+    prompt_key: str,
+    payload: PromptVersionAction,
+    request: Request,
+    _: OwnerSession,
+) -> dict[str, object]:
+    try:
+        return _repository(request).activate_prompt(
+            prompt_key=prompt_key,
+            version=payload.version,
+        )
+    except Exception as error:
+        raise _http_error(error) from error
+
+
+@router.post("/prompts/{prompt_key}/rollback", response_model=PromptDefinitionView)
+def rollback_prompt(
+    prompt_key: str,
+    request: Request,
+    _: OwnerSession,
+) -> dict[str, object]:
+    try:
+        return _repository(request).rollback_prompt(prompt_key=prompt_key)
+    except Exception as error:
+        raise _http_error(error) from error
+
+
 def _debug_request(payload: DebugWrite) -> ModelRequest:
     return ModelRequest(
         system="This is a bounded Model Gateway diagnostic request.",
         messages=[ModelMessage(role="user", content=payload.message)],
         max_tokens=256,
         stream=payload.stream,
-        metadata={"source": "model-center-debug"},
+        metadata={
+            "source": "model-center-debug",
+            "prompt_key": "model_center_debug",
+            "prompt_version": "v1",
+            "context_version": "ctx-v1",
+            "tool_contract_version": "v1",
+        },
         timeout=60,
     )
 

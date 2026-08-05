@@ -19,9 +19,9 @@ from app.crawler.registry import (
 from app.models.discovery import (
     DiscoveryAddToSpaceRequest,
     DiscoveryCandidateDetail,
-    DiscoveryCandidateSummary,
     DiscoveryContinueRequest,
     DiscoveryFeedbackRequest,
+    DiscoveryInboxItem,
     ResearchPreferences,
     ResearchSpaceCreate,
     ResearchSpaceDetail,
@@ -602,7 +602,7 @@ def _decide_action(
         raise _conflict(error) from error
 
 
-@router.get("/discoveries", response_model=list[DiscoveryCandidateSummary])
+@router.get("/discoveries", response_model=list[DiscoveryInboxItem])
 def list_discoveries(
     request: Request,
     auth: OwnerSession,
@@ -611,13 +611,21 @@ def list_discoveries(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, object]]:
-    return _discovery(request).list_candidates(
+    candidates = _discovery(request).list_candidates(
         owner_id=auth.user_id,
         state=state,
         research_task_id=research_task_id,
         limit=limit,
         offset=offset,
     )
+    normalized_candidates = [dict(item, source_type="discovery") for item in candidates]
+    monitoring = request.app.state.monitoring_repository.list_inbox_changes(
+        auth.user_id,
+        limit=limit,
+    )
+    if state is not None:
+        monitoring = [item for item in monitoring if item.get("state") == state]
+    return normalized_candidates + monitoring
 
 
 @router.get("/discoveries/{candidate_id}", response_model=DiscoveryCandidateDetail)

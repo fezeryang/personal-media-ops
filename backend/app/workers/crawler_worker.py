@@ -17,11 +17,13 @@ from app.repositories.automation import AutomationRepository
 from app.repositories.crawler_tasks import CrawlerTaskRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
+from app.repositories.monitoring import MonitoringRepository
 from app.repositories.research import ResearchTaskRepository
 from app.services.automation import AutomationCoordinator
 from app.services.intelligence.briefs import DeterministicBriefGenerator
 from app.services.intelligence.coordinator import IntelligenceCoordinator
 from app.services.intelligence.trends import TrendService
+from app.services.monitoring.service import MonitoringService
 
 STREAM_READER_LIMIT_BYTES = 1024 * 1024
 SENSITIVE_LOG_ASSIGNMENT = re.compile(
@@ -115,6 +117,10 @@ class CrawlerWorker:
         self.research_repository = research_repository or ResearchTaskRepository(
             config.database_path
         )
+        self.monitoring_service = MonitoringService(
+            MonitoringRepository(config.database_path),
+            self.research_repository,
+        )
         self.automation_coordinator = automation_coordinator or AutomationCoordinator(
             AutomationRepository(config),
             config,
@@ -138,6 +144,7 @@ class CrawlerWorker:
             self._reconcile_research_crawls()
             self.automation_coordinator.reconcile_runs()
             next_automation_poll = 0.0
+            next_monitoring_poll = 0.0
             while True:
                 loop_time = asyncio.get_running_loop().time()
                 if loop_time >= next_automation_poll:
@@ -149,6 +156,13 @@ class CrawlerWorker:
                     )
                     self.automation_coordinator.reconcile_runs()
                     next_automation_poll = (
+                        loop_time
+                        + self.settings.automation_poll_interval_seconds
+                    )
+                if loop_time >= next_monitoring_poll:
+                    self.monitoring_service.run_due(limit=1)
+                    self.monitoring_service.reconcile_linked_runs(limit=1)
+                    next_monitoring_poll = (
                         loop_time
                         + self.settings.automation_poll_interval_seconds
                     )

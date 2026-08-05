@@ -31,12 +31,14 @@ import {
   type AiProvider,
   type DebugInput,
   type GatewayResponse,
+  type PromptDefinition,
   type ModelCandidate,
   type ModelInput,
   type ProviderInput,
   type ProviderCheckKind,
   type ProviderTemplate,
   type RouteRole,
+  activatePrompt,
   createAiProvider,
   createModel,
   debugModel,
@@ -44,11 +46,14 @@ import {
   deleteModel,
   getAiHealth,
   getUsage,
+  listAiEvalCases,
   listAiModels,
   listAiProviders,
+  listPromptDefinitions,
   listProviderTemplates,
   listRoutes,
   refreshProviderModels,
+  rollbackPrompt,
   routeRoles,
   streamDebugModel,
   testAiProvider,
@@ -69,13 +74,14 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 
-type Tab = "providers" | "models" | "routes" | "usage" | "debug";
+type Tab = "providers" | "models" | "routes" | "usage" | "debug" | "prompts";
 const tabs: { id: Tab; label: string; icon: typeof Cable }[] = [
   { id: "providers", label: "服务商", icon: Cable },
   { id: "models", label: "模型", icon: Boxes },
   { id: "routes", label: "路由", icon: Route },
   { id: "usage", label: "用量", icon: Gauge },
   { id: "debug", label: "调试测试", icon: FlaskConical },
+  { id: "prompts", label: "Prompt 治理", icon: ShieldCheck },
 ];
 const roleLabels: Record<RouteRole, string> = {
   default: "默认模型",
@@ -447,6 +453,7 @@ export function AiModelCenterPage() {
       ) : null}
       {tab === "usage" ? <UsagePanel usage={usage.data} pending={usage.isPending} error={usage.error} /> : null}
       {tab === "debug" ? <DebugPanel models={models.data ?? []} /> : null}
+      {tab === "prompts" ? <PromptRegistryPanel /> : null}
 
       <ProviderDialog
         draft={providerEditor}
@@ -466,6 +473,99 @@ export function AiModelCenterPage() {
         onClose={() => setModelEditor(null)}
         onSave={(draft) => modelSave.mutate(draft)}
       />
+    </div>
+  );
+}
+
+function promptStatusLabel(status: PromptDefinition["versions"][number]["status"]): string {
+  return {
+    draft: "草稿",
+    candidate: "候选",
+    active: "当前",
+    deprecated: "已废弃",
+    rollback: "可回滚",
+  }[status];
+}
+
+function promptEvalSummary(prompt: PromptDefinition): string {
+  const result = prompt.recent_eval;
+  if (!result) return "尚无评测运行记录";
+  const passed = result.passed_count;
+  const cases = result.case_count;
+  if (typeof passed === "number" && typeof cases === "number") {
+    return `最近评测 ${passed}/${cases} 通过`;
+  }
+  return typeof result.status === "string" ? `最近评测：${result.status}` : "最近评测已记录";
+}
+
+function PromptRegistryPanel() {
+  const queryClient = useQueryClient();
+  const [actionError, setActionError] = useState<unknown>(null);
+  const prompts = useQuery({
+    queryKey: ["ai", "prompts"],
+    queryFn: ({ signal }) => listPromptDefinitions(signal),
+  });
+  const evals = useQuery({
+    queryKey: ["ai", "evals"],
+    queryFn: ({ signal }) => listAiEvalCases(signal),
+  });
+  const action = useMutation({
+    mutationFn: (input: { promptKey: string; version?: string; kind: "activate" | "rollback" }) =>
+      input.kind === "activate"
+        ? activatePrompt(input.promptKey, input.version ?? "")
+        : rollbackPrompt(input.promptKey),
+    onSuccess: async () => {
+      setActionError(null);
+      await queryClient.invalidateQueries({ queryKey: ["ai", "prompts"] });
+    },
+    onError: setActionError,
+  });
+  if (prompts.isPending || evals.isPending) {
+    return <div className="grid min-h-48 place-items-center text-sm text-muted">正在加载 Prompt 治理信息…</div>;
+  }
+  if (prompts.isError) {
+    return <ErrorState title="Prompt 治理信息加载失败" error={prompts.error} onRetry={() => void prompts.refetch()} />;
+  }
+  if (evals.isError) {
+    return <ErrorState title="评测集加载失败" error={evals.error} onRetry={() => void evals.refetch()} />;
+  }
+  const items = prompts.data ?? [];
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <p className="section-kicker">Prompt registry · active / candidate / rollback</p>
+          <h2 className="mt-1 font-display text-2xl font-semibold">角色与版本治理</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">这里仅展示系统 Prompt 的版本状态和评测证据。激活或回滚需要 Owner Session、CSRF 和一次明确的管理员操作；AI Runtime 不会自行改动版本。</p>
+        </CardHeader>
+        <CardContent className="space-y-3 pt-5">
+          {actionError ? <p className="rounded-xl border border-danger/20 bg-danger/5 p-3 text-sm text-danger">{actionError instanceof Error ? actionError.message : "Prompt 版本操作失败"}</p> : null}
+          {items.map((prompt) => {
+            const candidate = prompt.versions.find((version) => version.version === prompt.candidate_version);
+            return (
+              <div key={prompt.prompt_key} className="rounded-2xl border border-line p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{prompt.role}</h3><Badge variant="neutral">{prompt.prompt_key}</Badge></div>
+                    <p className="mt-1 text-sm text-muted">当前版本 <span className="font-semibold text-ink">{prompt.active_version}</span> · {promptEvalSummary(prompt)}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {candidate ? <Button size="sm" disabled={action.isPending} onClick={() => { if (window.confirm(`确认激活 ${prompt.prompt_key} ${candidate.version}？请先确认评测结果。`)) action.mutate({ promptKey: prompt.prompt_key, version: candidate.version, kind: "activate" }); }}>激活候选</Button> : null}
+                    {prompt.versions.some((version) => version.status === "rollback") ? <Button size="sm" variant="secondary" disabled={action.isPending} onClick={() => { if (window.confirm(`确认回滚 ${prompt.prompt_key}？`)) action.mutate({ promptKey: prompt.prompt_key, kind: "rollback" }); }}>回滚</Button> : null}
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {prompt.versions.map((version) => <div key={version.version} className="rounded-xl bg-paper p-3"><div className="flex items-center justify-between gap-2"><span className="font-mono text-xs">{version.version}</span><Badge variant={version.status === "active" ? "success" : version.status === "candidate" ? "warning" : "neutral"}>{promptStatusLabel(version.status)}</Badge></div><p className="mt-2 text-xs leading-5 text-muted">{version.change_reason}</p></div>)}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><p className="section-kicker">Fixed eval dataset</p><h2 className="mt-1 font-display text-xl font-semibold">评测任务边界</h2><p className="mt-2 text-sm text-muted">固定场景不写死答案，只定义 Intent、关键未知项、必要证据和允许的 partial completion。</p></CardHeader>
+        <CardContent className="grid gap-3 pt-4 md:grid-cols-2">{(evals.data ?? []).map((item) => <div key={item.slug} className="rounded-xl border border-line p-3"><div className="flex items-start justify-between gap-2"><p className="font-semibold">{item.task}</p><Badge variant={item.partial_completion_allowed ? "info" : "neutral"}>{item.partial_completion_allowed ? "允许部分完成" : "需完整证据"}</Badge></div><p className="mt-1 text-xs text-muted">{item.slug} · 最低独立来源 {item.minimum_sources}</p><p className="mt-2 text-sm leading-5 text-muted">{item.expected_intent}</p></div>)}</CardContent>
+      </Card>
     </div>
   );
 }

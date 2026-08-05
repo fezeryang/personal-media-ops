@@ -244,6 +244,9 @@ class ResearchQuery(BaseModel):
     source_content_id: str | None
     source_finding_id: str | None
     parent_query_id: str | None
+    parent_goal: str | None = None
+    parent_unknown: str | None = None
+    scope_distance: float | None = Field(default=None, ge=0, le=1)
     generation_reason: str
     relevance_score: float | None
     specificity_score: float

@@ -44,6 +44,11 @@ def compact_research_context(
                 "status": _text(item.get("lifecycle_status") or item.get("status"), 40),
                 "source_content_id": item.get("source_content_id"),
                 "source_finding_id": item.get("source_finding_id"),
+                "parent_goal": item.get("parent_goal"),
+                "parent_unknown": item.get("parent_unknown"),
+                "query_role": item.get("query_role"),
+                "generation_reason": item.get("generation_reason"),
+                "scope_distance": item.get("scope_distance"),
             }
         )
     candidate_content_ids = {
@@ -72,6 +77,8 @@ def compact_research_context(
             evidence_cards.append(
                 {
                     "content_id": content_id,
+                    "evidence_id": evidence.get("id") or evidence.get("evidence_id"),
+                    "source": evidence.get("source") or evidence.get("platform"),
                     "source_url": evidence.get("source_url"),
                     "platform": evidence.get("platform"),
                     "published_at": evidence.get("published_at"),
@@ -83,6 +90,7 @@ def compact_research_context(
                 "finding_id": _text(item.get("id"), 100),
                 "kind": item.get("kind"),
                 "statement": _text(item.get("statement"), 700),
+                "entity_relations": item.get("entity_relations") or item.get("related_entities") or [],
                 "counterevidence_status": item.get("counterevidence_status"),
                 "evidence": evidence_cards[:8],
             }

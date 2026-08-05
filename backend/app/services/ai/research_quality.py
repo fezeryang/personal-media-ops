@@ -287,6 +287,24 @@ def marginal_stop_decision(
     return None
 
 
+def query_scope_distance(
+    query: str,
+    *,
+    parent_goal: str,
+    parent_unknown: str | None = None,
+) -> float:
+    """Estimate semantic drift for durable query audits without model guessing."""
+
+    query_tokens_set = set(query_tokens(normalize_query(query)))
+    goal_tokens_set = set(query_tokens(normalize_query(parent_goal)))
+    unknown_tokens_set = set(query_tokens(normalize_query(parent_unknown or "")))
+    anchor_tokens = goal_tokens_set | unknown_tokens_set
+    if not query_tokens_set or not anchor_tokens:
+        return 1.0
+    overlap = len(query_tokens_set & anchor_tokens) / len(query_tokens_set)
+    return max(0.0, min(1.0, 1.0 - overlap))
+
+
 def evaluate_query(
     query: str,
     *,

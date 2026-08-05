@@ -232,6 +232,50 @@ export const gatewayResponseSchema = z.object({
   final_model_id: z.string(),
 });
 
+const promptVersionStatusSchema = z.enum([
+  "draft",
+  "candidate",
+  "active",
+  "deprecated",
+  "rollback",
+]);
+const promptVersionSchema = z.object({
+  prompt_key: z.string(),
+  role: z.string(),
+  version: z.string(),
+  status: promptVersionStatusSchema,
+  model_family: z.string(),
+  temperature: z.number().nullable(),
+  max_tokens: z.number().int().nullable(),
+  change_reason: z.string(),
+  activated_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export const promptDefinitionSchema = z.object({
+  prompt_key: z.string(),
+  role: z.string(),
+  active_version: z.string(),
+  candidate_version: z.string().nullable(),
+  activated_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  recent_eval: z.record(z.string(), z.unknown()).nullable(),
+  versions: z.array(promptVersionSchema),
+});
+export const evalCaseSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  task: z.string(),
+  expected_intent: z.string(),
+  key_unknowns: z.array(z.string()),
+  required_evidence_types: z.array(z.string()),
+  forbidden_scope_drift: z.array(z.string()),
+  minimum_sources: z.number().int().nonnegative(),
+  partial_completion_allowed: z.boolean(),
+  last_result: z.record(z.string(), z.unknown()).nullable(),
+});
+
 export const modelStreamEventSchema = z.object({
   type: z.enum([
     "start",
@@ -266,6 +310,9 @@ export type ProviderCheckKind = "text" | "streaming" | "tools" | "thinking";
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 export type GatewayResponse = z.infer<typeof gatewayResponseSchema>;
 export type ModelStreamEvent = z.infer<typeof modelStreamEventSchema>;
+export type PromptDefinition = z.infer<typeof promptDefinitionSchema>;
+export type PromptVersion = z.infer<typeof promptVersionSchema>;
+export type EvalCase = z.infer<typeof evalCaseSchema>;
 
 export interface ProviderInput {
   name: string;
@@ -405,6 +452,34 @@ export function getUsage(signal?: AbortSignal) {
 
 export function getAiHealth(signal?: AbortSignal) {
   return requestJson("/api/ai/health", z.array(healthRecordSchema), { signal });
+}
+
+export function listPromptDefinitions(signal?: AbortSignal) {
+  return requestJson("/api/ai/prompts", z.array(promptDefinitionSchema), { signal });
+}
+
+export function listAiEvalCases(signal?: AbortSignal) {
+  return requestJson("/api/ai/evals", z.array(evalCaseSchema), { signal });
+}
+
+export function activatePrompt(promptKey: string, version: string) {
+  return requestJson(
+    `/api/ai/prompts/${encodeURIComponent(promptKey)}/activate`,
+    promptDefinitionSchema,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ version }),
+    },
+  );
+}
+
+export function rollbackPrompt(promptKey: string) {
+  return requestJson(
+    `/api/ai/prompts/${encodeURIComponent(promptKey)}/rollback`,
+    promptDefinitionSchema,
+    { method: "POST" },
+  );
 }
 
 export function debugModel(input: DebugInput) {

@@ -18,6 +18,7 @@ from app.models.ai import (
 )
 from app.repositories.ai import AIRepository
 from app.security.provider_secrets import ProviderSecretCipher
+from app.services.ai.prompt_registry import metadata_from_request
 from app.services.ai.providers import (
     AnthropicCompatibleProvider,
     ModelProvider,
@@ -205,6 +206,7 @@ class ModelGateway:
                 fallback_from_provider_id=fallback_from_provider_id,
                 fallback_from_model_id=fallback_from_model_id,
                 fallback_reason=fallback_reason,
+                **metadata_from_request(resolved.metadata),
             )
             started = perf_counter()
             try:
@@ -380,6 +382,7 @@ class ModelGateway:
                         if is_fallback and primary_error is not None
                         else None
                     ),
+                    **metadata_from_request(resolved.metadata),
                 )
                 started = perf_counter()
                 emitted = False

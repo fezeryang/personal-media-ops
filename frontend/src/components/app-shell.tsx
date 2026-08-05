@@ -1,4 +1,5 @@
 import {
+  Activity,
   Database,
   FolderKanban,
   ChevronRight,
@@ -35,6 +36,7 @@ export function AppShell() {
       : []),
     { label: "研究空间", to: "/spaces", icon: FolderKanban, end: false },
     { label: "记忆与证据", to: "/memory", icon: Database, end: false },
+    { label: "监控任务", to: "/monitoring", icon: Activity, end: false },
     { label: "工具中心", to: "/tools", icon: Wrench, end: false },
     { label: "设置", to: "/settings", icon: Settings, end: false },
   ];

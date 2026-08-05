@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import UTC, datetime
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from app.db import connect_database
 from app.security.provider_secrets import EncryptedProviderSecret
+from app.services.ai.evals import FIXED_EVAL_DATASET, evaluate_recorded_response
+from app.services.ai.prompt_registry import default_prompt_specs
 
 ROUTE_ROLES = (
     "default",
@@ -68,9 +71,340 @@ def _decimal_string(value: object) -> str:
     return format(decimal, "f")
 
 
+def _json_object(value: object) -> dict[str, object]:
+    if not isinstance(value, str):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
 class AIRepository:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
+
+    def ensure_governance_defaults(self) -> None:
+        """Seed only deterministic registry metadata after migration has passed."""
+
+        now = _utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for spec in default_prompt_specs():
+                prompt_key = str(spec["prompt_key"])
+                version = str(spec["version"])
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO prompt_definitions
+                        (prompt_key, role, active_version, candidate_version, created_at, updated_at)
+                    VALUES (?, ?, ?, NULL, ?, ?)
+                    """,
+                    (prompt_key, str(spec["role"]), version, now, now),
+                )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO prompt_versions (
+                        id, prompt_key, version, status, model_family, system_prompt,
+                        task_template, input_schema_json, output_schema_json,
+                        temperature, max_tokens, change_reason, activated_at,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"{prompt_key}:{version}",
+                        prompt_key,
+                        version,
+                        str(spec["model_family"]),
+                        str(spec["system_prompt"]),
+                        str(spec["task_template"]),
+                        json.dumps(spec["input_schema"], ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(spec["output_schema"], ensure_ascii=False, separators=(",", ":")),
+                        spec["temperature"],
+                        spec["max_tokens"],
+                        str(spec["change_reason"]),
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+            for case in FIXED_EVAL_DATASET:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO ai_eval_cases (
+                        id, slug, task, expected_intent, key_unknowns_json,
+                        required_evidence_types_json, forbidden_scope_drift_json,
+                        minimum_sources, partial_completion_allowed, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"eval:{case['slug']}",
+                        case["slug"],
+                        case["task"],
+                        case["expected_intent"],
+                        json.dumps(case["key_unknowns"], ensure_ascii=False),
+                        json.dumps(case["required_evidence_types"], ensure_ascii=False),
+                        json.dumps(case["forbidden_scope_drift"], ensure_ascii=False),
+                        case["minimum_sources"],
+                        int(bool(case["partial_completion_allowed"])),
+                        now,
+                    ),
+                )
+            connection.commit()
+
+    def list_prompt_definitions(self) -> list[dict[str, object]]:
+        with connect_database(self.database_path) as connection:
+            definitions = connection.execute(
+                """
+                SELECT definition.*, active.activated_at AS active_activated_at
+                FROM prompt_definitions definition
+                LEFT JOIN prompt_versions active
+                  ON active.prompt_key = definition.prompt_key
+                 AND active.version = definition.active_version
+                ORDER BY definition.prompt_key
+                """
+            ).fetchall()
+            result: list[dict[str, object]] = []
+            for definition in definitions:
+                item = dict(definition)
+                item["activated_at"] = item.pop("active_activated_at", None)
+                versions = connection.execute(
+                    """
+                    SELECT prompt_key, ? AS role, version, status, model_family,
+                           temperature, max_tokens, change_reason, activated_at,
+                           created_at, updated_at
+                    FROM prompt_versions
+                    WHERE prompt_key = ?
+                    ORDER BY created_at DESC, version DESC
+                    """,
+                    (item["role"], item["prompt_key"]),
+                ).fetchall()
+                item["versions"] = [dict(version) for version in versions]
+                item["recent_eval"] = self._recent_prompt_eval(
+                    connection,
+                    str(item["prompt_key"]),
+                )
+                result.append(item)
+            return result
+
+    @staticmethod
+    def _recent_prompt_eval(
+        connection: sqlite3.Connection,
+        prompt_key: str,
+    ) -> dict[str, object] | None:
+        row = connection.execute(
+            """
+            SELECT run.prompt_key, run.prompt_version, run.status,
+                   run.completed_at, COUNT(result.id) AS case_count,
+                   SUM(CASE WHEN result.status = 'passed' THEN 1 ELSE 0 END) AS passed_count
+            FROM ai_eval_runs run
+            LEFT JOIN ai_eval_results result ON result.run_id = run.id
+            WHERE run.prompt_key = ?
+            GROUP BY run.id
+            ORDER BY run.created_at DESC LIMIT 1
+            """,
+            (prompt_key,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def activate_prompt(self, *, prompt_key: str, version: str) -> dict[str, object]:
+        now = _utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            definition = connection.execute(
+                "SELECT * FROM prompt_definitions WHERE prompt_key = ?",
+                (prompt_key,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT * FROM prompt_versions WHERE prompt_key = ? AND version = ?",
+                (prompt_key, version),
+            ).fetchone()
+            if definition is None or candidate is None:
+                connection.rollback()
+                raise KeyError("prompt version not found")
+            if str(candidate["status"]) not in {"candidate", "active"}:
+                connection.rollback()
+                raise ValueError("only candidate prompt versions can be activated")
+            current = str(definition["active_version"])
+            if current != version:
+                connection.execute(
+                    "UPDATE prompt_versions SET status = 'rollback', updated_at = ? WHERE prompt_key = ? AND version = ?",
+                    (now, prompt_key, current),
+                )
+            connection.execute(
+                "UPDATE prompt_versions SET status = 'active', activated_at = ?, updated_at = ? WHERE prompt_key = ? AND version = ?",
+                (now, now, prompt_key, version),
+            )
+            connection.execute(
+                "UPDATE prompt_definitions SET active_version = ?, candidate_version = NULL, updated_at = ? WHERE prompt_key = ?",
+                (version, now, prompt_key),
+            )
+            connection.commit()
+        item = next((item for item in self.list_prompt_definitions() if item["prompt_key"] == prompt_key), None)
+        if item is None:
+            raise KeyError("prompt definition not found")
+        return item
+
+    def rollback_prompt(self, *, prompt_key: str) -> dict[str, object]:
+        now = _utc_now()
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            definition = connection.execute(
+                "SELECT * FROM prompt_definitions WHERE prompt_key = ?",
+                (prompt_key,),
+            ).fetchone()
+            previous = connection.execute(
+                """
+                SELECT * FROM prompt_versions
+                WHERE prompt_key = ? AND version != ? AND status = 'rollback'
+                ORDER BY updated_at DESC, created_at DESC LIMIT 1
+                """,
+                (prompt_key, definition["active_version"] if definition else ""),
+            ).fetchone()
+            if definition is None or previous is None:
+                connection.rollback()
+                raise ValueError("no rollback prompt version is available")
+            connection.execute(
+                "UPDATE prompt_versions SET status = 'candidate', updated_at = ? WHERE prompt_key = ? AND version = ?",
+                (now, prompt_key, definition["active_version"]),
+            )
+            connection.execute(
+                "UPDATE prompt_versions SET status = 'active', activated_at = ?, updated_at = ? WHERE prompt_key = ? AND version = ?",
+                (now, now, prompt_key, previous["version"]),
+            )
+            connection.execute(
+                "UPDATE prompt_definitions SET active_version = ?, candidate_version = ?, updated_at = ? WHERE prompt_key = ?",
+                (previous["version"], definition["active_version"], now, prompt_key),
+            )
+            connection.commit()
+        item = next((item for item in self.list_prompt_definitions() if item["prompt_key"] == prompt_key), None)
+        if item is None:
+            raise KeyError("prompt definition not found")
+        return item
+
+    def list_eval_cases(self) -> list[dict[str, object]]:
+        with connect_database(self.database_path) as connection:
+            rows = connection.execute(
+                "SELECT * FROM ai_eval_cases ORDER BY id"
+            ).fetchall()
+            result: list[dict[str, object]] = []
+            for row in rows:
+                latest = connection.execute(
+                    """
+                    SELECT result.status, result.metrics_json, result.created_at,
+                           run.prompt_key, run.prompt_version, run.context_version
+                    FROM ai_eval_results result
+                    JOIN ai_eval_runs run ON run.id = result.run_id
+                    WHERE result.case_id = ?
+                    ORDER BY result.created_at DESC, result.id DESC LIMIT 1
+                    """,
+                    (row["id"],),
+                ).fetchone()
+                last_result = None
+                if latest is not None:
+                    last_result = {
+                        "status": latest["status"],
+                        "metrics": _json_object(latest["metrics_json"]),
+                        "created_at": latest["created_at"],
+                        "prompt_key": latest["prompt_key"],
+                        "prompt_version": latest["prompt_version"],
+                        "context_version": latest["context_version"],
+                    }
+                result.append(
+                    {
+                    "id": row["id"],
+                    "slug": row["slug"],
+                    "task": row["task"],
+                    "expected_intent": row["expected_intent"],
+                    "key_unknowns": json.loads(row["key_unknowns_json"]),
+                    "required_evidence_types": json.loads(row["required_evidence_types_json"]),
+                    "forbidden_scope_drift": json.loads(row["forbidden_scope_drift_json"]),
+                    "minimum_sources": int(row["minimum_sources"]),
+                    "partial_completion_allowed": bool(row["partial_completion_allowed"]),
+                    "last_result": last_result,
+                    }
+                )
+            return result
+
+    def replay_recorded_task(
+        self,
+        *,
+        prompt_key: str,
+        prompt_version: str,
+        recorded_task_id: str | None,
+        recorded_response: dict[str, object],
+        context_version: str = "ctx-v1",
+    ) -> dict[str, object]:
+        """Evaluate a recorded task without fetching platforms or mutating it."""
+        now = _utc_now()
+        run_id = str(uuid.uuid4())
+        with connect_database(self.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cases = connection.execute("SELECT * FROM ai_eval_cases ORDER BY id").fetchall()
+            connection.execute(
+                """
+                INSERT INTO ai_eval_runs
+                    (id, prompt_key, prompt_version, context_version, status,
+                     recorded_task_id, started_at, created_at)
+                VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+                """,
+                (run_id, prompt_key, prompt_version, context_version, recorded_task_id, now, now),
+            )
+            statuses: list[str] = []
+            for case in cases:
+                response = recorded_response.get(str(case["slug"]), {})
+                response = response if isinstance(response, dict) else {}
+                metrics = evaluate_recorded_response(
+                    {
+                        "slug": case["slug"],
+                        "expected_intent": case["expected_intent"],
+                    },
+                    response,
+                )
+                values = [value for key, value in metrics.items() if key != "case_slug"]
+                if not values or all(value == "not_instrumented" for value in values):
+                    result_status = "not_instrumented"
+                elif any(value == 0.0 for value in values):
+                    result_status = "failed"
+                elif any(value == "not_instrumented" for value in values):
+                    result_status = "partial"
+                else:
+                    result_status = "passed"
+                statuses.append(result_status)
+                connection.execute(
+                    """
+                    INSERT INTO ai_eval_results
+                        (id, run_id, case_id, status, metrics_json,
+                         input_tokens, output_tokens, model_calls, runtime_ms, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        run_id,
+                        case["id"],
+                        result_status,
+                        json.dumps(metrics, ensure_ascii=False, separators=(",", ":")),
+                        response.get("input_tokens") if isinstance(response.get("input_tokens"), int) else None,
+                        response.get("output_tokens") if isinstance(response.get("output_tokens"), int) else None,
+                        response.get("model_call_count") if isinstance(response.get("model_call_count"), int) else None,
+                        response.get("runtime_ms") if isinstance(response.get("runtime_ms"), int) else None,
+                        now,
+                    ),
+                )
+            connection.execute(
+                "UPDATE ai_eval_runs SET status = 'completed', completed_at = ? WHERE id = ?",
+                (_utc_now(), run_id),
+            )
+            connection.commit()
+        return {
+            "run_id": run_id,
+            "prompt_key": prompt_key,
+            "prompt_version": prompt_version,
+            "context_version": context_version,
+            "recorded_task_id": recorded_task_id,
+            "case_count": len(statuses),
+            "status_counts": {status: statuses.count(status) for status in sorted(set(statuses))},
+        }
 
     @staticmethod
     def _provider_select() -> str:
@@ -769,6 +1103,10 @@ class AIRepository:
         fallback_from_provider_id: str | None = None,
         fallback_from_model_id: str | None = None,
         fallback_reason: str | None = None,
+        prompt_key: str | None = None,
+        prompt_version: str | None = None,
+        context_version: str | None = None,
+        tool_contract_version: str | None = None,
     ) -> str:
         identifier = str(uuid.uuid4())
         with connect_database(self.database_path) as connection:
@@ -784,9 +1122,10 @@ class AIRepository:
                     is_fallback, research_task_id, fallback_from_provider_id,
                     fallback_from_model_id, fallback_reason, vendor,
                     provider_instance_id, billing_profile_id, billing_mode,
-                    estimated_cost_kind
+                    estimated_cost_kind, prompt_key, prompt_version,
+                    context_version, tool_contract_version
                 ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?, ?)
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -813,6 +1152,10 @@ class AIRepository:
                         if provider_row is None or provider_row["billing_mode"] in {"unknown", None}
                         else "estimated"
                     ),
+                    prompt_key,
+                    prompt_version,
+                    context_version,
+                    tool_contract_version,
                 ),
             )
         return identifier

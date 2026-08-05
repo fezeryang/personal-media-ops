@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.ai import ModelMessage, ModelRequest
 from app.models.research_intent import ResearchIntentContract, ResearchIntentType
+from app.services.ai.prompt_registry import prompt_metadata
 from app.services.ai.research_quality import parse_structured_json
 
 KNOWN_PRODUCTS = (
@@ -315,7 +316,10 @@ def model_request(original_request: str, platforms: list[str]) -> ModelRequest:
         max_tokens=900,
         tools=None,
         tool_choice="none",
-        metadata={"runtime_step": "intent_interpretation"},
+        metadata={
+            "runtime_step": "intent_interpretation",
+            **prompt_metadata("intent_interpreter", "v1", "ctx-v1", "v1"),
+        },
         timeout=45,
     )
 
@@ -345,7 +349,10 @@ def repair_model_request(original_request: str, raw_response: str, platforms: li
         max_tokens=900,
         tools=None,
         tool_choice="none",
-        metadata={"runtime_step": "intent_interpretation_repair"},
+        metadata={
+            "runtime_step": "intent_interpretation_repair",
+            **prompt_metadata("intent_interpreter", "v1", "ctx-v1", "v1"),
+        },
         timeout=45,
     )
 

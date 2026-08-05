@@ -14,7 +14,8 @@ from app.repositories.research import (
     ResearchTaskNotFound,
     ResearchTaskRepository,
 )
-from app.services.ai.context_compactor import compact_research_context
+from app.services.ai.constitution import PRODUCT_CONSTITUTION
+from app.services.ai.context_builder import CONTEXT_VERSION, ContextBuilder
 from app.services.ai.discovery import DiscoveryEngine
 from app.services.ai.information_value import (
     classify_information_utility,
@@ -40,6 +41,7 @@ from app.services.ai.research_quality import (
     parse_structured_json,
     platform_query_variants,
     query_priority_score,
+    query_scope_distance,
 )
 from app.services.ai.research_rendering import render_research_markdown
 from app.services.ai.research_tools import (
@@ -48,6 +50,7 @@ from app.services.ai.research_tools import (
     extract_intent_entities,
     intent_relevance_score,
 )
+from app.services.ai.tool_contract import TOOL_CONTRACT_VERSION
 
 MAX_TOOL_ROUNDS = 8
 MAX_ARTIFACT_ROUNDS = 3
@@ -178,6 +181,7 @@ class ResearchRuntime:
         self.gateway = gateway
         self.tools = tools
         self.discovery = discovery
+        self.context_builder = ContextBuilder()
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -659,6 +663,7 @@ class ResearchRuntime:
                 is True,
                 "coverage": task.get("coverage", {}),
                 "low_marginal_rounds": 0,
+                "alignment_backflow_count": 0,
                 "stop_reason": None,
             }
         )
@@ -1234,6 +1239,13 @@ class ResearchRuntime:
             entity_bonus = 0.8 if not matching_entities else 0.2
             if any(bool(item.get("saturated")) for item in matching_entities):
                 entity_bonus = 0.0
+            unknowns = intent_contract.get("unknowns_to_discover") if isinstance(intent_contract, dict) else []
+            unknowns = unknowns if isinstance(unknowns, list) else []
+            parent_unknown = (
+                str(unknowns[len(persisted) % len(unknowns)])[:300]
+                if unknowns
+                else None
+            )
             row = self.research.create_query(
                 task_id=task_id,
                 intent_id=intent_id,
@@ -1249,6 +1261,13 @@ class ResearchRuntime:
                 source_content_id=source_content_id,
                 source_finding_id=None,
                 parent_query_id=parent_query_id,
+                parent_goal=str(task.get("objective") or "")[:500],
+                parent_unknown=parent_unknown,
+                scope_distance=query_scope_distance(
+                    candidate,
+                    parent_goal=str(task.get("objective") or ""),
+                    parent_unknown=parent_unknown,
+                ),
                 generation_reason=candidate_reason,
                 specificity_score=quality.specificity_score,
                 novelty_score=quality.novelty_score,
@@ -1890,13 +1909,42 @@ class ResearchRuntime:
         if latest is not None and str(latest["status"]) == "Researching" and not bool(latest.get("paused")):
             review = self._intent_alignment_review(task_id, allow_more_research=True)
             if isinstance(review, dict) and review.get("review_status") == "needs_more_research":
+                latest_context = self.research.get_for_runtime(task_id)
+                context_data = latest_context.get("context") if isinstance(latest_context, dict) else {}
+                context_data = dict(context_data) if isinstance(context_data, dict) else {}
+                backflow_count = int(context_data.get("alignment_backflow_count") or 0)
+                if backflow_count < 1:
+                    context_data["alignment_backflow_count"] = backflow_count + 1
+                    self.research.update_context(
+                        task_id,
+                        context_data,
+                        step="alignment_backflow",
+                        round_number=round_number,
+                    )
+                    self.research.append_trace(
+                        task_id,
+                        event="alignment_gap",
+                        status="Researching",
+                        reason=str(review.get("recommended_next_step") or "missing intent requirements"),
+                        round_number=round_number,
+                        step="alignment_backflow",
+                    )
+                    return
+                self.research.set_stop_reason(task_id, "alignment_backflow_limit")
                 self.research.append_trace(
                     task_id,
-                    event="alignment_gap",
+                    event="alignment_backflow_limited",
                     status="Researching",
-                    reason=str(review.get("recommended_next_step") or "missing intent requirements"),
+                    reason="仅允许一次补充研究回流，已保留证据缺口并进入 partial completion。",
                     round_number=round_number,
                     step="coverage_review",
+                )
+                self.research.transition(
+                    task_id,
+                    status="Summarizing",
+                    reason="alignment_backflow_limit",
+                    step="summarizing",
+                    round_number=round_number,
                 )
                 return
             self.research.transition(
@@ -2378,24 +2426,25 @@ class ResearchRuntime:
             intent=contract,
             limit=20,
         )
-        compacted, compaction_stats = compact_research_context(
+        tiered_context, builder_stats = self.context_builder.build(
             objective=str(task["objective"]),
-            coverage=(detail.get("coverage") if isinstance(detail.get("coverage"), dict) else {}),
-            entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
-            queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
+            intent=contract.model_dump(mode="json"),
             findings=(detail.get("findings") if isinstance(detail.get("findings"), list) else []),
-            candidate_contents=candidate_items,
-            loaded_content_ids=(
-                runtime_context.get("full_content_ids", [])
-                if isinstance(runtime_context, dict)
-                else []
-            ),
-            budget={
-                "token_limit": task.get("budget_token_limit"),
-                "model_calls": task.get("consumed_model_call_count", 0),
-                "crawl_count": task.get("consumed_crawl_count", 0),
-            },
+            unknowns=(runtime_context.get("unresolved_questions", []) if isinstance(runtime_context.get("unresolved_questions"), list) else []),
+            reverse_evidence=[
+                item for item in (detail.get("information_utilities") or [])
+                if isinstance(item, dict) and item.get("utility_type") == "counterevidence"
+            ],
+            entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
+            events=(detail.get("events") if isinstance(detail.get("events"), list) else []),
+            memories=(detail.get("memory_items") if isinstance(detail.get("memory_items"), list) else []),
+            queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
+            raw_contents=candidate_items,
+            success_criteria=contract.desired_output,
         )
+        compacted = tiered_context.get("compacted", {})
+        compaction_stats = {**builder_stats, "context_version": CONTEXT_VERSION}
+        runtime_context["tiered_context"] = tiered_context
         runtime_context["compacted_context"] = compacted
         runtime_context["compaction_stats"] = compaction_stats
         self.research.update_context(task_id, runtime_context, step="context_compaction", round_number=round_number)
@@ -2632,27 +2681,26 @@ class ResearchRuntime:
             for item in (detail.get("content_decisions") or [])
             if isinstance(item, dict) and item.get("content_id")
         ]
-        compacted_context, compaction_stats = compact_research_context(
+        contract = _intent_contract_for_task(detail)
+        tiered_context, builder_stats = self.context_builder.build(
             objective=str(detail["objective"]),
-            coverage=(detail.get("coverage") if isinstance(detail.get("coverage"), dict) else {}),
+            intent=contract.model_dump(mode="json"),
+            findings=findings if isinstance(findings, list) else [],
+            unknowns=(context.get("unresolved_questions", []) if isinstance(context.get("unresolved_questions"), list) else []),
+            reverse_evidence=[
+                item for item in (detail.get("information_utilities") or [])
+                if isinstance(item, dict) and item.get("utility_type") == "counterevidence"
+            ],
             entities=(detail.get("entity_coverage") if isinstance(detail.get("entity_coverage"), list) else []),
+            events=(detail.get("events") if isinstance(detail.get("events"), list) else []),
+            memories=(detail.get("memory_items") if isinstance(detail.get("memory_items"), list) else []),
             queries=(detail.get("queries") if isinstance(detail.get("queries"), list) else []),
-            findings=(findings if isinstance(findings, list) else []),
-            candidate_contents=candidate_contents,
-            loaded_content_ids=context.get("full_content_ids", []),
-            unresolved_questions=(
-                context.get("unresolved_questions", [])
-                if isinstance(context.get("unresolved_questions"), list)
-                else []
-            ),
-            budget={
-                "max_total_tokens": detail.get("budget_max_total_tokens"),
-                "max_model_calls": detail.get("budget_max_model_calls"),
-                "max_crawl_tasks": detail.get("budget_max_crawl_tasks"),
-                "consumed_model_calls": detail.get("consumed_model_call_count"),
-                "consumed_crawl_tasks": detail.get("consumed_crawl_count"),
-            },
+            raw_contents=(context.get("content_cards") if isinstance(context.get("content_cards"), list) else candidate_contents),
+            success_criteria=contract.desired_output,
         )
+        compacted_context = tiered_context.get("compacted", {})
+        compaction_stats = {**builder_stats, "context_version": CONTEXT_VERSION}
+        context["tiered_context"] = tiered_context
         context["compacted_context"] = compacted_context
         context["compaction_stats"] = compaction_stats
         self.research.update_context(
@@ -2784,6 +2832,28 @@ class ResearchRuntime:
         model_record_id: str,
     ):
         started = perf_counter()
+        runtime_step = str(request.metadata.get("runtime_step") or "unknown")
+        prompt_key = {
+            "intent_interpretation": "intent_interpreter",
+            "planning": "research_planner",
+            "query_generation": "query_strategist",
+            "query_gate": "query_strategist",
+            "finding_generation": "evidence_judge",
+            "information_utility": "information_utility_classifier",
+            "discovery": "discovery_analyst",
+            "alignment": "alignment_reviewer",
+            "final_report": "report_composer",
+        }.get(runtime_step, "research_planner")
+        metadata = {
+            **request.metadata,
+            "prompt_key": request.metadata.get("prompt_key", prompt_key),
+            "prompt_version": request.metadata.get("prompt_version", "v1"),
+            "context_version": request.metadata.get("context_version", CONTEXT_VERSION),
+            "tool_contract_version": request.metadata.get("tool_contract_version", TOOL_CONTRACT_VERSION),
+        }
+        system = request.system or ""
+        governed_system = f"{PRODUCT_CONSTITUTION}\n\n{system}"[:100_000]
+        request = request.model_copy(update={"metadata": metadata, "system": governed_system})
         response = await self.gateway.generate(
             request,
             route_role=route_role,
@@ -2794,7 +2864,7 @@ class ResearchRuntime:
         usage = model_response.usage
         provider_metadata = self.ai_repository.get_provider(response.final_provider_id)
         provider_metadata = provider_metadata if isinstance(provider_metadata, dict) else {}
-        step = str(request.metadata.get("runtime_step") or "unknown")
+        step = runtime_step
         billing_snapshot: dict[str, object] = {}
         billing_reader = getattr(self.ai_repository, "invocation_billing", None)
         if callable(billing_reader):

@@ -237,6 +237,15 @@ export const discoveryCandidateDetailSchema = discoveryCandidateSummarySchema.ex
   lifecycle: z.array(z.record(z.string(), z.unknown())),
 });
 
+export const discoveryInboxItemSchema = discoveryCandidateSummarySchema.extend({
+  source_type: z.enum(["discovery", "monitoring"]).optional(),
+  research_task_id: z.string().nullable(),
+  mission_id: z.string().nullable().optional(),
+  attention_level: z.string().nullable().optional(),
+  change_type: z.string().nullable().optional(),
+  source_mission_title: z.string().nullable().optional(),
+});
+
 const discoverySeedSchema = z.object({
   id: z.string(),
   research_task_id: z.string(),
@@ -689,6 +698,9 @@ export const researchTaskDetailSchema = researchTaskSummarySchema.extend({
       source_content_id: z.string().nullable(),
       source_finding_id: z.string().nullable(),
       parent_query_id: z.string().nullable(),
+      parent_goal: z.string().nullable().optional(),
+      parent_unknown: z.string().nullable().optional(),
+      scope_distance: z.number().min(0).max(1).nullable().optional(),
       generation_reason: z.string(),
       relevance_score: z.number().min(0).max(1).nullable(),
       specificity_score: z.number().min(0).max(1),
@@ -747,6 +759,7 @@ export type ResearchTaskSummary = z.infer<typeof researchTaskSummarySchema>;
 export type ResearchTaskDetail = z.infer<typeof researchTaskDetailSchema>;
 export type ResearchStatus = z.infer<typeof statusSchema>;
 export type DiscoveryCandidateSummary = z.infer<typeof discoveryCandidateSummarySchema>;
+export type DiscoveryInboxItem = z.infer<typeof discoveryInboxItemSchema>;
 export type DiscoveryCandidateDetail = z.infer<typeof discoveryCandidateDetailSchema>;
 export type DiscoveryFeedbackType = z.infer<typeof discoveryFeedbackTypeSchema>;
 export type DiscoveryFeedbackScope = z.infer<typeof discoveryFeedbackScopeSchema>;
@@ -879,7 +892,7 @@ export function listDiscoveries(
   const query = params.toString();
   return requestJson(
     `/api/research/discoveries${query ? `?${query}` : ""}`,
-    z.array(discoveryCandidateSummarySchema),
+    z.array(discoveryInboxItemSchema),
     { signal },
   );
 }

@@ -145,6 +145,17 @@ class DiscoveryCandidateSummary(BaseModel):
     updated_at: str
 
 
+class DiscoveryInboxItem(DiscoveryCandidateSummary):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["discovery", "monitoring"]
+    research_task_id: str | None
+    mission_id: str | None = None
+    attention_level: str | None = None
+    change_type: str | None = None
+    source_mission_title: str | None = None
+
+
 class DiscoveryCandidateDetail(DiscoveryCandidateSummary):
     sources: list[DiscoveryCandidateSource] = Field(default_factory=list)
     scores: list[DiscoveryCandidateScore] = Field(default_factory=list)

@@ -15,6 +15,7 @@ ProviderHealthStatus = Literal[
     "protocol_error",
     "disabled",
 ]
+PromptVersionStatus = Literal["draft", "candidate", "active", "deprecated", "rollback"]
 ModelRouteRole = Literal[
     "default",
     "fast",
@@ -177,3 +178,54 @@ class GatewayResponse(BaseModel):
     initial_model_id: str
     final_provider_id: str
     final_model_id: str
+
+
+class PromptVersionView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_key: str
+    role: str
+    version: str
+    status: PromptVersionStatus
+    model_family: str
+    temperature: float | None
+    max_tokens: int | None
+    change_reason: str
+    activated_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class PromptDefinitionView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_key: str
+    role: str
+    active_version: str
+    candidate_version: str | None
+    activated_at: str | None
+    created_at: str
+    updated_at: str
+    recent_eval: dict[str, object] | None
+    versions: list[PromptVersionView]
+
+
+class PromptVersionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=64)
+
+
+class EvalCaseView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    slug: str
+    task: str
+    expected_intent: str
+    key_unknowns: list[str]
+    required_evidence_types: list[str]
+    forbidden_scope_drift: list[str]
+    minimum_sources: int
+    partial_completion_allowed: bool
+    last_result: dict[str, object] | None = None
