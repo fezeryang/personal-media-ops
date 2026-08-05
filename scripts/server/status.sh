@@ -8,23 +8,32 @@ mediaops_enable_error_trap
 
 usage() {
   cat <<'EOF'
-Usage: status.sh [--host SSH_ALIAS]
+Usage: status.sh [--host SSH_ALIAS] [--research-task UUID]
 
 Run a read-only production status survey: Git, services, port 8000, API,
 Nginx config, disk, memory, failed task count, and static frontend presence.
 
 Options:
   --host SSH_ALIAS  Override MEDIAOPS_SSH_HOST (default: mediaops-prod)
+  --research-task UUID
+                    Add read-only Research detail, crawler, and schema checks
   -h, --help        Show this help
 EOF
 }
 
 host_override=""
+research_task_id=""
 while (($# > 0)); do
   case "$1" in
     --host)
       mediaops_require_value "$1" "${2:-}"
       host_override="$2"
+      shift 2
+      ;;
+    --research-task)
+      mediaops_require_value "$1" "${2:-}"
+      mediaops_validate_uuid "$2"
+      research_task_id="$2"
       shift 2
       ;;
     -h | --help)
@@ -45,12 +54,13 @@ mediaops_stage "Production status"
 mediaops_info "target=${host}"
 mediaops_info "mode=read-only"
 
-mediaops_ssh "$host" 'bash -s' <<'REMOTE'
+mediaops_ssh "$host" "bash -s -- ${research_task_id}" <<'REMOTE'
 set -Eeuo pipefail
 
 APP_ROOT="/opt/personal-media-ops"
 BACKEND_ROOT="${APP_ROOT}/backend"
 DATABASE="/var/lib/mediaops/mediaops.db"
+RESEARCH_TASK_ID="${1:-}"
 STATIC_INDEX="/www/wwwroot/ops.fezern8n.com/index.html"
 STATIC_RELEASE="/www/wwwroot/ops.fezern8n.com/.mediaops-release"
 NGINX="/www/server/nginx/sbin/nginx"
@@ -213,6 +223,107 @@ finally:
     if "connection" in locals():
         connection.close()
 PY
+fi
+
+if [[ -n "$RESEARCH_TASK_ID" ]]; then
+  section "Research acceptance (read-only)"
+  if [[ ! -x "${BACKEND_ROOT}/.venv/bin/python" ]]; then
+    printf 'research_acceptance=backend-python-missing\n'
+  else
+    "${BACKEND_ROOT}/.venv/bin/python" - "$DATABASE" "$RESEARCH_TASK_ID" <<'PY'
+from __future__ import annotations
+
+import sqlite3
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+sys.path.insert(0, "/opt/personal-media-ops/backend")
+
+from app.api.research import _detail
+from app.models.research import ResearchTaskDetail
+from app.repositories.research import ResearchTaskRepository
+
+database_path, task_id = sys.argv[1:3]
+database_uri = f"file:{quote(database_path, safe='/')}?mode=ro"
+
+with sqlite3.connect(database_uri, uri=True) as connection:
+    connection.row_factory = sqlite3.Row
+    integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    task_row = connection.execute(
+        "SELECT user_id, status, current_round FROM research_tasks WHERE id = ?",
+        (task_id,),
+    ).fetchone()
+    print(f"database_integrity={integrity}")
+    print(f"alembic_head={head['version_num'] if head else 'missing'}")
+    print(f"research_task_present={'yes' if task_row else 'no'}")
+    if task_row is not None:
+        print(f"research_task_status={task_row['status']}")
+        print(f"research_task_round={task_row['current_round']}")
+        crawler_rows = connection.execute(
+            """
+            SELECT id, status, actual_count, qrcode_path
+            FROM crawler_tasks
+            WHERE research_task_id = ?
+            ORDER BY created_at, id
+            """,
+            (task_id,),
+        ).fetchall()
+        print(f"crawler_task_count={len(crawler_rows)}")
+        for row in crawler_rows:
+            qrcode_exists = Path(str(row["qrcode_path"])).is_file()
+            print(
+                "crawler_task="
+                f"{row['id']} status={row['status']} actual_count={row['actual_count']} "
+                f"qrcode_file={'present' if qrcode_exists else 'absent'}"
+            )
+
+        repository = ResearchTaskRepository(Path(database_path))
+        task = repository.get(
+            user_id=str(task_row["user_id"]),
+            task_id=task_id,
+            detail=True,
+        )
+        if task is None:
+            raise SystemExit("research_detail_repository=missing")
+        validated = ResearchTaskDetail.model_validate(_detail(task))
+        print("research_detail_model=valid")
+        print(f"research_findings={len(validated.findings)}")
+        print(f"research_events={len(validated.events)}")
+        print(f"research_queries={len(validated.queries)}")
+        print(f"research_utilities={len(validated.information_utilities or [])}")
+        print(f"research_unknowns={len(validated.unknowns or [])}")
+        print(f"research_memory_items={len(validated.memory_items or [])}")
+        print(f"research_discovery_seeds={len(validated.discovery_seeds or [])}")
+        print(f"research_discovery_candidates={len(validated.discovery_candidates or [])}")
+
+    aggregate_queries = (
+        ("research_task_total", "SELECT COUNT(*) FROM research_tasks"),
+        (
+            "research_active_tasks",
+            """
+            SELECT COUNT(*) FROM research_tasks
+            WHERE status IN (
+              'Draft', 'Planning', 'Researching', 'WaitingCrawl',
+              'WaitingLogin', 'Summarizing', 'BudgetExceeded'
+            )
+            """,
+        ),
+        (
+            "crawler_active_tasks",
+            "SELECT COUNT(*) FROM crawler_tasks WHERE status IN ('pending', 'running', 'waiting_login')",
+        ),
+        ("discovery_runs", "SELECT COUNT(*) FROM research_discovery_runs"),
+        ("discovery_candidates", "SELECT COUNT(*) FROM research_discovery_candidates"),
+        ("discovery_feedback", "SELECT COUNT(*) FROM research_discovery_feedback"),
+        ("research_spaces", "SELECT COUNT(*) FROM research_spaces"),
+        ("research_space_items", "SELECT COUNT(*) FROM research_space_items"),
+    )
+    for label, query in aggregate_queries:
+        print(f"{label}={connection.execute(query).fetchone()[0]}")
+PY
+  fi
 fi
 
 section "Disk"

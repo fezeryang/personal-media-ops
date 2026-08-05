@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 DEPLOY="${REPOSITORY_ROOT}/scripts/server/deploy.sh"
 COMMON="${REPOSITORY_ROOT}/scripts/server/lib/common.bash"
+STATUS="${REPOSITORY_ROOT}/scripts/server/status.sh"
 HELPER="${REPOSITORY_ROOT}/infra/release/mediaops-release"
 SUDOERS="${REPOSITORY_ROOT}/infra/sudoers/mediaops-release.example"
 
@@ -52,7 +53,11 @@ assert_rejects() {
 [[ -x "$HELPER" ]] || fail "release helper source is not executable"
 [[ -f "$SUDOERS" ]] || fail "release sudoers source is missing"
 
-bash -n "$DEPLOY" "$HELPER" "$COMMON"
+bash -n "$DEPLOY" "$HELPER" "$COMMON" "$STATUS"
+
+status_help="$($STATUS --help)"
+assert_contains "$status_help" "--research-task UUID"
+assert_rejects "$STATUS" --research-task not-a-uuid
 
 dry_run_output="$(
     "$DEPLOY" \

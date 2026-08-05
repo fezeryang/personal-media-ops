@@ -153,4 +153,5 @@ fi
 
 printf 'Backup created: %s\n' "$backup_dir"
 printf 'Checksum file: %s/SHA256SUMS\n' "$backup_dir"
+printf 'Database SHA-256: %s\n' "$(sha256sum "${backup_dir}/mediaops.db" | awk '{print $1}')"
 REMOTE
