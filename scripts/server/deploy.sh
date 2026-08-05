@@ -769,7 +769,8 @@ printf 'target_ref=%s\n' "$target_ref"
 printf 'database_migration=%s\n' "$migration_state"
 printf 'migration_authorized=%s\n' "$allow_migrations"
 printf 'database_backup=pending\n'
-printf 'tests=backend-pytest,frontend-lint,frontend-test,frontend-build\n'
+printf 'local_gate=passed (backend-pytest,frontend-lint,frontend-test,frontend-build)\n'
+printf 'remote_prepare=backend-compile,frontend-build\n'
 printf 'helper_version=%s\n' "$helper_version"
 printf 'helper_subcommand=finalize\n'
 
@@ -807,7 +808,7 @@ printf 'Release Candidate: %s\n' "$rc_commit"
 printf 'Database migration: %s\n' "$migration_state"
 printf 'Migration authorization: %s\n' "$migration_authorized"
 printf 'Database backup: pending\n'
-printf 'Tests: backend pytest; frontend lint, test, build\n'
+printf 'Local gate: passed in Release Candidate; remote preparation: backend compile, frontend build\n'
 printf 'Helper call after all gates: finalize\n'
 
 if [[ "$resume" == true ]]; then

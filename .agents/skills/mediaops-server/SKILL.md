@@ -34,8 +34,10 @@ failure as unknown, not as proof that a service or file is absent.
 
 ### Application build
 
-Run Git sync, `uv sync --frozen`, backend pytest, frontend `npm ci`, lint, test,
-and build as `mediaops`. This is preparation, not a successful release.
+Run Git sync, `uv sync --frozen`, backend compile check, frontend `npm ci` and
+build as `mediaops`. The complete pytest/lint/test/build gate runs locally
+before the pushed Release Candidate; remote preparation is not a substitute
+for that gate and is not a successful release by itself.
 
 ### Database backup
 
