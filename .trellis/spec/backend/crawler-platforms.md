@@ -18,6 +18,7 @@ GET  /api/library/creators/{library_id}
 GET  /api/library/comments
 MEDIAOPS_ENABLED_PLATFORMS=bili[,xhs,zhihu,wb,tieba,ks]
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=<finite positive seconds; default 180>
+CRAWLER_LOGIN_TIMEOUT_SECONDS=<finite positive seconds; default 180>
 ```
 
 Adapters implement mode-level capability metadata, fixed Runner arguments,
@@ -83,8 +84,12 @@ and comment normalization.
   lower Douyin priority stops before browser startup.
 - The Worker terminates the full Douyin process group if its QR code is not
   ready within `DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS` (180 seconds by
-  default). This startup deadline applies only before the QR code appears; an
-  operator's scan window remains unbounded by this guard.
+  default). This startup deadline applies only before the QR code appears.
+  Once any platform QR file exists, `CRAWLER_LOGIN_TIMEOUT_SECONDS` (180
+  seconds by default) bounds the wait for a success marker or a classified
+  login failure. A stalled captcha/verification page therefore becomes an
+  explicit platform failure and releases the single Worker; it is never
+  treated as a successful crawl or an Owner-session failure.
 - Resource-constrained production keeps `dy` registered as `code_ready` but
   excludes it from `MEDIAOPS_ENABLED_PLATFORMS`. Cookie login is not a resource
   fallback because MediaCrawler still launches Chromium and it would introduce
@@ -205,6 +210,7 @@ and comment normalization.
 | Douyin process priority cannot be lowered | Exit before browser startup with an explicit error |
 | Douyin QR code is not ready before its startup deadline | Terminate the task process group and persist an explicit failure |
 | Douyin QR code becomes ready before its startup deadline | Stop applying the startup deadline while the operator scans |
+| Any platform QR code is ready but no success/captcha/expiry signal arrives before `CRAWLER_LOGIN_TIMEOUT_SECONDS` | Terminate the process group and persist an explicit platform-login timeout; continue the research platform plan |
 | Existing platform login state is valid | Emit the non-sensitive ready marker and do not wait for QR |
 | XHS QR scan rotates an allow-listed auth cookie after secondary verification | Emit the generic `Login successful` marker and return the crawler task to `running` |
 | XHS verification page blocks the upstream login probe | Time out the probe after two seconds, re-check the allow-listed cookie fingerprint, and continue bounded polling |
@@ -270,9 +276,11 @@ Douyin login-dialog detection, visible exact-text fallback, and missing-entry
 failure. Assert that only Douyin receives the fixed niceness increment and
 that priority failures are explicit. Worker tests must assert that a pre-QR
 timeout terminates the subprocess and persists failure, a ready QR code or
-persisted-login marker disables that deadline, captcha terminates the process
-group, and Bilibili/Xiaohongshu are unaffected. Configuration
-tests must reject zero, negative, NaN, and infinite deadlines. Real platform
+persisted-login marker disables that pre-QR deadline, a QR code with a stalled
+verification flow terminates at `CRAWLER_LOGIN_TIMEOUT_SECONDS`, captcha
+terminates the process group, and Bilibili/Xiaohongshu are unaffected.
+Configuration tests must reject zero, negative, NaN, and infinite deadlines
+for both timeout settings. Real platform
 tests require explicit authorization and are not part of unit tests.
 Runner tests must also assert that Weibo keeps an already-visible QR without
 clicking, clicks only a visible exact-text QR entry when needed, fails clearly
@@ -351,6 +359,24 @@ if args.platform == "ks":
 Wrong:
 
 ```python
+# A QR file exists, so waiting on the upstream process forever blocks the
+# single-concurrency Worker when a platform shows a captcha page.
+await process.wait()
+```
+
+Correct:
+
+```python
+# Start the post-QR deadline when the QR is observed. Only a classified
+# success signal can release it; timeout terminates the whole process group.
+if qrcode_seen and not login_ready and elapsed >= settings.crawler_login_timeout_seconds:
+    await terminate_process_group(process)
+    return "platform login timed out"
+```
+
+Wrong:
+
+```python
 # Cookie login still launches Chromium and adds sensitive browser state.
 enabled_platforms = ("bili", "xhs", "dy")
 login_type = "cookie"
@@ -361,6 +387,7 @@ Correct:
 ```text
 MEDIAOPS_ENABLED_PLATFORMS=bili,xhs
 DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS=180
+CRAWLER_LOGIN_TIMEOUT_SECONDS=180
 ```
 
 Wrong:

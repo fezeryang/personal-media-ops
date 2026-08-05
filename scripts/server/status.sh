@@ -8,7 +8,7 @@ mediaops_enable_error_trap
 
 usage() {
   cat <<'EOF'
-Usage: status.sh [--host SSH_ALIAS] [--research-task UUID]
+Usage: status.sh [--host SSH_ALIAS] [--research-task UUID | --latest-research]
 
 Run a read-only production status survey: Git, services, port 8000, API,
 Nginx config, disk, memory, failed task count, and static frontend presence.
@@ -17,12 +17,14 @@ Options:
   --host SSH_ALIAS  Override MEDIAOPS_SSH_HOST (default: mediaops-prod)
   --research-task UUID
                     Add read-only Research detail, crawler, and schema checks
+  --latest-research Select the newest Research task for the same checks
   -h, --help        Show this help
 EOF
 }
 
 host_override=""
 research_task_id=""
+latest_research=0
 while (($# > 0)); do
   case "$1" in
     --host)
@@ -36,6 +38,10 @@ while (($# > 0)); do
       research_task_id="$2"
       shift 2
       ;;
+    --latest-research)
+      latest_research=1
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -46,6 +52,15 @@ while (($# > 0)); do
   esac
 done
 
+if [[ -n "$research_task_id" && "$latest_research" == "1" ]]; then
+  mediaops_die "choose either --research-task or --latest-research"
+fi
+
+research_selector="$research_task_id"
+if [[ "$latest_research" == "1" ]]; then
+  research_selector="latest"
+fi
+
 host="$(mediaops_resolve_host "$host_override")"
 mediaops_validate_host "$host"
 mediaops_require_ssh_alias "$host"
@@ -54,7 +69,7 @@ mediaops_stage "Production status"
 mediaops_info "target=${host}"
 mediaops_info "mode=read-only"
 
-mediaops_ssh "$host" "bash -s -- ${research_task_id}" <<'REMOTE'
+mediaops_ssh "$host" "bash -s -- ${research_selector}" <<'REMOTE'
 set -Eeuo pipefail
 
 APP_ROOT="/opt/personal-media-ops"
@@ -249,6 +264,12 @@ database_uri = f"file:{quote(database_path, safe='/')}?mode=ro"
 
 with sqlite3.connect(database_uri, uri=True) as connection:
     connection.row_factory = sqlite3.Row
+    if task_id == "latest":
+        latest = connection.execute(
+            "SELECT id FROM research_tasks ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        task_id = str(latest["id"]) if latest is not None else ""
+    print(f"research_task_selected={task_id or 'none'}")
     integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
     head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
     task_row = connection.execute(

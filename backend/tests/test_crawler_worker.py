@@ -36,6 +36,7 @@ def worker_settings(base: Settings, runner: Path) -> Settings:
         douyin_qrcode_startup_timeout_seconds=(
             base.douyin_qrcode_startup_timeout_seconds
         ),
+        crawler_login_timeout_seconds=base.crawler_login_timeout_seconds,
         enabled_platforms=base.enabled_platforms,
     )
 
@@ -410,6 +411,56 @@ result_dir.mkdir(parents=True, exist_ok=True)
     assert stored["status"] == "succeeded"
 
 
+def test_worker_times_out_after_qrcode_when_platform_verification_stalls(
+    tmp_path: Path,
+    test_settings: Settings,
+    repository: CrawlerTaskRepository,
+) -> None:
+    runner = tmp_path / "stalled_login_runner.py"
+    runner.write_text(
+        """
+import argparse
+import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--qrcode-path", required=True)
+args, _ = parser.parse_known_args()
+qrcode = Path(args.qrcode_path)
+qrcode.parent.mkdir(parents=True, exist_ok=True)
+qrcode.write_bytes(b"fake png")
+print("QR code ready", flush=True)
+while True:
+    time.sleep(0.1)
+""".strip(),
+        encoding="utf-8",
+    )
+    settings = replace(
+        worker_settings(test_settings, runner),
+        crawler_login_timeout_seconds=0.05,
+    )
+    task = seed_task(repository, settings)
+
+    asyncio.run(
+        asyncio.wait_for(
+            CrawlerWorker(
+                repository,
+                settings,
+                terminate_timeout_seconds=0.2,
+            ).run_once(),
+            timeout=3,
+        )
+    )
+
+    stored = repository.get(str(task["id"]))
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert "login timed out after 0.05 seconds" in str(stored["error_message"])
+    assert "platform verification" in str(stored["error_message"])
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(stored["pid"]), 0)
+
+
 def test_worker_times_out_douyin_before_qrcode_is_ready(
     tmp_path: Path,
     test_settings: Settings,
@@ -577,7 +628,14 @@ while True:
     task = seed_task(repository, settings, platform="zhihu")
 
     asyncio.run(
-        asyncio.wait_for(CrawlerWorker(repository, settings).run_once(), timeout=3)
+        asyncio.wait_for(
+            CrawlerWorker(
+                repository,
+                settings,
+                terminate_timeout_seconds=0.2,
+            ).run_once(),
+            timeout=3,
+        )
     )
 
     stored = repository.get(str(task["id"]))

@@ -54,6 +54,7 @@ def test_settings(tmp_path: Path) -> Settings:
         node_bin_dir=tmp_path / "node-bin",
         crawler_poll_interval_seconds=0.02,
         douyin_qrcode_startup_timeout_seconds=180,
+        crawler_login_timeout_seconds=180,
         enabled_platforms=("bili", "xhs"),
         model_gateway_master_key_path=tmp_path / "secrets" / "model-gateway.key",
     )

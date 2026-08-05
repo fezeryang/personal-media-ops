@@ -32,6 +32,7 @@ class Settings:
     crawler_poll_interval_seconds: float
     douyin_qrcode_startup_timeout_seconds: float
     enabled_platforms: tuple[str, ...]
+    crawler_login_timeout_seconds: float = 180
     secure_session_cookie: bool = False
     session_lifetime_seconds: int = 7 * 24 * 60 * 60
     login_failure_limit: int = 5
@@ -73,6 +74,17 @@ class Settings:
         ):
             raise ValueError(
                 "DOUYIN_QRCODE_STARTUP_TIMEOUT_SECONDS must be a finite number "
+                "greater than zero"
+            )
+        crawler_login_timeout = float(
+            os.getenv("CRAWLER_LOGIN_TIMEOUT_SECONDS", "180")
+        )
+        if (
+            not math.isfinite(crawler_login_timeout)
+            or crawler_login_timeout <= 0
+        ):
+            raise ValueError(
+                "CRAWLER_LOGIN_TIMEOUT_SECONDS must be a finite number "
                 "greater than zero"
             )
         enabled_platforms = tuple(
@@ -163,6 +175,7 @@ class Settings:
             node_bin_dir=Path(node_bin_dir) if node_bin_dir else None,
             crawler_poll_interval_seconds=poll_interval,
             douyin_qrcode_startup_timeout_seconds=(douyin_qrcode_startup_timeout),
+            crawler_login_timeout_seconds=crawler_login_timeout,
             enabled_platforms=enabled_platforms,
             secure_session_cookie=(
                 os.getenv("MEDIAOPS_SECURE_SESSION_COOKIE", "true").casefold()

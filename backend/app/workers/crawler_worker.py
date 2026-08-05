@@ -371,6 +371,7 @@ class CrawlerWorker:
         waiting_for_login = False
         qrcode_seen = False
         login_ready = False
+        login_started_at: float | None = None
         last_output_line: str | None = None
         startup_started_at = asyncio.get_running_loop().time()
         with log_path.open("ab", buffering=0) as log_handle:
@@ -383,8 +384,27 @@ class CrawlerWorker:
                     qrcode_seen = True
                     if not login_ready:
                         waiting_for_login = True
+                        login_started_at = asyncio.get_running_loop().time()
                         self.repository.set_waiting_login(task_id)
                         self.research_repository.mark_waiting_login(task_id)
+
+                if (
+                    qrcode_seen
+                    and not login_ready
+                    and login_started_at is not None
+                    and asyncio.get_running_loop().time() - login_started_at
+                    >= self.settings.crawler_login_timeout_seconds
+                ):
+                    await self._terminate_process(process)
+                    timeout_message = (
+                        f"{adapter.display_name} login timed out after "
+                        f"{self.settings.crawler_login_timeout_seconds:g} seconds "
+                        "while awaiting platform verification"
+                    )
+                    return (
+                        "login_failed",
+                        timeout_message,
+                    )
 
                 if (
                     not qrcode_seen
