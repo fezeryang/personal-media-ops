@@ -86,14 +86,20 @@ normal release/retry loop; do not ask again for each non-destructive stage. A
 real release uses:
 
 ```bash
-scripts/server/deploy.sh --target-ref <origin-main-sha> --execute
+scripts/release/prepare-release.sh --output .release/rc.env
+scripts/server/deploy.sh \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
+  --execute
 ```
 
 If and only if the reviewed diff contains a compatible Alembic migration, use:
 
 ```bash
+scripts/release/prepare-release.sh --output .release/rc.env
 scripts/server/deploy.sh \
-  --target-ref <origin-main-sha> \
+  --target-ref <release-commit> \
+  --release-candidate .release/rc.env \
   --allow-migrations \
   --execute
 ```
