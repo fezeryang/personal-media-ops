@@ -5,13 +5,17 @@
 ## 结论
 
 阶段 8E 的代码、质量门禁、发布和核心真实监控闭环已经完成。生产中已通过
-一个用户确认的 Monitoring Mission：第二次运行完成真实研究、建立新基线，
-结果为 `no_meaningful_change`，没有伪造变化、通知或独立来源。
+三条用户确认的 Monitoring Mission：个人 AI 工具、CodeBuddy、AI 工具负向反馈。
+三次最新运行均完成真实受控研究并明确返回 `no_meaningful_change`，没有伪造变化、
+通知或独立来源；CodeBuddy 与负向反馈任务还通过了成功 B 站采集及完整研究详情
+模型验收。
 
 阶段暂不归档为 fully complete，原因是以下生产验收必须由 Owner 在正常前端
-确认后才能继续，Codex 不得绕过长期监控确认或管理员 Prompt 操作：具体产品
-监控、负向反馈监控、产生高价值变化后的通知动作矩阵，以及生产 Candidate Eval
-对比。它们不是代码失败，状态明确记录为 `not_run_pending_owner_action`。
+确认后才能继续，Codex 不得绕过长期监控确认或管理员 Prompt 操作：产生真实高价值
+变化后的通知动作矩阵，以及生产 Candidate Eval 对比。当前真实数据没有产生可合法
+触发通知的高价值变化，生产也没有 Candidate Prompt 版本；这些不是代码失败，状态
+明确记录为 `not_run_pending_owner_action`。小红书验证码限制仍单独记录为
+`blocked_by_platform`。
 
 ## 1. 初始和最终 Commit
 
@@ -21,7 +25,9 @@
 - 8E Intent Contract 修复：`12a673d6fbe68734dfd15c05be3845140ace0ae2`
 - 8E Summary 响应契约修复：`d439fb74143dd21b7765b79ed13391ee5fcf17a4`
 - 8E Research `AwaitingReview` 结算修复：`8dceb61eb30fd10b0c9c6883a5099c8afaba43f3`
-- 当前生产运行 Commit：`8dceb61eb30fd10b0c9c6883a5099c8afaba43f3`
+- 8E 负向反馈查询边界修复：`0850b23c1a02c64b56bda07dc591f56fe8fcbf7a`
+- 8E 前端测试稳定性修复：`7a721b57c0fae712d56b579b81a28630373012f5`
+- 当前生产运行 Commit：`7a721b57c0fae712d56b579b81a28630373012f5`
 - 所有代码 Commit 已 push 到 `origin/main`。
 
 ## 2. 数据库迁移、备份与回滚
@@ -33,8 +39,8 @@
   `7b2f6da05149af1dfee714af9053825e4797c5414aece7d6b2bc638fca7bef5f`。
 - Summary 修复备份：`/var/backups/mediaops/20260806T020041Z`，SHA-256
   `e6aabfa7ea53d6e3ab5289aca89a41c1af2703279713f664e721ce41bd10af54`。
-- 当前生产备份：`/var/backups/mediaops/20260806T021921Z`，SHA-256
-  `ef391889d374f79b2614f96a56b511c0353e18fa69671f0c1543cd5e6a242292`。
+- 当前生产备份：`/var/backups/mediaops/20260806T030545Z`，SHA-256
+  `11176babdc79631a81c2ca1118d93abd475ebd815560656e2c81c277786ed3e5`。
 - 回滚只允许使用保留备份和经过审核的 Git 回滚；不得 `git reset --hard`、
   删除数据库或覆盖生产数据。
 
@@ -57,8 +63,8 @@
 - `AIRepository.replay_recorded_task()` 只读 Recorded Response，不重新抓取平台、
   不覆盖原任务、不修改生产历史；本地 API 测试已验证 12 case 回放和 partial /
   `not_instrumented` 结果。
-- 生产数据库当前有 12 个 Eval case、0 个生产 Eval run；生产 Prompt 全部仍为
-  `v1`，没有未经 Owner 操作激活 Candidate。
+- 生产数据库当前有 12 个 Eval case、0 个生产 Eval run、9 个 Prompt 定义和 9 个
+  active `v1` 版本；没有 Candidate 版本，也没有未经 Owner 操作激活 Candidate。
 
 ## 5. AI 行为基线与优化对比
 
@@ -66,8 +72,10 @@
   和 Prompt Registry；没有持久化依据的比例统一标记为 `not_instrumented`。
 - 优化后：Gateway、Research Runtime 和 Monitoring Run 持久化 Prompt/Context/
   Tool 版本、模型调用、Token、耗时、采集和平台资源字段。
-- 生产本次真实运行记录：4 次模型调用、输入 Token 14074、输出 Token 3223、
-  采集内容 0；这些是事实记录，不将抓取数量当作研究价值。
+- 三次最新真实运行记录分别为：个人 AI 工具 4 次模型调用、输入 14121、输出
+  3342、采集内容 0；CodeBuddy 5 次、输入 15602、输出 3528、采集内容 10；
+  负向反馈 5 次、输入 14964、输出 3623、采集内容 9。这些是事实记录，不将
+  抓取数量当作研究价值。
 - 未有真实持久化依据的质量比例仍为 `not_instrumented`，没有用估算数补齐。
 
 ## 6. Context Builder、Compactor、Alignment 与 Early Stopping
@@ -115,11 +123,16 @@
 
 ## 9. Baseline、Change、Event、Memory、Attention 和通知
 
-- 生产 Mission：`58c5e2fa-3bd5-4155-9f1e-fc430bde61b3`。
+- 生产 Mission：个人 AI 工具 `58c5e2fa-3bd5-4155-9f1e-fc430bde61b3`、CodeBuddy
+  `ef17be25-6ca2-48dd-91c3-3244fbcfc62d`、AI 工具负向反馈
+  `b0851446-fffc-4f03-b0d2-1da736e5283a`。
 - 第一次历史运行 `4b7d24df…` 因旧 planner 契约缺陷 degraded，历史保留；修复后
   新运行 `8e005649-dd73-46a5-bebc-e47c5b66db54` 成功完成。
-- 新运行建立/更新 Baseline，当前 Baseline 记录数为 2；与基线比较结果为
-  `no_meaningful_change`。
+- 最新运行分别为 `6b138533-27ff-47ba-8f8f-e10fd1bc6a57`、
+  `c7cc2356-64a3-4d71-840b-316d7641cbe6`、
+  `16932a3f-c8f4-402f-bcf7-dfe63b08a0e5`，均为 `no_meaningful_change`。
+  三条任务合计保留 7 个版本化 Baseline；每次运行均有 Research Task 关联，
+  没有覆盖原历史记录。
 - 变化类型、独立来源、转载合并、反向证据、事件指纹、Memory Update 和注意力等级
   均由代码和本地测试覆盖；本次无真实变化，因此变化、来源、通知和 Memory Update
   数均为 0，没有伪造高价值变化。
@@ -132,7 +145,8 @@
 - 创建流程为自然语言目标 → AI 理解卡 → Owner 确认；详情固定为概览、重要变化、
   运行记录、已知基线、监控范围、预算、技术详情。
 - 监控列表响应已修复为只返回 `MonitoringMissionSummary` 字段，详情字段不会再造成
-  HTTP 500；“立即运行”按钮在任务详情页。
+  HTTP 500（`d439fb7`）；“立即运行”按钮在任务详情页，三条真实任务均从该入口
+  发起。没有变化的详情页显示明确的静默空状态。
 - 发现收件箱使用 `monitoring` 来源；AI 工作台显示重要变化、待处理发现、异常和
   需要登录的平台，不显示抓取数量大屏。
 - 本地截图证据：
@@ -145,7 +159,7 @@
 - 后端：`453 passed`。
 - 前端：30 个测试文件、72 个测试通过；lint、TypeScript build、Vite build 通过。
 - 本地门禁：通过；迁移、Shell/release-script、安全边界和三视口视觉检查通过。
-- Release Candidate：`8dceb61eb30fd10b0c9c6883a5099c8afaba43f3`，已 push。
+- Release Candidate：`7a721b57c0fae712d56b579b81a28630373012f5`，已 push。
 - 部署：通过 `scripts/server/deploy.sh --target-ref ... --release-candidate .release/rc.env --execute`。
 - 服务：`mediaops-api=active`、`mediaops-crawler-worker=active`；数据库
   `integrity_check=ok`、Alembic head=`0017_stage_8e`、活动 crawler=0、活动执行型
@@ -156,12 +170,13 @@
 
 ## 12. 真实生产验收边界
 
-- 已完成：用户创建并确认“持续关注值得关注的个人 AI 工具”的 Mission，点击详情页
-  “立即运行”，真实 Research Runtime 完成，最终为 `no_meaningful_change`；没有变化
-  时保持静默。
-- 尚未运行：具体产品 Mission、AI 工具负向反馈 Mission、产生真实变化后的通知已读/
-  稍后/忽略/继续研究/加入研究空间全动作矩阵、生产 Candidate Eval 对比。这些操作
-  需要 Owner 在生产前端确认创建任务或确认管理员操作，不能由 Codex 绕过。
+- 已完成：用户创建并确认三条 Mission，分别点击详情页“立即运行”；三次真实
+  Research Runtime 均完成，最终为 `no_meaningful_change`，没有变化时保持静默。
+  CodeBuddy 与负向反馈任务各有成功 B 站采集，详情模型验证有效；请求的知乎没有
+  被冒充为已验证平台。
+- 尚未运行：产生真实变化后的通知已读/稍后/忽略/继续研究/加入研究空间全动作矩阵、
+  生产 Candidate Eval 对比。这些需要 Owner 在生产前端确认管理员操作，不能由 Codex
+  绕过；当前无真实高价值变化时不人为生成通知。
 - 小红书验证码限制仍记录为 `blocked_by_platform`，不可描述成小红书业务成功，也不
   否定已通过的 Bilibili/Research Runtime 监控闭环。
 
@@ -187,6 +202,7 @@ Personal Media Ops 现在把“持续关注一个目标”建模为 Monitoring M
 用户真正想知道的变化，用户确认后按受控预算运行，检索已有记忆和证据，比较上次已知
 状态，过滤转载/重复/低价值噪音，并把真正值得关注的变化送入现有发现收件箱。
 
-当前生产闭环已经验证“没有真实变化时明确显示 `no_meaningful_change` 且不通知”。
-下一步只补 Owner 必须确认的具体产品、负向反馈、通知操作矩阵和 Candidate Eval 对比；
+当前生产闭环已经验证三条真实 Mission 在没有真实变化时明确显示
+`no_meaningful_change` 且不通知，并验证了成功采集、研究详情、Baseline、资源和平台
+状态的真实记录。下一步只补 Owner 必须确认的通知操作矩阵和 Candidate Eval 对比；
 不恢复旧订阅后台，不把抓取数量当作主动智能，不伪造平台验证码结果。
