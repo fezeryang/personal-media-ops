@@ -50,3 +50,15 @@ Personal Media Ops 现在把“持续关注一个目标”建模为 Monitoring M
 ## 下一步观察
 
 重点观察真实 Mission 的变化准确率、无变化静默率、重复通知率、变化证据完整率和通知采纳率；没有持久化依据的指标继续标记为 `not_instrumented`，不以抓取数量替代用户价值。
+
+## 当前生产验收记录（2026-08-06）
+
+- 生产运行版本：`8dceb61`。
+- 已验证一个 Owner 确认的个人 AI 工具监控 Mission；第二次运行真实完成，结果为
+  `no_meaningful_change`，Baseline 记录为 2，变化和通知均为 0。
+- 运行资源记录：4 次模型调用、输入 14074 Token、输出 3223 Token；没有用抓取数量
+  代替研究价值。
+- 监控列表 HTTP 500、Intent Contract 缺失、以及 `AwaitingReview` 导致监控运行卡住的
+  三个真实缺陷都已修复并各自补了回归测试。
+- 具体产品、负向反馈、真实高价值变化后的通知操作矩阵和生产 Candidate Eval 仍需
+  Owner 通过正常产品页面确认后再验收；不得由系统自动创建长期监控或激活 Prompt。
