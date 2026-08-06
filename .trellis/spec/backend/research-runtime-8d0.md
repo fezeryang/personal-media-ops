@@ -82,6 +82,13 @@ selected platform's evidence strategy and platform label before historical
 deduplication, so a valid direction is not lost solely because an earlier task
 used the unbound base wording.
 
+Every supported modern intent must yield at least three bounded deterministic
+directions before the planner response is considered. Broad pain-point
+monitoring is not an exception: it includes a complaint probe, a
+counterevidence direction, and a separate negative-experience / replacement-
+need probe. This prevents a valid broad monitoring goal from failing only
+because the model returned fewer than three search terms.
+
 Information utility is multi-label and explainable. Valid labels are
 `core_evidence`, `discovery_seed`, `background_context`, `event_signal`,
 `counterevidence`, `memory_update`, `action_trigger`, `noise`, and
@@ -127,6 +134,7 @@ available and a material gap remains; otherwise it reaches
 | Historical deduplication removes a modern initial direction | Transform it with platform evidence strategy and platform binding before the gate; preserve the original direction in the plan audit |
 | Blank/meaningless user goal | Reject task input with a validation error |
 | User goal contains a broad word such as “工具” or “趋势” | Accept and interpret; never reject from a generic-term rule alone |
+| Modern pain-point goal yields only two planner seeds | Add the deterministic negative-experience/replacement-need direction; do not fail the task for fewer than three model terms |
 | Unbound seed execution query | Hold/reject with an Intent Contract binding reason |
 | Entity expansion lacks parent query/source content | Reject as invalid expansion |
 | Exact execution-query duplicate | Reject or mark duplicate while preserving audit history |
@@ -179,7 +187,8 @@ path.
 
 - Intent unit tests assert primary/secondary intents, unknowns, time defaults,
   target audience, confidence bands, one-question clarification, model JSON
-  repair/default behavior, and concrete query roles.
+  repair/default behavior, concrete query roles, and at least three bounded
+  directions for broad pain-point monitoring.
 - Query-quality tests assert user-goal acceptance, intent-bound seed rules,
   exact duplicate/budget/platform gates, and hold/reject reasons.
 - Utility tests assert multi-label counterevidence, discovery seed, event,

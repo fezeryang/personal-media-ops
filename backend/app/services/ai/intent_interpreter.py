@@ -396,6 +396,7 @@ def execution_query_directions(contract: ResearchIntentContract) -> list[dict[st
     if "pain_point_research" in intents:
         add(f"{subject} 用户抱怨 不好用 失败用例", "pain_point_probe")
         add(f"{subject} 缺点 限制 替代方案", "counterevidence")
+        add(f"{subject} 负面体验 常见问题 替代需求", "pain_point_probe")
     if "trend_tracking" in intents:
         add(f"{subject} 近期新趋势 代表话题", "trend_probe")
         add(f"{subject} 近期传播变化 用户反应", "trend_probe")

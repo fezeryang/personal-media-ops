@@ -56,6 +56,9 @@ default Intent Contract before waking the Runtime. This keeps a broad
 monitoring goal on the modern intent/planner path; otherwise the Runtime
 mistakes the task for a legacy task and can reject it for lacking three model
 generated terms before its deterministic execution directions are available.
+The deterministic directions must include at least three bounded seeds for a
+wide negative-feedback goal so the monitoring run does not depend on the model
+inventing enough planner terms.
 
 ## 3. Contracts
 
@@ -96,6 +99,7 @@ are required. Platform login/captcha remains an explicit `waiting_login` or
 | Platform task waiting for login | Keep mission durable; set run/mission waiting state and do not synthesize changes. |
 | Scheduled failure | Record run failure/backoff and keep the mission schedulable with bounded exponential backoff. |
 | Mission list response | Return only `MonitoringMissionSummary` fields; detail-only targets, rules, failure counters, and last error must not leak into the summary response because API models use `extra="forbid"`. |
+| Broad negative-feedback mission | Provide complaint, counterevidence, and replacement-need directions before planning; a short model response must not degrade a valid mission for lacking three terms. |
 | Same fingerprint or repost in a later run | Merge/deduplicate; do not create a second notification. |
 | Low-confidence or no meaningful change | Store the comparison when useful, suppress notification according to attention policy. |
 | Prompt activation/rollback without Owner Session or CSRF | Reject before mutation. AI/runtime code cannot activate versions. |

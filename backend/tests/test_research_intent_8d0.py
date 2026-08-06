@@ -205,6 +205,14 @@ def test_execution_directions_cover_discovery_roles() -> None:
     monitoring = build_default_intent("监控AI工具的变化")
     assert execution_query_directions(monitoring)
 
+    negative_monitoring = build_default_intent(
+        "持续关注用户对 AI 工具不好用、太复杂、不稳定、价格高或缺少关键能力的真实反馈变化。",
+        ["bili", "zhihu"],
+    )
+    negative_directions = execution_query_directions(negative_monitoring)
+    assert len(negative_directions) >= 3
+    assert {item["query_role"] for item in negative_directions} >= {"pain_point_probe", "counterevidence"}
+
 
 def test_user_goal_is_not_rejected_by_execution_query_gate() -> None:
     user_goal = evaluate_query(
