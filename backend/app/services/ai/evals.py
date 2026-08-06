@@ -19,6 +19,54 @@ FIXED_EVAL_DATASET: tuple[dict[str, object], ...] = (
     {"slug": "platform_unavailable", "task": "监控一个需要验证码的平台上的AI工具变化。", "expected_intent": "monitoring", "key_unknowns": ["platform availability", "change evidence"], "required_evidence_types": ["platform status", "partial evidence"], "forbidden_scope_drift": ["synthetic result"], "minimum_sources": 0, "partial_completion_allowed": True},
 )
 
+# Recorded responses are replay fixtures, not product answers or live research
+# results. They exercise two fixed cases while leaving the remaining cases
+# explicitly uninstrumented.
+RECORDED_EVAL_RESPONSE: dict[str, dict[str, object]] = {
+    "product_exploration": {
+        "intent": "discovery",
+        "evidence": [
+            {"content_id": "recorded-product-content-1"},
+            {"content_id": "recorded-product-content-2"},
+        ],
+        "model_call_count": 2,
+        "input_tokens": 100,
+        "output_tokens": 80,
+        "runtime_ms": 1200,
+        "metrics": {
+            "target_coverage": 1.0,
+            "scope_drift": 0.0,
+            "query_acceptance": 1.0,
+            "novel_information_rate": 0.8,
+            "independent_evidence_rate": 1.0,
+            "duplicate_rate": 0.0,
+            "error_inference_rate": 0.0,
+            "candidate_adoption_rate": 0.5,
+        },
+    },
+    "product_monitoring": {
+        "intent": "monitoring",
+        "evidence": [
+            {"content_id": "recorded-monitoring-content-1"},
+            {"content_id": "recorded-monitoring-content-2"},
+        ],
+        "model_call_count": 2,
+        "input_tokens": 120,
+        "output_tokens": 90,
+        "runtime_ms": 1400,
+        "metrics": {
+            "target_coverage": 1.0,
+            "scope_drift": 0.0,
+            "query_acceptance": 1.0,
+            "novel_information_rate": 0.7,
+            "independent_evidence_rate": 1.0,
+            "duplicate_rate": 0.0,
+            "error_inference_rate": 0.0,
+            "candidate_adoption_rate": 0.5,
+        },
+    },
+}
+
 
 def _instrumented_or_unknown(value: object) -> object:
     return value if value is not None else "not_instrumented"
@@ -58,6 +106,17 @@ def evaluate_recorded_response(
         "output_tokens": _instrumented_or_unknown(response.get("output_tokens")),
         "runtime_ms": _instrumented_or_unknown(response.get("runtime_ms")),
     }
+
+
+def result_status_for_metrics(metrics: Mapping[str, object]) -> str:
+    """Classify metrics without treating valid zero-valued rates as failures."""
+
+    blocking_metrics = ("intent_consistency", "fact_evidence_binding")
+    if any(metrics.get(key) == 0.0 for key in blocking_metrics):
+        return "failed"
+    if any(value == "not_instrumented" for value in metrics.values()):
+        return "partial"
+    return "passed"
 
 
 def replay_recorded_task(

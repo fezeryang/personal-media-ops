@@ -275,6 +275,15 @@ export const evalCaseSchema = z.object({
   partial_completion_allowed: z.boolean(),
   last_result: z.record(z.string(), z.unknown()).nullable(),
 });
+export const evalReplayResultSchema = z.object({
+  run_id: z.string(),
+  prompt_key: z.string(),
+  prompt_version: z.string(),
+  context_version: z.string(),
+  recorded_task_id: z.string(),
+  case_count: z.number().int().nonnegative(),
+  status_counts: z.record(z.string(), z.number().int().nonnegative()),
+});
 
 export const modelStreamEventSchema = z.object({
   type: z.enum([
@@ -313,6 +322,7 @@ export type ModelStreamEvent = z.infer<typeof modelStreamEventSchema>;
 export type PromptDefinition = z.infer<typeof promptDefinitionSchema>;
 export type PromptVersion = z.infer<typeof promptVersionSchema>;
 export type EvalCase = z.infer<typeof evalCaseSchema>;
+export type EvalReplayResult = z.infer<typeof evalReplayResultSchema>;
 
 export interface ProviderInput {
   name: string;
@@ -460,6 +470,17 @@ export function listPromptDefinitions(signal?: AbortSignal) {
 
 export function listAiEvalCases(signal?: AbortSignal) {
   return requestJson("/api/ai/evals", z.array(evalCaseSchema), { signal });
+}
+
+export function replayAiEval(input: { promptKey: string; promptVersion: string }) {
+  return requestJson("/api/ai/evals/replay", evalReplayResultSchema, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      prompt_key: input.promptKey,
+      prompt_version: input.promptVersion,
+    }),
+  });
 }
 
 export function activatePrompt(promptKey: string, version: string) {

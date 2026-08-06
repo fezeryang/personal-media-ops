@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import connect_database
 from app.repositories.ai import AIRepository
 from app.repositories.monitoring import MonitoringConflict, MonitoringRepository
 
@@ -139,6 +136,8 @@ def test_prompt_registry_eval_read_view_and_explicit_rollback(
     assert prompts.status_code == 200
     assert len(prompts.json()) >= 9
     assert all(item["active_version"] == "v1" for item in prompts.json())
+    intent_prompt = next(item for item in prompts.json() if item["prompt_key"] == "intent_interpreter")
+    assert intent_prompt["candidate_version"] == "v2"
 
     evals = client.get("/api/ai/evals")
     assert evals.status_code == 200
@@ -161,37 +160,6 @@ def test_prompt_registry_eval_read_view_and_explicit_rollback(
     refreshed_evals = client.get("/api/ai/evals").json()
     assert any(item["last_result"] is not None for item in refreshed_evals)
 
-    database_path = client.app.state.settings.database_path
-    with connect_database(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO prompt_versions (
-                id, prompt_key, version, status, model_family, system_prompt,
-                task_template, input_schema_json, output_schema_json,
-                temperature, max_tokens, change_reason, created_at, updated_at
-            ) VALUES (?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "intent_interpreter:v2",
-                "intent_interpreter",
-                "v2",
-                "gateway-default",
-                "candidate test prompt",
-                "candidate task",
-                json.dumps({}),
-                json.dumps({}),
-                0.1,
-                800,
-                "test candidate",
-                "2026-08-05T00:00:00Z",
-                "2026-08-05T00:00:00Z",
-            ),
-        )
-        connection.execute(
-            "UPDATE prompt_definitions SET candidate_version = ? WHERE prompt_key = ?",
-            ("v2", "intent_interpreter"),
-        )
-
     activated = client.post(
         "/api/ai/prompts/intent_interpreter/activate",
         json={"version": "v2"},
@@ -201,6 +169,32 @@ def test_prompt_registry_eval_read_view_and_explicit_rollback(
     rolled_back = client.post("/api/ai/prompts/intent_interpreter/rollback")
     assert rolled_back.status_code == 200
     assert rolled_back.json()["active_version"] == "v1"
+    assert rolled_back.json()["candidate_version"] == "v2"
+
+
+def test_recorded_eval_replay_runs_fixed_cases_and_requires_csrf(
+    client: TestClient,
+) -> None:
+    replay = client.post(
+        "/api/ai/evals/replay",
+        json={"prompt_key": "intent_interpreter", "prompt_version": "v2"},
+    )
+    assert replay.status_code == 200
+    result = replay.json()
+    assert result["case_count"] >= 12
+    assert result["status_counts"]["passed"] >= 2
+    assert result["prompt_version"] == "v2"
+
+    evals = client.get("/api/ai/evals")
+    assert evals.status_code == 200
+    assert sum(item["last_result"] is not None for item in evals.json()) >= 2
+
+    denied = client.post(
+        "/api/ai/evals/replay",
+        json={"prompt_key": "intent_interpreter", "prompt_version": "v2"},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": "invalid"},
+    )
+    assert denied.status_code == 403
 
 
 def test_prompt_mutation_requires_csrf(client: TestClient) -> None:

@@ -89,6 +89,58 @@ const emptyUsage: aiApi.UsageSummary = {
   recent_invocations: [],
 };
 
+const promptDefinition: aiApi.PromptDefinition = {
+  prompt_key: "intent_interpreter",
+  role: "intent_interpreter",
+  active_version: "v1",
+  candidate_version: "v2",
+  activated_at: "2026-08-01T00:00:00Z",
+  created_at: "2026-08-01T00:00:00Z",
+  updated_at: "2026-08-01T00:00:00Z",
+  recent_eval: null,
+  versions: [
+    {
+      prompt_key: "intent_interpreter",
+      role: "intent_interpreter",
+      version: "v2",
+      status: "candidate",
+      model_family: "gateway-default",
+      temperature: 0.1,
+      max_tokens: 800,
+      change_reason: "candidate evidence boundaries",
+      activated_at: null,
+      created_at: "2026-08-01T00:00:00Z",
+      updated_at: "2026-08-01T00:00:00Z",
+    },
+    {
+      prompt_key: "intent_interpreter",
+      role: "intent_interpreter",
+      version: "v1",
+      status: "active",
+      model_family: "gateway-default",
+      temperature: 0.1,
+      max_tokens: 800,
+      change_reason: "initial registry",
+      activated_at: "2026-08-01T00:00:00Z",
+      created_at: "2026-08-01T00:00:00Z",
+      updated_at: "2026-08-01T00:00:00Z",
+    },
+  ],
+};
+
+const evalCase: aiApi.EvalCase = {
+  id: "eval:product_exploration",
+  slug: "product_exploration",
+  task: "最近有哪些值得关注的个人AI工具？",
+  expected_intent: "discovery",
+  key_unknowns: ["product names"],
+  required_evidence_types: ["direct"],
+  forbidden_scope_drift: ["generic history"],
+  minimum_sources: 3,
+  partial_completion_allowed: true,
+  last_result: null,
+};
+
 function mockQueries() {
   vi.spyOn(aiApi, "listProviderTemplates").mockResolvedValue([
     {
@@ -252,5 +304,35 @@ describe("AiModelCenterPage", () => {
     await user.click(screen.getByRole("button", { name: "执行测试" }));
     expect(await screen.findByText("OK")).toBeInTheDocument();
     expect(screen.getByText("未发生 fallback")).toBeInTheDocument();
+  });
+
+  it("runs a recorded eval for a visible prompt version", async () => {
+    vi.spyOn(aiApi, "listPromptDefinitions").mockResolvedValue([promptDefinition]);
+    vi.spyOn(aiApi, "listAiEvalCases").mockResolvedValue([evalCase]);
+    const replay = vi.spyOn(aiApi, "replayAiEval").mockResolvedValue({
+      run_id: "eval-run-1",
+      prompt_key: "intent_interpreter",
+      prompt_version: "v2",
+      context_version: "ctx-v1",
+      recorded_task_id: "stage-8e-recorded-fixture",
+      case_count: 12,
+      status_counts: { passed: 2, not_instrumented: 10 },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("DeepSeek 生产");
+    await user.click(screen.getByRole("tab", { name: "Prompt 治理" }));
+    expect(
+      await screen.findByRole("heading", { name: "intent_interpreter" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "运行 Recorded Eval v2" }));
+    await waitFor(() =>
+      expect(replay).toHaveBeenCalledWith({
+        promptKey: "intent_interpreter",
+        promptVersion: "v2",
+      }),
+    );
+    expect(await screen.findByText(/Recorded Replay 已完成/)).toBeInTheDocument();
   });
 });

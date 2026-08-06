@@ -28,3 +28,17 @@ Prompt activation/rollback controls are explicit administrative actions and
 must not be exposed as ordinary AI automation. No browser cookies, local
 storage session backdoors, external push channel, or automatic mission
 creation is allowed.
+
+## Prompt Governance Replay
+
+The AI Model Center's `Prompt 治理` panel may show the active and candidate
+versions and offer `运行 Recorded Eval <version>` for each. The action calls
+the bounded `/api/ai/evals/replay` contract and renders the returned run ID,
+case count, and status summary; it must not accept arbitrary recorded content
+or start a live model/platform task. Query data is invalidated after a
+successful replay so the fixed Eval cases show their latest result.
+
+Activation and rollback remain separate, explicit Owner/CSRF-protected
+actions with confirmation. This is a review surface, not a Prompt IDE: normal
+users do not edit system Prompts, and no candidate is activated merely because
+its Recorded Eval request succeeded.

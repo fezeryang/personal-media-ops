@@ -80,6 +80,10 @@ inventing enough planner terms.
   `not_instrumented`, never an estimated percentage.
 - Every Model Gateway invocation records `prompt_key`, `prompt_version`,
   `context_version`, and `tool_contract_version`.
+- Recorded Eval replay uses the fixed server-side fixture only; it is a
+  governance comparison artifact, not product evidence or a live research
+  result. A zero rate is meaningful data when the metric is a rate where zero
+  is the desired outcome (for example, scope drift or duplicate rate).
 
 ### Environment and resources
 
@@ -145,4 +149,85 @@ comparison = compare_baseline(baseline, fetched_items)
 persist_change(comparison)
 if should_notify(comparison) and not already_notified(comparison.fingerprint):
     create_notification(comparison)
+```
+
+## 8. Candidate Prompt and Recorded Eval Replay
+
+### 1. Scope / Trigger
+
+This contract applies when adding or changing Prompt Registry candidates or
+the bounded offline Eval replay path. It prevents a candidate review action
+from becoming a live model call, crawler run, or automatic Prompt activation.
+
+### 2. Signatures
+
+- `POST /api/ai/evals/replay`
+- `AIRepository.replay_recorded_fixture(prompt_key, prompt_version)`
+- `candidate_prompt_specs()` returns the intentionally bounded candidate set.
+
+### 3. Contracts
+
+- Request JSON is exactly `{ "prompt_key": string, "prompt_version": string }`.
+  The key is lowercase `a-z0-9_`; the version is bounded to
+  `A-Za-z0-9._-`.
+- The endpoint returns `run_id`, `prompt_key`, `prompt_version`,
+  `context_version`, `recorded_task_id`, `case_count`, and `status_counts`.
+- The fixed fixture uses `recorded_task_id=stage-8e-recorded-fixture` and
+  `context_version=ctx-v1`; it evaluates every fixed case, instruments the
+  two recorded cases, and leaves the others `not_instrumented`.
+- The endpoint requires Owner Session and CSRF. It writes Eval run/result
+  rows only; it never fetches a platform or calls a model.
+- `intent_interpreter:v2` is seeded as `candidate` during governance-default
+  initialization. Initialization must not re-add it as a candidate after an
+  explicit activation; activation and rollback remain user actions.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Anonymous or missing Owner Session | Reject before repository access. |
+| Missing/invalid CSRF | Return the normal `403` CSRF error and do not write Eval rows. |
+| Unknown Prompt key/version | Return `404`; do not create a run. |
+| Prompt status not `active` or `candidate` | Return `409`; do not create a run. |
+| Missing fixture metric | Store `not_instrumented`; never infer a ratio. |
+| Zero scope drift, duplicate rate, or error-inference rate | Treat as a valid zero, not a failure. |
+| Zero intent consistency or fact-evidence binding | Mark that case `failed`. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: run the fixed fixture for active v1 and candidate v2, compare at
+  least two instrumented cases, and keep production active v1 until an Owner
+  explicitly activates a quality-approved candidate.
+- Base: replay produces passed results for the two fixture cases and
+  `not_instrumented` for the remaining fixed dataset without claiming live
+  research quality.
+- Bad: accept a recorded response from the request body, re-crawl a platform
+  during replay, or treat every zero-valued metric as a failed case.
+
+### 6. Tests Required
+
+- Repository/API test asserts replay writes one completed run with all fixed
+  cases, at least two passed results, and no live research task.
+- API test asserts missing/invalid CSRF returns `403`.
+- Foundation test asserts valid zero drift/error rates classify as passed and
+  missing metrics remain `not_instrumented`.
+- Governance test asserts the candidate is present before explicit activation
+  and is not automatically reactivated afterward.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+response = request.json()["recorded_response"]
+return run_model_or_crawler(response)
+```
+
+#### Correct
+
+```python
+return repository.replay_recorded_fixture(
+    prompt_key=payload.prompt_key,
+    prompt_version=payload.prompt_version,
+)
 ```

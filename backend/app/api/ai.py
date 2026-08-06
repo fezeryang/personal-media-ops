@@ -22,6 +22,8 @@ from pydantic import (
 
 from app.models.ai import (
     EvalCaseView,
+    EvalReplayRequest,
+    EvalReplayResult,
     GatewayResponse,
     ModelInfo,
     ModelMessage,
@@ -674,6 +676,21 @@ def list_prompts(request: Request, _: OwnerSession) -> list[dict[str, object]]:
 @router.get("/evals", response_model=list[EvalCaseView])
 def list_evals(request: Request, _: OwnerSession) -> list[dict[str, object]]:
     return _repository(request).list_eval_cases()
+
+
+@router.post("/evals/replay", response_model=EvalReplayResult)
+def replay_evals(
+    payload: EvalReplayRequest,
+    request: Request,
+    _: OwnerSession,
+) -> dict[str, object]:
+    try:
+        return _repository(request).replay_recorded_fixture(
+            prompt_key=payload.prompt_key,
+            prompt_version=payload.prompt_version,
+        )
+    except Exception as error:
+        raise _http_error(error) from error
 
 
 @router.post("/prompts/{prompt_key}/activate", response_model=PromptDefinitionView)

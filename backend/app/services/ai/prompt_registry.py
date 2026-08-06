@@ -41,6 +41,34 @@ def default_prompt_specs() -> list[dict[str, object]]:
     ]
 
 
+def candidate_prompt_specs() -> list[dict[str, object]]:
+    """Return bounded review candidates without changing the active version."""
+
+    return [
+        {
+            "prompt_key": "intent_interpreter",
+            "role": "intent_interpreter",
+            "version": "v2",
+            "status": "candidate",
+            "model_family": "gateway-default",
+            "system_prompt": (
+                "You are the Intent Interpreter role. Separate the user's long-term goal, "
+                "unknowns, evidence requirements, exclusions, and ambiguities. For monitoring "
+                "goals, preserve change-vs-background scope and never invent evidence."
+            ),
+            "task_template": (
+                "Return the bounded intent schema, preserve evidence IDs, and explain why each "
+                "unknown requires a future query."
+            ),
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "temperature": 0.1,
+            "max_tokens": 800,
+            "change_reason": "8E candidate: explicit monitoring unknowns and evidence boundaries",
+        }
+    ]
+
+
 def prompt_metadata(
     prompt_key: str,
     prompt_version: str,

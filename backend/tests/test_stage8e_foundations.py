@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from app.services.ai.context_builder import ContextBuilder
-from app.services.ai.evals import FIXED_EVAL_DATASET, evaluate_recorded_response
+from app.services.ai.evals import (
+    FIXED_EVAL_DATASET,
+    evaluate_recorded_response,
+    result_status_for_metrics,
+)
 from app.services.ai.prompt_registry import (
     PROMPT_ROLES,
+    candidate_prompt_specs,
     default_prompt_specs,
     prompt_metadata,
 )
@@ -31,9 +36,51 @@ def test_eval_response_marks_uninstrumented_metrics_without_inventing_scores() -
     assert result["fact_evidence_binding"] == 1.0
 
 
+def test_eval_response_treats_zero_drift_and_error_rates_as_good_metrics() -> None:
+    result = evaluate_recorded_response(
+        FIXED_EVAL_DATASET[0],
+        {
+            "intent": "discovery",
+            "evidence": [{"content_id": "c1"}],
+            "model_call_count": 2,
+            "input_tokens": 100,
+            "output_tokens": 80,
+            "runtime_ms": 1200,
+            "metrics": {
+                "target_coverage": 1.0,
+                "scope_drift": 0.0,
+                "query_acceptance": 1.0,
+                "novel_information_rate": 0.8,
+                "independent_evidence_rate": 1.0,
+                "duplicate_rate": 0.0,
+                "error_inference_rate": 0.0,
+                "candidate_adoption_rate": 0.5,
+            },
+        },
+    )
+    assert result_status_for_metrics(result) == "passed"
+
+
 def test_prompt_registry_has_explicit_roles_and_call_metadata() -> None:
     specs = default_prompt_specs()
     assert {item["role"] for item in specs} == set(PROMPT_ROLES)
+    candidates = candidate_prompt_specs()
+    assert candidates == [
+        {
+            "prompt_key": "intent_interpreter",
+            "role": "intent_interpreter",
+            "version": "v2",
+            "status": "candidate",
+            "model_family": "gateway-default",
+            "system_prompt": candidates[0]["system_prompt"],
+            "task_template": candidates[0]["task_template"],
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "temperature": 0.1,
+            "max_tokens": 800,
+            "change_reason": "8E candidate: explicit monitoring unknowns and evidence boundaries",
+        }
+    ]
     metadata = prompt_metadata("intent_interpreter", "v1", "ctx-v1", "tools-v1")
     assert metadata == {
         "prompt_key": "intent_interpreter",

@@ -53,6 +53,7 @@ import {
   listProviderTemplates,
   listRoutes,
   refreshProviderModels,
+  replayAiEval,
   rollbackPrompt,
   routeRoles,
   streamDebugModel,
@@ -501,6 +502,7 @@ function promptEvalSummary(prompt: PromptDefinition): string {
 function PromptRegistryPanel() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<unknown>(null);
+  const [replayResult, setReplayResult] = useState<Awaited<ReturnType<typeof replayAiEval>> | null>(null);
   const prompts = useQuery({
     queryKey: ["ai", "prompts"],
     queryFn: ({ signal }) => listPromptDefinitions(signal),
@@ -517,6 +519,18 @@ function PromptRegistryPanel() {
     onSuccess: async () => {
       setActionError(null);
       await queryClient.invalidateQueries({ queryKey: ["ai", "prompts"] });
+    },
+    onError: setActionError,
+  });
+  const replay = useMutation({
+    mutationFn: (input: { promptKey: string; promptVersion: string }) => replayAiEval(input),
+    onSuccess: async (result) => {
+      setActionError(null);
+      setReplayResult(result);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ai", "prompts"] }),
+        queryClient.invalidateQueries({ queryKey: ["ai", "evals"] }),
+      ]);
     },
     onError: setActionError,
   });
@@ -540,6 +554,7 @@ function PromptRegistryPanel() {
         </CardHeader>
         <CardContent className="space-y-3 pt-5">
           {actionError ? <p className="rounded-xl border border-danger/20 bg-danger/5 p-3 text-sm text-danger">{actionError instanceof Error ? actionError.message : "Prompt 版本操作失败"}</p> : null}
+          {replayResult ? <p className="rounded-xl border border-signal/20 bg-signal/[0.04] p-3 text-sm text-signal-strong">Recorded Replay 已完成：{replayResult.prompt_key} {replayResult.prompt_version} · {replayResult.case_count} 个固定任务 · run {replayResult.run_id}</p> : null}
           {items.map((prompt) => {
             const candidate = prompt.versions.find((version) => version.version === prompt.candidate_version);
             return (
@@ -550,6 +565,7 @@ function PromptRegistryPanel() {
                     <p className="mt-1 text-sm text-muted">当前版本 <span className="font-semibold text-ink">{prompt.active_version}</span> · {promptEvalSummary(prompt)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {prompt.versions.filter((version) => version.status === "active" || version.status === "candidate").map((version) => <Button key={version.version} size="sm" variant="ghost" disabled={replay.isPending} onClick={() => replay.mutate({ promptKey: prompt.prompt_key, promptVersion: version.version })}>运行 Recorded Eval {version.version}</Button>)}
                     {candidate ? <Button size="sm" disabled={action.isPending} onClick={() => { if (window.confirm(`确认激活 ${prompt.prompt_key} ${candidate.version}？请先确认评测结果。`)) action.mutate({ promptKey: prompt.prompt_key, version: candidate.version, kind: "activate" }); }}>激活候选</Button> : null}
                     {prompt.versions.some((version) => version.status === "rollback") ? <Button size="sm" variant="secondary" disabled={action.isPending} onClick={() => { if (window.confirm(`确认回滚 ${prompt.prompt_key}？`)) action.mutate({ promptKey: prompt.prompt_key, kind: "rollback" }); }}>回滚</Button> : null}
                   </div>

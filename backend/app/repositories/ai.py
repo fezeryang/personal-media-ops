@@ -9,8 +9,13 @@ from pathlib import Path
 
 from app.db import connect_database
 from app.security.provider_secrets import EncryptedProviderSecret
-from app.services.ai.evals import FIXED_EVAL_DATASET, evaluate_recorded_response
-from app.services.ai.prompt_registry import default_prompt_specs
+from app.services.ai.evals import (
+    FIXED_EVAL_DATASET,
+    RECORDED_EVAL_RESPONSE,
+    evaluate_recorded_response,
+    result_status_for_metrics,
+)
+from app.services.ai.prompt_registry import candidate_prompt_specs, default_prompt_specs
 
 ROUTE_ROLES = (
     "default",
@@ -92,42 +97,38 @@ class AIRepository:
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
             for spec in default_prompt_specs():
+                self._ensure_prompt_version(
+                    connection,
+                    spec=spec,
+                    status="active",
+                    now=now,
+                )
+            for spec in candidate_prompt_specs():
                 prompt_key = str(spec["prompt_key"])
-                version = str(spec["version"])
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO prompt_definitions
-                        (prompt_key, role, active_version, candidate_version, created_at, updated_at)
-                    VALUES (?, ?, ?, NULL, ?, ?)
-                    """,
-                    (prompt_key, str(spec["role"]), version, now, now),
+                self._ensure_prompt_version(
+                    connection,
+                    spec=spec,
+                    status="candidate",
+                    now=now,
                 )
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO prompt_versions (
-                        id, prompt_key, version, status, model_family, system_prompt,
-                        task_template, input_schema_json, output_schema_json,
-                        temperature, max_tokens, change_reason, activated_at,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        f"{prompt_key}:{version}",
-                        prompt_key,
-                        version,
-                        str(spec["model_family"]),
-                        str(spec["system_prompt"]),
-                        str(spec["task_template"]),
-                        json.dumps(spec["input_schema"], ensure_ascii=False, separators=(",", ":")),
-                        json.dumps(spec["output_schema"], ensure_ascii=False, separators=(",", ":")),
-                        spec["temperature"],
-                        spec["max_tokens"],
-                        str(spec["change_reason"]),
-                        now,
-                        now,
-                        now,
-                    ),
-                )
+                candidate = connection.execute(
+                    "SELECT status FROM prompt_versions WHERE prompt_key = ? AND version = ?",
+                    (prompt_key, str(spec["version"])),
+                ).fetchone()
+                definition = connection.execute(
+                    "SELECT candidate_version FROM prompt_definitions WHERE prompt_key = ?",
+                    (prompt_key,),
+                ).fetchone()
+                if (
+                    candidate is not None
+                    and str(candidate["status"]) == "candidate"
+                    and definition is not None
+                    and definition["candidate_version"] is None
+                ):
+                    connection.execute(
+                        "UPDATE prompt_definitions SET candidate_version = ?, updated_at = ? WHERE prompt_key = ?",
+                        (str(spec["version"]), now, prompt_key),
+                    )
             for case in FIXED_EVAL_DATASET:
                 connection.execute(
                     """
@@ -151,6 +152,52 @@ class AIRepository:
                     ),
                 )
             connection.commit()
+
+    @staticmethod
+    def _ensure_prompt_version(
+        connection: sqlite3.Connection,
+        *,
+        spec: dict[str, object],
+        status: str,
+        now: str,
+    ) -> None:
+        prompt_key = str(spec["prompt_key"])
+        version = str(spec["version"])
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO prompt_definitions
+                (prompt_key, role, active_version, candidate_version, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, ?)
+            """,
+            (prompt_key, str(spec["role"]), "v1", now, now),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO prompt_versions (
+                id, prompt_key, version, status, model_family, system_prompt,
+                task_template, input_schema_json, output_schema_json,
+                temperature, max_tokens, change_reason, activated_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"{prompt_key}:{version}",
+                prompt_key,
+                version,
+                status,
+                str(spec["model_family"]),
+                str(spec["system_prompt"]),
+                str(spec["task_template"]),
+                json.dumps(spec["input_schema"], ensure_ascii=False, separators=(",", ":")),
+                json.dumps(spec["output_schema"], ensure_ascii=False, separators=(",", ":")),
+                spec["temperature"],
+                spec["max_tokens"],
+                str(spec["change_reason"]),
+                now if status == "active" else None,
+                now,
+                now,
+            ),
+        )
 
     def list_prompt_definitions(self) -> list[dict[str, object]]:
         with connect_database(self.database_path) as connection:
@@ -340,6 +387,16 @@ class AIRepository:
         run_id = str(uuid.uuid4())
         with connect_database(self.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            prompt = connection.execute(
+                "SELECT status FROM prompt_versions WHERE prompt_key = ? AND version = ?",
+                (prompt_key, prompt_version),
+            ).fetchone()
+            if prompt is None:
+                connection.rollback()
+                raise KeyError("prompt version not found")
+            if str(prompt["status"]) not in {"active", "candidate"}:
+                connection.rollback()
+                raise ValueError("recorded replay requires an active or candidate prompt version")
             cases = connection.execute("SELECT * FROM ai_eval_cases ORDER BY id").fetchall()
             connection.execute(
                 """
@@ -362,14 +419,11 @@ class AIRepository:
                     response,
                 )
                 values = [value for key, value in metrics.items() if key != "case_slug"]
-                if not values or all(value == "not_instrumented" for value in values):
-                    result_status = "not_instrumented"
-                elif any(value == 0.0 for value in values):
-                    result_status = "failed"
-                elif any(value == "not_instrumented" for value in values):
-                    result_status = "partial"
-                else:
-                    result_status = "passed"
+                result_status = (
+                    "not_instrumented"
+                    if not values or all(value == "not_instrumented" for value in values)
+                    else result_status_for_metrics(metrics)
+                )
                 statuses.append(result_status)
                 connection.execute(
                     """
@@ -405,6 +459,14 @@ class AIRepository:
             "case_count": len(statuses),
             "status_counts": {status: statuses.count(status) for status in sorted(set(statuses))},
         }
+
+    def replay_recorded_fixture(self, *, prompt_key: str, prompt_version: str) -> dict[str, object]:
+        return self.replay_recorded_task(
+            prompt_key=prompt_key,
+            prompt_version=prompt_version,
+            recorded_task_id="stage-8e-recorded-fixture",
+            recorded_response=RECORDED_EVAL_RESPONSE,
+        )
 
     @staticmethod
     def _provider_select() -> str:

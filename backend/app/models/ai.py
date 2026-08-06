@@ -216,6 +216,25 @@ class PromptVersionAction(BaseModel):
     version: str = Field(min_length=1, max_length=64)
 
 
+class EvalReplayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_key: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+    prompt_version: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+
+
+class EvalReplayResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    prompt_key: str
+    prompt_version: str
+    context_version: str
+    recorded_task_id: str
+    case_count: int = Field(ge=0)
+    status_counts: dict[str, int]
+
+
 class EvalCaseView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
