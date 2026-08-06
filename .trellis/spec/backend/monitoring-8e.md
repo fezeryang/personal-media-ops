@@ -48,6 +48,12 @@ content or links an existing Research Task. `reconcile_linked_runs()` is
 called by the existing Worker and persists terminal changes, memory updates,
 and notifications.
 
+When the bridge creates a Research Task, it must persist the deterministic
+default Intent Contract before waking the Runtime. This keeps a broad
+monitoring goal on the modern intent/planner path; otherwise the Runtime
+mistakes the task for a legacy task and can reject it for lacking three model
+generated terms before its deterministic execution directions are available.
+
 ## 3. Contracts
 
 ### Request/response
@@ -110,7 +116,8 @@ are required. Platform login/captcha remains an explicit `waiting_login` or
   counts, event fingerprint merging, memory update fields, notification
   deduplication, lock, pause/resume, and scheduled backoff.
 - API tests cover Owner/CSRF, two-step confirmation, CRUD, linked Research
-  Task reconciliation, prompt listing/eval replay, activation and rollback.
+  Task reconciliation (including the initial Intent Contract), prompt
+  listing/eval replay, activation and rollback.
 - Full backend regression and frontend lint/test/build are release gates.
 
 ## 7. Wrong vs Correct

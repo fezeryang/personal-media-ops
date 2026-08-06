@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from app.repositories.monitoring import MonitoringConflict, MonitoringRepository
 from app.repositories.research import ResearchTaskRepository
+from app.services.ai.intent_interpreter import build_default_intent
 from app.services.monitoring.attention import attention_for_change
 from app.services.monitoring.change_detection import (
     compare_baseline,
@@ -277,6 +278,18 @@ class MonitoringService:
             max_runtime_seconds=max(30, min(3_600, int(budget.get("max_runtime_seconds", 300)))),
             max_model_calls=max(0, min(20, int(budget.get("max_model_calls", 4)))),
             route_policy="balanced",
+        )
+        # ResearchTaskRepository.create intentionally stays a low-level
+        # storage primitive; normal API creation writes the understanding-card
+        # intent immediately afterwards. Monitoring must do the same before
+        # waking the Runtime, otherwise the task is treated as a legacy task
+        # and a valid broad monitoring goal can fail the legacy three-term
+        # planner gate before deterministic intent directions are available.
+        initial_intent = build_default_intent(str(mission["goal"]), selected_platforms)
+        self.research.save_intent(
+            str(research_task["id"]),
+            initial_intent.model_dump(mode="json"),
+            change_reason="monitoring_mission_understanding",
         )
         resource = {
             "source": "research_runtime",

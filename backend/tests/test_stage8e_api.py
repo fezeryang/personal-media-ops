@@ -76,6 +76,9 @@ def test_platform_run_uses_existing_research_runtime_bridge(client: TestClient) 
     from app.repositories.research import ResearchTaskRepository
 
     research = ResearchTaskRepository(client.app.state.settings.database_path)
+    queued_task = research.get_for_runtime(result["research_task_id"], detail=True)
+    assert queued_task is not None
+    assert queued_task["intent_contract"]["intent_source"] == "fallback_default"
     research.transition(
         result["research_task_id"],
         status="Done",
