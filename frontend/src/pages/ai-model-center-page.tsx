@@ -565,7 +565,7 @@ function PromptRegistryPanel() {
                     <p className="mt-1 text-sm text-muted">当前版本 <span className="font-semibold text-ink">{prompt.active_version}</span> · {promptEvalSummary(prompt)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {prompt.versions.filter((version) => version.status === "active" || version.status === "candidate").map((version) => <Button key={version.version} size="sm" variant="ghost" disabled={replay.isPending} onClick={() => replay.mutate({ promptKey: prompt.prompt_key, promptVersion: version.version })}>运行 Recorded Eval {version.version}</Button>)}
+                    {prompt.versions.filter((version) => version.status === "active" || version.status === "candidate").map((version) => <Button key={version.version} size="sm" variant="ghost" disabled={replay.isPending} onClick={() => replay.mutate({ promptKey: prompt.prompt_key, promptVersion: version.version })}>运行 {prompt.prompt_key} · Recorded Eval {version.version}</Button>)}
                     {candidate ? <Button size="sm" disabled={action.isPending} onClick={() => { if (window.confirm(`确认激活 ${prompt.prompt_key} ${candidate.version}？请先确认评测结果。`)) action.mutate({ promptKey: prompt.prompt_key, version: candidate.version, kind: "activate" }); }}>激活候选</Button> : null}
                     {prompt.versions.some((version) => version.status === "rollback") ? <Button size="sm" variant="secondary" disabled={action.isPending} onClick={() => { if (window.confirm(`确认回滚 ${prompt.prompt_key}？`)) action.mutate({ promptKey: prompt.prompt_key, kind: "rollback" }); }}>回滚</Button> : null}
                   </div>

@@ -326,7 +326,11 @@ describe("AiModelCenterPage", () => {
     expect(
       await screen.findByRole("heading", { name: "intent_interpreter" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "运行 Recorded Eval v2" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "运行 intent_interpreter · Recorded Eval v2",
+      }),
+    );
     await waitFor(() =>
       expect(replay).toHaveBeenCalledWith({
         promptKey: "intent_interpreter",

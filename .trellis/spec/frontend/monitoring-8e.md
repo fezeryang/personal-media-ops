@@ -32,7 +32,9 @@ creation is allowed.
 ## Prompt Governance Replay
 
 The AI Model Center's `Prompt 治理` panel may show the active and candidate
-versions and offer `运行 Recorded Eval <version>` for each. The action calls
+versions and offer `运行 <prompt_key> · Recorded Eval <version>` for each. The
+Prompt key is part of the visible button label because all nine role cards can
+contain the same version number. The action calls
 the bounded `/api/ai/evals/replay` contract and renders the returned run ID,
 case count, and status summary; it must not accept arbitrary recorded content
 or start a live model/platform task. Query data is invalidated after a
