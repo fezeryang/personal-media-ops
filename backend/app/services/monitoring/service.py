@@ -366,7 +366,12 @@ class MonitoringService:
                 )
                 reconciled += 1
                 continue
-            if status != "Done":
+            # A monitoring run consumes the persisted research result as soon
+            # as the Runtime has written its summary.  AwaitingReview is a
+            # valid result-ready state for the Research Center: it waits for
+            # owner review before the research task is marked Done, but a
+            # monitoring mission must not remain running behind that UI step.
+            if status not in {"Done", "AwaitingReview"}:
                 continue
             mission = self.repository.get_mission(owner_id, str(run["mission_id"]), detail=True)
             baseline = self.repository.latest_baseline(owner_id, str(run["mission_id"]))

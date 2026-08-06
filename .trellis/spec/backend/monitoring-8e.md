@@ -46,7 +46,10 @@ invocations plus query lineage columns on existing research queries.
 creates a baseline on first execution, and either compares local library
 content or links an existing Research Task. `reconcile_linked_runs()` is
 called by the existing Worker and persists terminal changes, memory updates,
-and notifications.
+and notifications. A linked Research Task in `AwaitingReview` is already
+result-ready for monitoring reconciliation; the Research Center may still
+wait for Owner review before changing that task to `Done`, but the monitoring
+run must not remain `running` behind that separate UI workflow.
 
 When the bridge creates a Research Task, it must persist the deterministic
 default Intent Contract before waking the Runtime. This keeps a broad
@@ -117,8 +120,9 @@ are required. Platform login/captcha remains an explicit `waiting_login` or
   counts, event fingerprint merging, memory update fields, notification
   deduplication, lock, pause/resume, and scheduled backoff.
 - API tests cover Owner/CSRF, two-step confirmation, CRUD, linked Research
-  Task reconciliation (including the initial Intent Contract), prompt
-  listing/eval replay, activation and rollback.
+  Task reconciliation in both `Done` and result-ready `AwaitingReview` states
+  (including the initial Intent Contract), prompt listing/eval replay,
+  activation and rollback.
 - Full backend regression and frontend lint/test/build are release gates.
 
 ## 7. Wrong vs Correct

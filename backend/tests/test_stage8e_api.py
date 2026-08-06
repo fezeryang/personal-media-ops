@@ -63,7 +63,11 @@ def test_monitoring_mission_two_step_flow_baseline_and_silent_repeat(
     assert resumed.json()["status"] == "active"
 
 
-def test_platform_run_uses_existing_research_runtime_bridge(client: TestClient) -> None:
+@pytest.mark.parametrize("research_status", ["Done", "AwaitingReview"])
+def test_platform_run_uses_existing_research_runtime_bridge(
+    client: TestClient,
+    research_status: str,
+) -> None:
     payload = {**_mission_payload(), "platforms": ["bili"], "confirmed": True}
     created = client.post("/api/monitoring/missions", json=payload)
     assert created.status_code == 201
@@ -85,9 +89,9 @@ def test_platform_run_uses_existing_research_runtime_bridge(client: TestClient) 
     assert queued_task["intent_contract"]["intent_source"] == "fallback_default"
     research.transition(
         result["research_task_id"],
-        status="Done",
-        reason="test_research_runtime_completed",
-        finished=True,
+        status=research_status,
+        reason=f"test_research_runtime_{research_status.casefold()}",
+        finished=research_status == "Done",
     )
     assert client.app.state.monitoring_service.reconcile_linked_runs() == 1
     runs = client.get(f"/api/monitoring/missions/{mission_id}/runs").json()
