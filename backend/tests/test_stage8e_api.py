@@ -33,6 +33,10 @@ def test_monitoring_mission_two_step_flow_baseline_and_silent_repeat(
     confirmed = client.post(f"/api/monitoring/missions/{mission_id}/confirm")
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "active"
+    listing = client.get("/api/monitoring/missions")
+    assert listing.status_code == 200
+    assert listing.json()[0]["id"] == mission_id
+    assert "targets" not in listing.json()[0]
 
     first = client.post(f"/api/monitoring/missions/{mission_id}/run")
     assert first.status_code == 200

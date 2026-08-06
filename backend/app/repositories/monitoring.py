@@ -87,6 +87,15 @@ class MonitoringRepository:
             (item["id"],),
         ).fetchall()
         item["targets"] = [dict(target) for target in targets]
+        if not detail:
+            for field in (
+                "importance_rule",
+                "ignored_content_rule",
+                "consecutive_failures",
+                "last_error",
+                "targets",
+            ):
+                item.pop(field, None)
         if detail:
             latest = connection.execute(
                 """

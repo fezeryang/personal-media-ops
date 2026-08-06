@@ -92,6 +92,7 @@ are required. Platform login/captcha remains an explicit `waiting_login` or
 | Concurrent run claim | SQLite `BEGIN IMMEDIATE` returns the existing active run; never create a duplicate. |
 | Platform task waiting for login | Keep mission durable; set run/mission waiting state and do not synthesize changes. |
 | Scheduled failure | Record run failure/backoff and keep the mission schedulable with bounded exponential backoff. |
+| Mission list response | Return only `MonitoringMissionSummary` fields; detail-only targets, rules, failure counters, and last error must not leak into the summary response because API models use `extra="forbid"`. |
 | Same fingerprint or repost in a later run | Merge/deduplicate; do not create a second notification. |
 | Low-confidence or no meaningful change | Store the comparison when useful, suppress notification according to attention policy. |
 | Prompt activation/rollback without Owner Session or CSRF | Reject before mutation. AI/runtime code cannot activate versions. |
