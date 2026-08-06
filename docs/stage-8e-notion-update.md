@@ -53,7 +53,8 @@ Personal Media Ops 现在把“持续关注一个目标”建模为 Monitoring M
 
 ## 当前生产验收记录（2026-08-06）
 
-- 生产运行版本：`7a721b5`。
+- 生产运行版本：`3faffc4`（完整 Commit：
+  `3faffc416577cc24f5710aa98065b3151b03fb7c`）。
 - 已验证三条 Owner 确认的 Monitoring Mission：个人 AI 工具、CodeBuddy、AI 工具负向反馈。
   最新运行均真实完成并返回 `no_meaningful_change`，变化和通知均为 0；系统没有把
   抓取数量或历史内容伪装成变化。
@@ -62,6 +63,11 @@ Personal Media Ops 现在把“持续关注一个目标”建模为 Monitoring M
 - 监控列表 HTTP 500、Intent Contract 缺失、负向反馈查询不足、以及 `AwaitingReview`
   导致监控运行卡住的四个真实缺陷都已修复并补了回归测试。当前“立即运行”位于
   监控任务详情页。
-- 真实高价值变化后的通知动作矩阵和生产 Candidate Eval 仍需 Owner 通过正常产品页面
-  确认后再验收；不得由系统自动创建长期监控或激活 Prompt。小红书验证码仍为
+- 生产 Prompt/Eval 闭环已完成：`intent_interpreter` v1 run
+  `4fc63934-ce6c-48e9-a42e-50d00ef20b14` 与 v2 run
+  `713cfada-4810-4bee-92ba-45269750e9e7` 各为 12 case / 2 passed /
+  10 not_instrumented / 0 failed；最后状态为 `v1 active / v2 candidate`，激活和
+  回滚已由 Owner 通过正常页面验证。Prompt 卡片现在包含 Prompt key，避免误点不同角色。
+- 本次真实数据没有产生高价值变化，因此没有伪造通知来验收已读、稍后、忽略、继续研究
+  或加入研究空间；通知与变化记录保持 0，待后续真实事件继续观察。小红书验证码仍为
   `blocked_by_platform`。
