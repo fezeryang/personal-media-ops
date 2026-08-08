@@ -11,8 +11,8 @@
 | 8E 生产基线 | `3faffc416577cc24f5710aa98065b3151b03fb7c` |
 | 当前 Prompt 基线 | `v1 active` / `v2 candidate` |
 | 8E 状态 | `completed_with_data_limitation`；没有真实高价值变化时保持 `no_meaningful_change` |
-| 8F Release Candidate | 待本地门禁后的发布 Commit 固定 |
-| 生产 Commit | 待部署后填入；只接受与 Release Candidate 相同的 Commit |
+| 8F Release Candidate | `194fd7fb013e2b603fdea56430146977773cf3ad`；已推送 `origin/main`，manifest 为 `.release/rc.env` |
+| 生产 Commit | `3faffc416577cc24f5710aa98065b3151b03fb7c`；8F 尚未进入生产 |
 
 8F 收敛到产品愿景中的 Action Assistant：Evidence → Signal → Opportunity → Validation → Action → Outcome → Memory。没有把旧订阅、创作者观察或抓取数量重新包装成机会产品，也没有增加新的一级导航。
 
@@ -28,8 +28,8 @@
 已验证：空库从 `0001` 升至 `0018_stage_8f`；已有测试数据库通过现有数据迁移测试；空库从 `0018_stage_8f` 降回 `0017_stage_8e`，8F 表被移除、`research_memory_items.research_task_id` 恢复非空。含 8F 数据时 downgrade 会拒绝，避免不可逆丢失。
 
 ```text
-backup_path_and_sha256: 待生产部署前由 reviewed release helper 填入
-database_integrity_check: 待生产部署后填入
+backup_path_and_sha256: 未创建；正式部署在 preflight 的 SSH 握手阶段失败，未进入 backup
+database_integrity_check: 未通过 SSH 读取；公网旧版本 `/api/health` 返回 200
 rollback_caution: 先保留 SQLite 备份；0018 含 8F 数据时不允许 downgrade，回滚优先恢复兼容代码或经确认的数据迁移方案。
 ```
 
@@ -145,12 +145,18 @@ scripts/test/local-gate.sh
 
 结果：`local_gate=passed`；后端 `459 passed`；前端 `32 passed files / 76 passed tests`；前端 lint、TypeScript/Vite build、Alembic blank upgrade/current-head、Shell/release-script checks、六张视觉截图均通过。`npm ci` 报告现有依赖审计为 `3 vulnerabilities (1 moderate, 2 high)`；本阶段未使用 `npm audit fix` 自动改依赖，避免超出 8F 范围，需作为后续依赖维护事项跟踪。
 
-Release Candidate 和 manifest 在本地门禁后生成，记录完整 Commit、迁移状态、上一生产 Commit、视觉证据、备份和回滚信息；部署只使用该 Commit。以下字段在部署后补齐：
+Release Candidate 和 manifest 在本地门禁后生成，记录完整 Commit、迁移状态、上一生产 Commit、视觉证据和回滚要求；部署只使用该 Commit。正式部署命令已按项目规则准备，但在 preflight 建立 SSH 会话前失败，未创建生产备份或改变生产状态：
 
 ```text
-release_candidate_status: pending
-release_commit: pending
+scripts/server/deploy.sh \
+  --target-ref 194fd7fb013e2b603fdea56430146977773cf3ad \
+  --release-candidate .release/rc.env \
+  --allow-migrations --execute
+
+release_candidate_status: passed
+release_commit: 194fd7fb013e2b603fdea56430146977773cf3ad
 previous_production_commit: 3faffc416577cc24f5710aa98065b3151b03fb7c
+production_deploy_result: deployment_transport_failed
 ```
 
 ## 14. 生产冒烟与业务验收计划
@@ -167,16 +173,18 @@ previous_production_commit: 3faffc416577cc24f5710aa98065b3151b03fb7c
 
 小红书验证码/登录限制继续单独标记 `blocked_by_platform`，不把平台数据限制描述成整个 8F 失败，也不伪造结果。
 
-## 15. 阶段状态（部署前冻结）
+本次部署前生产证据：公网 `https://ops.fezern8n.com/api/health` 返回 HTTP 200；公网 `/.mediaops-release` 返回旧 Commit `3faffc416577cc24f5710aa98065b3151b03fb7c`；旧生产 `/api/opportunities` 返回 HTTP 404。正式部署脚本和只读 SSH 检查均遇到 `kex_exchange_identification: Connection closed by remote host`，所以没有进行 8F 生产冒烟、真实 Opportunity 写入或用户产品验收。不会用旧版本结果冒充 8F 验收。
+
+## 15. 阶段状态（当前真实状态）
 
 ```text
 implementation_status: passed
 local_test_status: passed
 local_visual_status: passed
-release_candidate_status: pending
-deployment_status: pending
-production_smoke_status: pending
-production_business_status: pending
+release_candidate_status: passed
+deployment_status: deployment_transport_failed
+production_smoke_status: not_run_deployment_transport
+production_business_status: pending_deployment_transport
 user_product_review_status: awaiting_user_review
 ```
 
@@ -185,8 +193,8 @@ database_changed: yes
 backend_changed: yes
 frontend_changed: yes
 worker_changed: no (复用现有 Research Runtime/队列；新增 Follow-up 通过既有 Runtime)
-deployment_changed: yes (0018 migration + API/frontend release)
-remaining_work: 固定并 push RC，生产部署/冒烟，按真实数据执行不伪造的 Opportunity 验收，补齐备份和最终状态。
+deployment_changed: attempted, not activated (0018 migration + API/frontend release remain pending)
+remaining_work: 恢复生产 SSH 握手后，使用同一 RC 执行备份、迁移、激活、冒烟和真实数据验收；不重复本地实现。
 user_action_required: 仅在生产出现真实 Owner 确认或平台验证码时；普通工程步骤不要求用户协调。
 ```
 
@@ -199,11 +207,11 @@ user_action_required: 仅在生产出现真实 Owner 确认或平台验证码时
 ## 17. 最终补充项
 
 ```text
-production_backup_path_and_sha256: 待部署 helper 输出
-production_commit: 待部署
-deployment_transport_status: 待部署；若发生 SSH banner/握手/超时，只记 deployment_transport_failed 并检查 marker 后恢复
-production_smoke: 待部署
-production_business: 待部署；允许 no_opportunity_identified / completed_with_data_limitation
+production_backup_path_and_sha256: 未生成（部署未越过 SSH preflight）
+production_commit: 3faffc416577cc24f5710aa98065b3151b03fb7c（8F 未部署）
+deployment_transport_status: deployment_transport_failed；SSH 在密钥交换前被远端关闭；未发现可检查的 8F marker
+production_smoke: 未执行 8F 冒烟；公网旧版本 health=200
+production_business: pending_deployment_transport；不得把旧版 8E 数据当作 8F 结果
 user_product_review: awaiting_user_review
-final_report_commit: 待部署后的文档更新提交
+final_report_commit: 本次文档更新待提交；生产代码 Commit 仍为上述 Release Candidate
 ```

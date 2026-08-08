@@ -55,3 +55,7 @@ Outcome 会形成可追溯的长期记忆更新：旧判断不被静默覆盖，
 ## 8F 之后
 
 8F 是当前预定义路线的最后一个阶段。接下来不自动创建 8G/8H，也不继续扩张基础设施。需要先观察：Research 是否带来新认知、Monitoring 是否减少主动搜索、Opportunity 是否帮助找到值得验证的方向、Validation 是否促成行动，以及 Outcome 是否让长期记忆越来越有用。
+
+## 当前发布状态
+
+本地 8F Release Candidate `194fd7fb013e2b603fdea56430146977773cf3ad` 已通过完整门禁并推送。生产仍运行 8E Commit `3faffc416577cc24f5710aa98065b3151b03fb7c`；正式部署在 SSH 密钥交换阶段被远端关闭，状态记录为 `deployment_transport_failed`。未执行生产迁移，也未伪造生产 Opportunity、Validation、Action 或 Outcome。恢复 SSH 后，应继续使用同一 Release Candidate 完成备份、迁移、冒烟和真实数据验收。
