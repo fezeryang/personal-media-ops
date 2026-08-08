@@ -799,3 +799,37 @@ Completed Stage 8E core AI governance and Monitoring Mission loop. Production RC
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Stage 8F Opportunity and Action implementation
+
+**Date**: 2026-08-08
+**Task**: Stage 8F Opportunity and Action implementation
+**Branch**: `main`
+
+### Summary
+
+Implemented evidence-bound Opportunity Signal/Candidate, Evidence Pack, Readiness, Validation Plan, Content Opportunity, owner-approved Action, Outcome to Memory, frontend integration, fixtures, tests, migration, and local release gate. Pushed RC 194fd7f. Production deployment was fail-closed at SSH key exchange (deployment_transport_failed); production remains 3faffc4 and task stays in_progress for resumable deployment, smoke, and real-data acceptance.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `194fd7f` | (see git log) |
+| `5d39d3b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
