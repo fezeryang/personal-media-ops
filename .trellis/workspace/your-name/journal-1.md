@@ -833,3 +833,38 @@ Implemented evidence-bound Opportunity Signal/Candidate, Evidence Pack, Readines
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Stage 8F production acceptance and archive
+
+**Date**: 2026-08-08
+**Task**: Stage 8F production acceptance and archive
+**Branch**: `main`
+
+### Summary
+
+Restored SSH, regenerated RC b75215d, deployed Stage 8F with backup /var/backups/mediaops/20260808T091409Z (SHA-256 1d5fcf057a0af78839a3e0d05b611620dbade455aa3422a5ff0864ca50c3257b), migrated Alembic 0018_stage_8f, verified services, database integrity/head, zero active research/crawler/monitoring runs, and public routes. User completed Owner browser product review. No production Opportunity or Signal existed, so business acceptance is completed_with_data_limitation without synthetic data. Archived task 08-08-stage-8f; no 8G/8H created.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `194fd7f` | (see git log) |
+| `b75215d` | (see git log) |
+| `543e23e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
