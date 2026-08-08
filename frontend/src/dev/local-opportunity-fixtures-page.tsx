@@ -11,7 +11,7 @@ export function LocalOpportunityFixturesPage() {
       <div className="mx-auto max-w-7xl">
         <header className="rounded-3xl bg-[#184b4b] p-7 text-white shadow-sm sm:p-10">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9de1d2]">Local-only opportunity harness</p>
-          <h1 className="mt-3 font-display text-3xl font-semibold sm:text-4xl">8F Opportunity &amp; Action</h1>
+          <h1 className="mt-3 font-display text-3xl font-semibold sm:text-4xl">机会与行动</h1>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-[#d9f2ec]">
             证据 → 信号 → 机会 → 验证 → 行动 → Outcome → 记忆。所有状态来自本地 fixture，不调用模型、爬虫或生产 API。
           </p>

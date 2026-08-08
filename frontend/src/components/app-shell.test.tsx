@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 
@@ -39,7 +39,11 @@ vi.mock("../features/research/hooks/use-discovery-queries", () => ({
 import { AppShell } from "./app-shell";
 
 describe("AppShell", () => {
-  it("keeps all intelligence navigation reachable at 390px and logs out", async () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("uses an accessible mobile navigation drawer instead of a horizontal rail", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 390,
@@ -55,18 +59,40 @@ describe("AppShell", () => {
       </MemoryRouter>,
     );
 
-    const mobile = screen.getByRole("navigation", {
-      name: "移动端主导航",
-    });
-    expect(mobile).toHaveClass("overflow-x-auto");
-    expect(mobile.querySelectorAll("a")).toHaveLength(7);
+    expect(screen.getByRole("button", { name: "打开导航菜单" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(container).toHaveTextContent("发现收件箱");
     expect(container).toHaveTextContent("记忆与证据");
     expect(container).toHaveTextContent("监控任务");
     expect(container).toHaveTextContent("AI 研究");
     expect(container).not.toHaveTextContent("今日情报");
     expect(container).not.toHaveTextContent("AI 模型中心");
+    await user.click(screen.getByRole("button", { name: "打开导航菜单" }));
+    const drawer = screen.getByRole("dialog");
+    expect(within(drawer).getByRole("navigation", { name: "移动端主导航" })).toBeInTheDocument();
+    expect(within(drawer).getAllByRole("link")).toHaveLength(7);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(mocks.logout).toHaveBeenCalledOnce();
+  });
+
+  it("persists the desktop sidebar collapse state", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route index element={<p>content</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const collapse = screen.getByRole("button", { name: "收起侧栏" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    await user.click(collapse);
+    expect(screen.getByRole("button", { name: "展开侧栏" })).toHaveAttribute("aria-expanded", "false");
+    expect(window.localStorage.getItem("mediaops.sidebar.collapsed")).toBe("true");
   });
 });

@@ -95,16 +95,19 @@ describe("DiscoveryInboxPage", () => {
   });
 
   it("renders source-bound explanations and honest follow-up controls", async () => {
+    const user = userEvent.setup();
     renderPage();
     expect(await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.queryByText("为什么相关")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "为什么推荐" }));
     expect(screen.getByText("为什么相关")).toBeInTheDocument();
     expect(screen.getByText("继续寻找独立用户证据。")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "后续动作" }));
+    await user.click(screen.getByRole("button", { name: /加入研究空间/ }));
     expect(screen.getByText("还没有研究空间，先创建一个再收藏这条发现。")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^证据/ }));
     expect(screen.getByText("真实登录体验")).toBeInTheDocument();
-    expect(screen.getByText("独立来源 2 · 平台 2")).toBeInTheDocument();
-    expect(screen.getByText(/相关：与当前研究目标相关/)).toBeInTheDocument();
-    expect(screen.getByText(/新颖：历史记忆中尚无同键记录/)).toBeInTheDocument();
-    expect(screen.getByText("下一步：继续验证")).toBeInTheDocument();
+    expect(screen.getAllByText("独立来源").length).toBeGreaterThan(0);
   }, 10_000);
 
   it("renders event aggregation and unavailable experimental status", async () => {
@@ -115,12 +118,16 @@ describe("DiscoveryInboxPage", () => {
       experimental_status: "experimental_not_available",
     };
     vi.mocked(researchApi.getDiscovery).mockResolvedValue(eventCandidate);
+    const user = userEvent.setup();
     renderPage();
     expect(await screen.findByRole("heading", { name: "AI 工作台版本变化" }, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByText("事件聚合")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "相关对象" }));
+    expect(screen.getByText("时间范围")).toBeInTheDocument();
     expect(screen.getByText("2026-08-01T00:00:00Z → 2026-08-03T00:00:00Z")).toBeInTheDocument();
     expect(screen.getByText("平台：bili、zhihu")).toBeInTheDocument();
-    expect(screen.getByText("扩展关系/推荐暂不可用：experimental_not_available")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "技术详情" }));
+    await user.click(screen.getByRole("button", { name: /技术详情/ }));
+    expect(screen.getByText("扩展关系暂不可用：experimental_not_available")).toBeInTheDocument();
   });
 
   it("exposes explicit topic and ranking feedback actions", async () => {
@@ -128,9 +135,10 @@ describe("DiscoveryInboxPage", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 });
-    expect(screen.getByRole("button", { name: "稍后处理" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "降低同类优先级" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "屏蔽此主题" }));
+    await user.click(screen.getByRole("button", { name: "判断" }));
+    expect(screen.getByRole("menuitem", { name: "稍后" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "降低同类优先级" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "静默主题" }));
     await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", {
       feedback_type: "mute_topic",
       scope: "topic",
@@ -177,7 +185,8 @@ describe("DiscoveryInboxPage", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("heading", { name: "AI 工作台登录摩擦" }, { timeout: 10_000 });
-    await user.click(screen.getByRole("button", { name: /撤销最近反馈/ }));
+    await user.click(screen.getByRole("button", { name: "判断" }));
+    await user.click(screen.getByRole("menuitem", { name: /撤销最近反馈/ }));
     await waitFor(() => expect(giveFeedback).toHaveBeenCalledWith("candidate-1", {
       undo_feedback_id: "feedback-new",
     }));

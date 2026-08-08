@@ -28,11 +28,11 @@ export function LocalFixturesPage() {
             Local-only fixture harness
           </p>
           <h1 className="mt-3 font-display text-3xl font-semibold sm:text-4xl">
-            8E AI 行为与主动监控状态覆盖
+            AI 研究与监控状态覆盖
           </h1>
           <p className="mt-4 max-w-3xl text-sm leading-7 text-[#d9f2ec]">
             这是脱敏 Recorded Response 的本地产品验证入口。它不调用真实模型、爬虫或生产
-            API，也不代表生产业务已经验收。8D 研究、发现、记忆状态与 8E 监控变化共用同一条产品路径。
+            API，也不代表生产业务已经验收。研究、发现、记忆状态与监控变化共用同一条产品路径。
           </p>
         </header>
 
@@ -62,8 +62,8 @@ export function LocalFixturesPage() {
               <h3 id="mission-list-heading" className="mt-2 text-xl font-semibold">监控任务列表</h3>
               <div className="mt-4 space-y-3">
                 <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">个人 AI 工具变化</p><span className="rounded-full bg-cyan-100 px-2 py-1 text-xs font-semibold text-cyan-800">运行中</span></div><p className="mt-2 text-sm text-muted">每日 · 最近运行 2 分钟前 · 研究 Runtime 已排队</p></div>
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">Codex 功能变化</p><span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">无变化</span></div><p className="mt-2 text-sm text-muted">no_meaningful_change · 已知内容被静默</p></div>
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">小红书负向反馈</p><span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">等待登录</span></div><p className="mt-2 text-sm text-muted">waiting_login · 不生成合成变化</p></div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">Codex 功能变化</p><span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">无变化</span></div><p className="mt-2 text-sm text-muted">最近没有显著变化 · 已知内容被静默</p></div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex items-center justify-between gap-3"><p className="font-semibold">小红书负向反馈</p><span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">等待登录</span></div><p className="mt-2 text-sm text-muted">平台登录受限 · 不生成合成变化</p></div>
               </div>
             </article>
           </div>
@@ -102,7 +102,7 @@ export function LocalFixturesPage() {
         <section className="mt-8" aria-labelledby="opportunity-heading">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <p className="section-kicker">Opportunity & Action · local states</p>
+            <p className="section-kicker">机会与行动 · 本地状态</p>
               <h2 id="opportunity-heading" className="mt-2 text-2xl font-semibold">证据 → 信号 → 机会 → 验证 → 行动 → Outcome → 记忆</h2>
             </div>
             <span className="rounded-full bg-[#e6f4ef] px-3 py-1 text-xs font-semibold text-[#126d69]">no fabricated business result</span>

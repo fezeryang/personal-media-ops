@@ -9,11 +9,10 @@ import {
   RotateCcw,
   Search,
   Send,
-  Sparkles,
   Square,
 } from "lucide-react";
 import DOMPurify from "dompurify";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import type { CrawlerPlatformCapability } from "../api/crawler";
@@ -26,10 +25,16 @@ import type {
 } from "../api/research";
 import { ErrorState } from "../components/error-state";
 import { PageHeader } from "../components/page-header";
+import { ActionMenu } from "../components/ui/action-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "../components/ui/alert-dialog";
+import { CollapsibleSection } from "../components/ui/collapsible-section";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader } from "../components/ui/card";
+import { FilterBar } from "../components/ui/filter-bar";
 import { Input } from "../components/ui/input";
+import { MasterDetailLayout } from "../components/ui/master-detail-layout";
+import { SegmentedTabs } from "../components/ui/segmented-tabs";
 import { useCrawlerCapabilitiesQuery } from "../features/crawler/hooks/use-crawler-queries";
 import { modeCapabilityStatusLabel } from "../features/crawler/lib/task";
 import { useOpportunitiesQuery } from "../features/opportunity/hooks/use-opportunity-queries";
@@ -377,9 +382,29 @@ export function ResearchTasksPage() {
   const opportunities = useOpportunitiesQuery();
   const [selectedId, setSelectedId] = useState("");
   const [showCreate, setShowCreate] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sort, setSort] = useState("updated");
+  const filteredTasks = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return [...(tasks.data ?? [])]
+      .filter((task) => !needle || task.objective.toLowerCase().includes(needle))
+      .filter((task) => {
+        if (statusFilter === "running") return ["Planning", "Researching", "WaitingCrawl", "WaitingLogin", "Summarizing"].includes(task.status);
+        if (statusFilter === "review") return task.status === "AwaitingReview" || task.action_count > 0;
+        if (statusFilter === "done") return task.status === "Done";
+        if (statusFilter === "failed") return ["Failed", "BudgetExceeded", "Cancelled"].includes(task.status);
+        return true;
+      })
+      .sort((left, right) => {
+        if (sort === "created") return right.created_at.localeCompare(left.created_at);
+        if (sort === "status") return statusLabels[left.status].localeCompare(statusLabels[right.status], "zh-CN");
+        return right.updated_at.localeCompare(left.updated_at);
+      });
+  }, [search, sort, statusFilter, tasks.data]);
   const effectiveSelectedId = selectedId && tasks.data?.some((task) => task.id === selectedId)
     ? selectedId
-    : tasks.data?.[0]?.id || "";
+    : filteredTasks[0]?.id || tasks.data?.[0]?.id || "";
   const detail = useResearchTaskQuery(effectiveSelectedId);
   const create = useCreateResearchTaskMutation();
 
@@ -393,11 +418,10 @@ export function ResearchTasksPage() {
   }
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-5">
       <PageHeader
-        eyebrow="AI Research Workbench · 8D"
-        title="AI 研究工作台"
-        description="从一个问题开始：AI 先说明它理解了什么，再在预算和来源边界内研究，把证据、发现、反馈和长期记忆连成可继续推进的上下文。"
+        title="AI 研究"
+        description="从一个问题开始，AI 会先说明理解，再在来源与预算边界内推进。"
         action={
           <Button variant="secondary" onClick={() => setShowCreate((value) => !value)}>
             <Plus className="size-4" /> {showCreate ? "收起目标输入" : "开始新的研究"}
@@ -405,9 +429,9 @@ export function ResearchTasksPage() {
         }
       />
 
-      <ResearchFlow />
-
-      <WorkbenchOpportunityPulse opportunities={opportunities.data ?? []} pending={opportunities.isPending} error={opportunities.error} />
+      <CollapsibleSection title="研究是如何工作的？" description="查看从问题理解到证据和发现的完整路径">
+        <ResearchFlow />
+      </CollapsibleSection>
 
       <ResearchHomePulse
         tasks={tasks.data ?? []}
@@ -415,6 +439,10 @@ export function ResearchTasksPage() {
         discoveriesPending={discoveries.isPending}
         discoveriesError={discoveries.error}
         onRetryDiscoveries={() => void discoveries.refetch()}
+        opportunities={opportunities.data ?? []}
+        opportunitiesPending={opportunities.isPending}
+        opportunitiesError={opportunities.error}
+        onTaskSelect={setSelectedId}
       />
 
       {showCreate ? (
@@ -431,22 +459,26 @@ export function ResearchTasksPage() {
 
       {tasks.isError ? <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} /> : null}
       {!tasks.isError ? (
-        <section className="grid gap-5 xl:grid-cols-[330px_minmax(0,1fr)]">
-          <TaskList tasks={tasks.data ?? []} selectedId={effectiveSelectedId} loading={tasks.isPending} onSelect={setSelectedId} />
-          {detail.isError ? <ErrorState error={detail.error} onRetry={() => void detail.refetch()} /> : detail.data ? <TaskDetail task={detail.data} /> : <EmptyDetail />}
-        </section>
+        <>
+          <FilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="搜索研究目标"
+            resultCount={filteredTasks.length}
+            filters={<label className="flex items-center gap-2 text-sm"><span className="text-xs text-muted">状态</span><select className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value)} aria-label="研究任务状态"><option value="all">全部</option><option value="running">运行中</option><option value="review">待确认</option><option value="done">已完成</option><option value="failed">失败或受限</option></select></label>}
+            sort={<label className="flex items-center gap-2 text-sm"><span className="text-xs text-muted">排序</span><select className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={sort} onChange={(event) => setSort(event.currentTarget.value)} aria-label="研究任务排序"><option value="updated">最近更新</option><option value="created">最近创建</option><option value="status">状态</option></select></label>}
+            chips={[...(statusFilter !== "all" ? [{ label: `状态：${statusFilter === "running" ? "运行中" : statusFilter === "review" ? "待确认" : statusFilter === "done" ? "已完成" : "失败或受限"}`, onRemove: () => setStatusFilter("all") }] : []), ...(sort !== "updated" ? [{ label: `排序：${sort === "created" ? "最近创建" : "状态"}`, onRemove: () => setSort("updated") }] : [])]}
+            onClear={() => { setSearch(""); setStatusFilter("all"); setSort("updated"); }}
+          />
+          <MasterDetailLayout
+            listLabel="研究任务列表"
+            storageKey="mediaops.master-detail.research.collapsed"
+            list={<TaskList tasks={filteredTasks} selectedId={effectiveSelectedId} loading={tasks.isPending} onSelect={setSelectedId} />}
+            detail={detail.isError ? <ErrorState error={detail.error} onRetry={() => void detail.refetch()} /> : detail.data ? <TaskDetail task={detail.data} /> : <EmptyDetail />}
+          />
+        </>
       ) : null}
     </div>
-  );
-}
-
-function WorkbenchOpportunityPulse({ opportunities, pending, error }: { opportunities: OpportunitySummary[]; pending: boolean; error: unknown }) {
-  const top = opportunities.slice(0, 3);
-  return (
-    <section aria-label="行动中枢摘要" className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">Action Assistant · 8F</p><h2 className="mt-1 font-display text-2xl font-semibold">值得行动的机会</h2><p className="mt-1 text-sm text-muted">从有证据的信号开始，先判断，再验证。</p></div><Button asChild variant="secondary"><Link to="/opportunities">查看全部机会 <ArrowRight className="size-4" /></Link></Button></div>
-      {error ? <p className="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-muted">机会摘要暂时不可用；研究流程仍可继续。</p> : pending ? <div className="grid gap-3 md:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-32 animate-pulse rounded-2xl bg-paper" />)}</div> : top.length ? <div className="grid gap-3 md:grid-cols-3">{top.map((opportunity) => <Link key={opportunity.id} to={`/opportunities/${encodeURIComponent(opportunity.id)}`} className="rounded-2xl border border-line bg-white p-4 transition hover:border-signal/35 hover:shadow-sm"><div className="flex items-center justify-between gap-2"><Badge variant="info">{opportunityTypeLabel(opportunity.opportunity_type)}</Badge><span className="text-xs text-muted">{readinessLabel(opportunity.readiness)}</span></div><p className="mt-3 line-clamp-2 text-sm font-semibold">{opportunity.title}</p><p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{opportunity.next_step}</p></Link>)}</div> : <Card><CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm text-muted"><Sparkles className="size-4 text-signal" />目前还没有足够证据形成机会。先完成研究或处理发现，AI会保留“没有机会”的结果。</CardContent></Card>}
-    </section>
   );
 }
 
@@ -464,66 +496,43 @@ function ResearchHomePulse({
   discoveriesPending,
   discoveriesError,
   onRetryDiscoveries,
+  opportunities,
+  opportunitiesPending,
+  opportunitiesError,
+  onTaskSelect,
 }: {
   tasks: ResearchTaskSummary[];
   discoveries: DiscoveryInboxItem[];
   discoveriesPending: boolean;
   discoveriesError: unknown;
   onRetryDiscoveries: () => void;
+  opportunities: OpportunitySummary[];
+  opportunitiesPending: boolean;
+  opportunitiesError: unknown;
+  onTaskSelect: (id: string) => void;
 }) {
   const recentTasks = tasks.slice(0, 3);
   const reviewTasks = tasks.filter(
     (task) => task.status === "AwaitingReview" || task.action_count > 0,
   ).slice(0, 3);
   const pendingDiscoveries = discoveries.slice(0, 3);
+  const topOpportunities = opportunities.slice(0, 3);
   return (
-    <section className="grid gap-4 lg:grid-cols-3" aria-label="研究首页摘要">
-      <Card>
-        <CardHeader>
-          <p className="section-kicker">Recent research</p>
-          <h2 className="mt-1 font-display text-xl font-semibold">最近研究</h2>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {recentTasks.length === 0 ? <p className="text-sm text-muted">暂无最近研究</p> : recentTasks.map((task) => (
-            <div key={task.id} className="rounded-xl bg-paper p-3">
-              <p className="line-clamp-2 text-sm font-semibold">{task.objective}</p>
-              <p className="mt-1 text-xs text-muted">{statusLabels[task.status]} · {researchStepLabel(task.current_step)}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <p className="section-kicker">Discovery inbox</p>
-          <h2 className="mt-1 font-display text-xl font-semibold">待处理发现</h2>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {discoveriesError ? <ErrorState title="待处理发现加载失败" error={discoveriesError} onRetry={onRetryDiscoveries} /> : discoveriesPending ? <p className="text-sm text-muted">正在加载待处理发现…</p> : pendingDiscoveries.length === 0 ? <p className="text-sm text-muted">暂无待处理发现</p> : pendingDiscoveries.map((candidate) => (
-            <Link key={candidate.id} to={candidate.source_type === "monitoring" && candidate.mission_id ? `/monitoring/${encodeURIComponent(candidate.mission_id)}` : `/discoveries/${encodeURIComponent(candidate.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5">
-              <p className="line-clamp-2 text-sm font-semibold">{candidate.title}</p>
-              <p className="mt-1 text-xs text-muted">{candidate.source_type === "monitoring" ? "监控变化" : discoveryTypeLabel(candidate.candidate_type)} · {Math.round(candidate.final_score * 100)} 分</p>
-            </Link>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <p className="section-kicker">Owner decisions</p>
-          <h2 className="mt-1 font-display text-xl font-semibold">需要用户确认</h2>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {reviewTasks.length === 0 ? <p className="text-sm text-muted">暂无待确认事项</p> : reviewTasks.map((task) => (
-            <div key={task.id} className="rounded-xl border border-warning/20 bg-warning/5 p-3">
-              <p className="line-clamp-2 text-sm font-semibold">{task.objective}</p>
-              <p className="mt-1 text-xs text-muted">{task.action_count > 0 ? `${task.action_count} 项动作待确认` : "研究结果待确认"}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </section>
+    <Card aria-label="研究首页摘要">
+      <CardHeader className="flex flex-wrap items-start justify-between gap-3"><div><p className="section-kicker">今天先看</p><h2 className="mt-1 font-display text-xl font-semibold">研究焦点</h2><p className="mt-1 text-sm text-muted">只显示当前需要你判断或继续推进的内容。</p></div><Button asChild variant="secondary"><Link to="/opportunities">查看机会 <ArrowRight className="size-4" /></Link></Button></CardHeader>
+      <CardContent className="grid gap-4 pt-2 md:grid-cols-3">
+        {recentTasks.length > 0 ? <FocusGroup title="正在进行" count={recentTasks.length}>{recentTasks.map((task) => <button key={task.id} type="button" onClick={() => onTaskSelect(task.id)} className="block w-full rounded-xl bg-paper p-3 text-left hover:bg-signal/5"><p className="line-clamp-2 text-sm font-semibold">{task.objective}</p><p className="mt-1 text-xs text-muted">{statusLabels[task.status]} · {researchStepLabel(task.current_step)}</p></button>)}</FocusGroup> : null}
+        {reviewTasks.length > 0 ? <FocusGroup title="待确认" count={reviewTasks.length}>{reviewTasks.map((task) => <button key={task.id} type="button" onClick={() => onTaskSelect(task.id)} className="block w-full rounded-xl border border-warning/20 bg-warning/5 p-3 text-left hover:border-warning/40"><p className="line-clamp-2 text-sm font-semibold">{task.objective}</p><p className="mt-1 text-xs text-muted">{task.action_count > 0 ? `${task.action_count} 项动作待确认` : "研究结果待确认"}</p></button>)}</FocusGroup> : null}
+        {discoveriesError ? <FocusGroup title="待处理发现"><ErrorState title="待处理发现加载失败" error={discoveriesError} onRetry={onRetryDiscoveries} /></FocusGroup> : discoveriesPending ? <FocusGroup title="待处理发现"><p className="text-sm text-muted">正在加载…</p></FocusGroup> : pendingDiscoveries.length > 0 ? <FocusGroup title="待处理发现" count={pendingDiscoveries.length}>{pendingDiscoveries.map((candidate) => <Link key={candidate.id} to={candidate.source_type === "monitoring" && candidate.mission_id ? `/monitoring/${encodeURIComponent(candidate.mission_id)}` : `/discoveries/${encodeURIComponent(candidate.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5"><p className="line-clamp-2 text-sm font-semibold">{candidate.title}</p><p className="mt-1 text-xs text-muted">{candidate.source_type === "monitoring" ? "监控变化" : discoveryTypeLabel(candidate.candidate_type)} · 值得判断</p></Link>)}</FocusGroup> : null}
+        {opportunitiesError ? <FocusGroup title="重要机会"><p className="text-sm text-danger">机会摘要加载失败。</p></FocusGroup> : opportunitiesPending ? <FocusGroup title="重要机会"><p className="text-sm text-muted">正在加载…</p></FocusGroup> : topOpportunities.length > 0 ? <FocusGroup title="重要机会" count={topOpportunities.length}>{topOpportunities.map((opportunity) => <Link key={opportunity.id} to={`/opportunities/${encodeURIComponent(opportunity.id)}`} className="block rounded-xl bg-paper p-3 hover:bg-signal/5"><div className="flex items-center justify-between gap-2"><Badge variant="info">{opportunityTypeLabel(opportunity.opportunity_type)}</Badge><span className="text-xs text-muted">{readinessLabel(opportunity.readiness)}</span></div><p className="mt-2 line-clamp-2 text-sm font-semibold">{opportunity.title}</p></Link>)}</FocusGroup> : null}
+        {recentTasks.length === 0 && pendingDiscoveries.length === 0 && reviewTasks.length === 0 && topOpportunities.length === 0 && !discoveriesPending && !opportunitiesPending ? <FocusGroup title="当前没有待处理事项"><p className="text-sm text-muted">创建一个研究目标后，进展、发现和机会会在这里汇总。</p></FocusGroup> : null}
+      </CardContent>
+    </Card>
   );
+}
+
+function FocusGroup({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+  return <section className="min-w-0 space-y-2"><div className="flex items-center gap-2"><h3 className="text-sm font-semibold">{title}</h3>{count !== undefined ? <span className="text-xs text-muted">{count}</span> : null}</div>{children}</section>;
 }
 
 function ResearchFlow() {
@@ -643,7 +652,7 @@ function ResearchCreateForm({
   return (
     <Card>
       <CardHeader>
-        <p className="section-kicker">Natural language research</p>
+        <p className="section-kicker">自然语言研究</p>
         <h2 className="mt-1 font-display text-xl font-semibold">先说你想知道什么</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">不需要先填写产品名、关键词或竞争对象。提交后会先生成研究理解卡，你可以检查 AI 的假设，再观察执行查询和信息价值。</p>
       </CardHeader>
@@ -745,7 +754,7 @@ function ResearchIntentPreview({ objective, platforms, budget, supplement, onSup
   const intent = previewIntent(objective);
   return <div role="region" className="rounded-2xl border border-signal/25 bg-signal/[0.04] p-4" aria-label="研究理解预览">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="section-kicker">Step 02 · Intent preview</p><h3 className="mt-1 font-display text-lg font-semibold">先确认研究理解</h3></div>
+      <div><p className="section-kicker">研究理解预览</p><h3 className="mt-1 font-display text-lg font-semibold">先确认研究理解</h3></div>
       <Badge variant="info">{intent.primary}</Badge>
     </div>
     <p className="mt-3 text-sm leading-6">“{objective.trim()}”</p>
@@ -784,7 +793,7 @@ function BudgetField({ label, value, onChange }: { label: string; value: number;
 function TaskList({ tasks, selectedId, loading, onSelect }: { tasks: ResearchTaskSummary[]; selectedId: string; loading: boolean; onSelect: (id: string) => void }) {
   return (
     <Card className="h-fit overflow-hidden">
-      <CardHeader className="border-b border-line pb-4"><p className="section-kicker">Task queue</p><h2 className="mt-1 font-display text-xl font-semibold">研究任务</h2></CardHeader>
+      <CardHeader className="border-b border-line pb-4"><p className="section-kicker">任务列表</p><h2 className="mt-1 font-display text-xl font-semibold">研究任务</h2></CardHeader>
       <CardContent className="space-y-2 p-3">
         {loading ? Array.from({ length: 3 }, (_, index) => <div key={index} className="h-20 animate-pulse rounded-xl bg-paper" />) : null}
         {!loading && tasks.length === 0 ? <p className="rounded-xl bg-paper p-5 text-sm text-muted">还没有研究任务，先创建一个目标。</p> : null}
@@ -805,6 +814,7 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
   const complete = useCompleteResearchTaskMutation();
   const decide = useDecideResearchActionMutation();
   const reviseIntent = useReviseResearchIntentMutation();
+  const [cancelOpen, setCancelOpen] = useState(false);
   const busy = pause.isPending || resume.isPending || cancel.isPending || rerun.isPending || complete.isPending || decide.isPending || reviseIntent.isPending;
   const isTerminal = ["Done", "Failed", "Cancelled"].includes(task.status);
   const [activeTab, setActiveTab] = useState<"overview" | "process" | "discovery" | "evidence" | "queries" | "budget" | "technical">("overview");
@@ -820,14 +830,14 @@ function TaskDetail({ task }: { task: ResearchTaskDetail }) {
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader className="border-b border-line pb-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><p className="section-kicker">Research dossier</p><h2 className="mt-1 break-words font-display text-2xl font-semibold">{task.objective}</h2></div><Badge variant={statusVariant[task.status]}>{statusLabels[task.status]}</Badge></div><div className="mt-5 flex flex-wrap gap-2">{!isTerminal && !task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => pause.mutate(task.id)}><CirclePause className="size-4" />暂停</Button> : null}{!isTerminal && task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => resume.mutate(task.id)}><CirclePlay className="size-4" />继续</Button> : null}{task.status === "AwaitingReview" ? <><Button size="sm" disabled={busy} onClick={() => complete.mutate(task.id)}><Check className="size-4" />确认完成</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => rerun.mutate(task.id)}><RotateCcw className="size-4" />重新研究</Button></> : null}{!isTerminal ? <Button variant="danger" size="sm" disabled={busy} onClick={() => cancel.mutate(task.id)}><Square className="size-3.5" />取消任务</Button> : null}</div></CardHeader>
+        <CardHeader className="border-b border-line pb-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><p className="section-kicker">研究详情</p><h2 className="mt-1 break-words font-display text-2xl font-semibold">{task.objective}</h2></div><Badge variant={statusVariant[task.status]}>{statusLabels[task.status]}</Badge></div><div className="mt-5 flex flex-wrap gap-2">{!isTerminal && !task.paused ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => pause.mutate(task.id)}><CirclePause className="size-4" />暂停</Button> : null}{!isTerminal && task.paused ? <Button size="sm" disabled={busy} onClick={() => resume.mutate(task.id)}><CirclePlay className="size-4" />继续</Button> : null}{task.status === "AwaitingReview" ? <Button size="sm" disabled={busy} onClick={() => complete.mutate(task.id)}><Check className="size-4" />确认完成</Button> : null}<ActionMenu label="更多" items={[...(task.status === "AwaitingReview" ? [{ label: "重新研究", onSelect: () => rerun.mutate(task.id), icon: <RotateCcw className="size-4" />, disabled: busy }] : []), ...(!isTerminal && !task.paused ? [{ label: "暂停研究", onSelect: () => pause.mutate(task.id), icon: <CirclePause className="size-4" />, disabled: busy }] : []), ...(!isTerminal && task.paused ? [{ label: "继续研究", onSelect: () => resume.mutate(task.id), icon: <CirclePlay className="size-4" />, disabled: busy }] : []), ...(!isTerminal ? [{ label: "取消任务", onSelect: () => setCancelOpen(true), icon: <Square className="size-3.5" />, tone: "danger" as const, disabled: busy }] : [])]} /></div></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Metric label="阶段" value={researchStepLabel(task.current_step)} /><Metric label="研究轮次" value={`第 ${task.current_round} 轮`} /><Metric label="采集 / 内容" value={`${task.consumption.crawl_count} / ${task.consumption.content_count}`} /><Metric label="运行时长" value={formatDuration(task.consumption.duration_seconds)} /><Metric label="关键结论" value={`${task.findings.length} 条`} /><Metric label="待确认动作" value={`${task.action_count} 项`} /><Metric label="发现候选" value={`${task.discovery_candidates?.length ?? 0} 条`} /><Metric label="来源平台" value={task.platforms.join("、")} /></CardContent>
       </Card>
 
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}><AlertDialogContent><AlertDialogTitle>取消这条研究？</AlertDialogTitle><AlertDialogDescription>取消后任务会停止继续执行，已有研究记录会保留，但不会再产生新的运行结果。</AlertDialogDescription><div className="mt-5 flex justify-end gap-2"><AlertDialogCancel asChild><Button variant="ghost">返回</Button></AlertDialogCancel><AlertDialogAction asChild><Button variant="danger" disabled={cancel.isPending} onClick={() => { cancel.mutate(task.id); setCancelOpen(false); }}>{cancel.isPending ? "取消中…" : "确认取消"}</Button></AlertDialogAction></div></AlertDialogContent></AlertDialog>
+
       <ResearchSummaryStrip task={task} />
-      <div className="flex gap-1 overflow-x-auto border-b border-line pb-px" role="tablist" aria-label="研究详情分区">
-        {tabs.map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={activeTab === value} onClick={() => setActiveTab(value)} className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold transition ${activeTab === value ? "border-signal text-signal-strong" : "border-transparent text-muted hover:text-ink"}`}>{label}</button>)}
-      </div>
+      <SegmentedTabs value={activeTab} onChange={setActiveTab} label="研究详情分区" items={tabs.map(([value, label]) => ({ value, label }))} />
       {activeTab === "overview" ? <div className="space-y-5">
         <CrawlerAccessCard task={task} />
         <IntentUnderstandingCard task={task} canRevise={task.status === "Draft"} revisePending={reviseIntent.isPending} reviseError={reviseIntent.error} onRevise={(request) => reviseIntent.mutate({ taskId: task.id, request })} />
@@ -871,7 +881,7 @@ function CrawlerAccessCard({ task }: { task: ResearchTaskDetail }) {
   return (
     <Card className={waitingLogin ? "border-warning/30 bg-warning/[0.04]" : "border-signal/20 bg-signal/[0.025]"}>
       <CardHeader>
-        <p className="section-kicker">Platform authentication</p>
+        <p className="section-kicker">平台登录</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <h3 className="font-display text-xl font-semibold">{title}</h3>
           <Badge variant={waitingLogin || waitingCrawl ? "warning" : "neutral"}>
@@ -1001,8 +1011,8 @@ function IntentUnderstandingCard({
   if (!intent) {
     return (
       <Card>
-        <CardHeader><p className="section-kicker">Intent understanding</p><h3 className="mt-1 font-display text-xl font-semibold">研究理解卡</h3></CardHeader>
-        <CardContent><p className="text-sm leading-6 text-muted">这是阶段 8D-0 之前创建的历史任务。系统保留原始目标和执行轨迹，不会重新解释或重新执行它。</p></CardContent>
+        <CardHeader><p className="section-kicker">研究理解</p><h3 className="mt-1 font-display text-xl font-semibold">研究理解卡</h3></CardHeader>
+        <CardContent><p className="text-sm leading-6 text-muted">这是较早创建的历史任务。系统保留原始目标和执行轨迹，不会重新解释或重新执行它。</p></CardContent>
       </Card>
     );
   }
@@ -1020,7 +1030,7 @@ function IntentUnderstandingCard({
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="section-kicker">Intent understanding · v{intent.version}</p>
+            <p className="section-kicker">研究理解</p>
             <h3 className="mt-1 font-display text-xl font-semibold">研究理解卡</h3>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1080,34 +1090,34 @@ function InformationUtilityCard({ task }: { task: ResearchTaskDetail }) {
   const utilities = task.information_utilities ?? [];
   const order = ["core_evidence", "discovery_seed", "background_context", "event_signal", "counterevidence", "memory_update", "action_trigger", "noise", "duplicate"];
   const counts = order.map((type) => [type, utilities.filter((item) => item.utility_type === type).length] as const);
-  return <Card><CardHeader><p className="section-kicker">Information utility</p><h3 className="mt-1 font-display text-xl font-semibold">信息价值分布</h3><p className="mt-2 text-sm text-muted">同一条内容可以拥有多个用途；分类理由来自真实内容决策和证据绑定。</p></CardHeader><CardContent className="space-y-4"><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{counts.map(([type, count]) => <Metric key={type} label={utilityLabels[type] ?? type} value={String(count)} />)}</div>{utilities.length === 0 ? <p className="text-sm text-muted">尚未完成内容价值评估。</p> : <div className="space-y-2">{utilities.slice(0, 12).map((item) => <article key={item.id} className="rounded-xl border border-line p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><Link to={`/memory/contents/${encodeURIComponent(item.content_id)}`} className="font-semibold hover:text-signal">{item.content_id}</Link><Badge variant={item.utility_type === "noise" || item.utility_type === "duplicate" ? "neutral" : item.utility_type === "counterevidence" ? "danger" : "info"}>{utilityLabels[item.utility_type] ?? item.utility_type}</Badge></div><p className="mt-2 leading-5 text-muted">{item.rationale}</p></article>)}</div>}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">信息价值</p><h3 className="mt-1 font-display text-xl font-semibold">信息价值分布</h3><p className="mt-2 text-sm text-muted">同一条内容可以拥有多个用途；分类理由来自真实内容决策和证据绑定。</p></CardHeader><CardContent className="space-y-4"><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{counts.map(([type, count]) => <Metric key={type} label={utilityLabels[type] ?? type} value={String(count)} />)}</div>{utilities.length === 0 ? <p className="text-sm text-muted">尚未完成内容价值评估。</p> : <div className="space-y-2">{utilities.slice(0, 12).map((item) => <article key={item.id} className="rounded-xl border border-line p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">内容材料</span><Badge variant={item.utility_type === "noise" || item.utility_type === "duplicate" ? "neutral" : item.utility_type === "counterevidence" ? "danger" : "info"}>{utilityLabels[item.utility_type] ?? item.utility_type}</Badge></div><p className="mt-2 leading-5 text-muted">{item.rationale}</p><details className="mt-2"><summary className="cursor-pointer font-semibold text-muted">技术详情</summary><Link to={`/memory/contents/${encodeURIComponent(item.content_id)}`} className="mt-1 block break-all text-[11px] text-signal hover:underline">来源标识：{item.content_id}</Link></details></article>)}</div>}</CardContent></Card>;
 }
 
 function DiscoveryCandidatesCard({ task }: { task: ResearchTaskDetail }) {
   const candidates = task.entity_candidates ?? [];
   const discoveries = task.discovery_candidates ?? [];
-  return <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="section-kicker">Bounded discovery</p><h3 className="mt-1 font-display text-xl font-semibold">新发现与下一步</h3></div><Link className="text-xs font-semibold text-signal hover:underline" to="/discoveries">打开收件箱 →</Link></div></CardHeader><CardContent className="space-y-3">
+  return <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="section-kicker">发现焦点</p><h3 className="mt-1 font-display text-xl font-semibold">新发现与下一步</h3></div><Link className="text-xs font-semibold text-signal hover:underline" to="/discoveries">打开收件箱 →</Link></div></CardHeader><CardContent className="space-y-3">
     {discoveries.length > 0 ? discoveries.slice(0, 8).map((candidate) => <article key={candidate.id} className="rounded-xl border border-signal/15 bg-signal/[0.025] p-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-2"><Link to={`/discoveries/${encodeURIComponent(candidate.id)}`} className="font-semibold hover:text-signal">{candidate.title}</Link><Badge variant={candidate.state === "accepted" || candidate.state === "converted_to_research" ? "success" : candidate.state === "ignored" ? "neutral" : "info"}>{discoveryStateLabel(candidate.state)}</Badge></div><p className="mt-1 text-xs leading-5 text-muted">{discoveryTypeLabel(candidate.candidate_type)} · 排序 {(candidate.final_score * 100).toFixed(0)}% · {candidate.platform_count} 个平台 · {candidate.independent_source_count} 个独立来源</p><p className="mt-2 text-xs leading-5 text-muted">{candidate.summary}</p></article>) : null}
-    {candidates.length > 0 ? <><p className="text-xs font-semibold text-muted">阶段 8D-0 实体候选</p>{candidates.map((candidate) => <article key={candidate.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{candidate.normalized_name}</span><Badge variant="info">{entityCandidateStatusLabel(candidate.status)}</Badge></div><p className="mt-1 text-xs text-muted">{entityTypeLabel(candidate.entity_type)} · 新颖性 {(candidate.novelty * 100).toFixed(0)}% · 相关性 {(candidate.relevance_to_intent * 100).toFixed(0)}% · 置信度 {(candidate.confidence * 100).toFixed(0)}%</p>{candidate.suggested_next_action ? <p className="mt-2 text-xs leading-5 text-muted">建议：{candidate.suggested_next_action}</p> : null}{candidate.source_content_id ? <Link className="mt-2 inline-block text-xs text-signal hover:underline" to={`/memory/contents/${encodeURIComponent(candidate.source_content_id)}`}>查看来源内容</Link> : null}</article>)}</> : null}
+    {candidates.length > 0 ? <><p className="text-xs font-semibold text-muted">实体候选</p>{candidates.map((candidate) => <article key={candidate.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{candidate.normalized_name}</span><Badge variant="info">{entityCandidateStatusLabel(candidate.status)}</Badge></div><p className="mt-1 text-xs text-muted">{entityTypeLabel(candidate.entity_type)} · 新颖性 {(candidate.novelty * 100).toFixed(0)}% · 相关性 {(candidate.relevance_to_intent * 100).toFixed(0)}% · 置信度 {(candidate.confidence * 100).toFixed(0)}%</p>{candidate.suggested_next_action ? <p className="mt-2 text-xs leading-5 text-muted">建议：{candidate.suggested_next_action}</p> : null}{candidate.source_content_id ? <Link className="mt-2 inline-block text-xs text-signal hover:underline" to={`/memory/contents/${encodeURIComponent(candidate.source_content_id)}`}>查看来源内容</Link> : null}</article>)}</> : null}
     {discoveries.length === 0 && candidates.length === 0 ? <p className="text-sm text-muted">尚未产生有来源约束的发现。</p> : null}
   </CardContent></Card>;
 }
 
 function EventCandidatesCard({ task }: { task: ResearchTaskDetail }) {
   const events = task.event_candidates ?? [];
-  return <Card><CardHeader><p className="section-kicker">Event candidates</p><h3 className="mt-1 font-display text-xl font-semibold">事件与变化信号</h3></CardHeader><CardContent className="space-y-3">{events.length === 0 ? <p className="text-sm text-muted">尚未记录事件候选。</p> : events.map((event) => <article key={event.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{event.title}</span><Badge variant="warning">{eventTypeLabel(event.event_type)}</Badge></div><p className="mt-2 text-xs leading-5 text-muted">{event.summary}</p><p className="mt-2 text-xs text-muted">置信度 {(event.confidence * 100).toFixed(0)}% · 状态 {eventStatusLabel(event.status)}{event.source_content_id ? ` · 来源 ${event.source_content_id}` : ""}</p></article>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">事件候选</p><h3 className="mt-1 font-display text-xl font-semibold">事件与变化信号</h3></CardHeader><CardContent className="space-y-3">{events.length === 0 ? <p className="text-sm text-muted">尚未记录事件候选。</p> : events.map((event) => <article key={event.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">{event.title}</span><Badge variant="warning">{eventTypeLabel(event.event_type)}</Badge></div><p className="mt-2 text-xs leading-5 text-muted">{event.summary}</p><p className="mt-2 text-xs text-muted">置信度 {(event.confidence * 100).toFixed(0)}% · 状态 {eventStatusLabel(event.status)}</p>{event.source_content_id ? <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-muted">技术详情</summary><p className="mt-1 break-all text-[11px] text-muted">来源标识：{event.source_content_id}</p></details> : null}</article>)}</CardContent></Card>;
 }
 
 function MemoryCard({ task }: { task: ResearchTaskDetail }) {
   const memories = task.memory_items ?? [];
-  return <Card><CardHeader><p className="section-kicker">Long-term research memory</p><h3 className="mt-1 font-display text-xl font-semibold">长期研究记忆</h3><p className="mt-2 text-sm text-muted">已确认事实、推测和实体变化会保留来源，下一次研究可区分已知与新变化。</p></CardHeader><CardContent className="space-y-2">{memories.length === 0 ? <p className="text-sm text-muted">尚未写入长期记忆。</p> : memories.map((memory) => <article key={memory.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold break-words">{memory.memory_key}</span><Badge variant={memory.is_current ? "info" : "neutral"}>{memory.is_current ? "当前" : "历史"}</Badge></div><p className="mt-1 text-xs text-muted">{memoryTypeLabel(memory.memory_type)} · 置信度 {(memory.confidence * 100).toFixed(0)}% · {intentValue(memory.value)}</p><p className="mt-1 text-xs text-muted">来源：{memory.source_content_id ?? memory.source_query_id ?? memory.source_finding_id ?? "—"}</p></article>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">长期记忆</p><h3 className="mt-1 font-display text-xl font-semibold">长期研究记忆</h3><p className="mt-2 text-sm text-muted">已确认事实、推测和实体变化会保留来源，下一次研究可区分已知与新变化。</p></CardHeader><CardContent className="space-y-2">{memories.length === 0 ? <p className="text-sm text-muted">尚未写入长期记忆。</p> : memories.map((memory) => <article key={memory.id} className="rounded-xl border border-line p-3 text-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold break-words">{memory.memory_key}</span><Badge variant={memory.is_current ? "info" : "neutral"}>{memory.is_current ? "当前" : "历史"}</Badge></div><p className="mt-1 text-xs text-muted">{memoryTypeLabel(memory.memory_type)} · 置信度 {(memory.confidence * 100).toFixed(0)}% · {intentValue(memory.value)}</p><details className="mt-1"><summary className="cursor-pointer text-xs font-semibold text-muted">技术详情</summary><p className="mt-1 break-all text-[11px] text-muted">来源标识：{memory.source_content_id ?? memory.source_query_id ?? memory.source_finding_id ?? "—"}</p></details></article>)}</CardContent></Card>;
 }
 
 function AlignmentReviewCard({ task }: { task: ResearchTaskDetail }) {
   const review = task.alignment_review;
-  if (!review) return <Card><CardHeader><p className="section-kicker">Intent alignment review</p><h3 className="mt-1 font-display text-xl font-semibold">研究对齐审查</h3></CardHeader><CardContent><p className="text-sm text-muted">研究完成前才会生成对齐审查；当前仍在积累证据。</p></CardContent></Card>;
+  if (!review) return <Card><CardHeader><p className="section-kicker">目标对齐</p><h3 className="mt-1 font-display text-xl font-semibold">研究对齐审查</h3></CardHeader><CardContent><p className="text-sm text-muted">研究完成前才会生成对齐审查；当前仍在积累证据。</p></CardContent></Card>;
   const reviewLabel = review.review_status === "passed" ? "已通过" : review.review_status === "partial_completion" ? "部分完成" : "仍需研究";
-  return <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="section-kicker">Intent alignment review</p><h3 className="mt-1 font-display text-xl font-semibold">研究对齐审查</h3></div><Badge variant={review.review_status === "passed" ? "success" : review.review_status === "partial_completion" ? "warning" : "danger"}>{reviewLabel} · {(review.alignment_score * 100).toFixed(0)}%</Badge></div></CardHeader><CardContent className="space-y-3">{review.review_status === "partial_completion" ? <p className="rounded-xl border border-warning/25 bg-warning/5 p-3 text-sm leading-6 text-muted">当前结果已经形成部分可用结论，但仍有关键要求没有覆盖。系统保留缺口和建议，不会把部分完成包装成完整答案。</p> : null}<InfoList title="已覆盖要求" values={review.covered_requirements} empty="尚无" /><InfoList title="仍缺少" values={review.missing_requirements} empty="无" danger={review.missing_requirements.length > 0} />{review.scope_drift && Object.keys(review.scope_drift).length > 0 ? <div className="rounded-xl bg-paper p-3 text-xs leading-5 text-muted">范围漂移：{JSON.stringify(review.scope_drift)}</div> : null}<p className="text-xs leading-5 text-muted">建议下一步：{review.recommended_next_step ?? "无"}</p></CardContent></Card>;
+  return <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="section-kicker">目标对齐</p><h3 className="mt-1 font-display text-xl font-semibold">研究对齐审查</h3></div><Badge variant={review.review_status === "passed" ? "success" : review.review_status === "partial_completion" ? "warning" : "danger"}>{reviewLabel} · {(review.alignment_score * 100).toFixed(0)}%</Badge></div></CardHeader><CardContent className="space-y-3">{review.review_status === "partial_completion" ? <p className="rounded-xl border border-warning/25 bg-warning/5 p-3 text-sm leading-6 text-muted">当前结果已经形成部分可用结论，但仍有关键要求没有覆盖。系统保留缺口和建议，不会把部分完成包装成完整答案。</p> : null}<InfoList title="已覆盖要求" values={review.covered_requirements} empty="尚无" /><InfoList title="仍缺少" values={review.missing_requirements} empty="无" danger={review.missing_requirements.length > 0} />{review.scope_drift && Object.keys(review.scope_drift).length > 0 ? <div className="rounded-xl bg-paper p-3 text-xs leading-5 text-muted">范围漂移：{JSON.stringify(review.scope_drift)}</div> : null}<p className="text-xs leading-5 text-muted">建议下一步：{review.recommended_next_step ?? "无"}</p></CardContent></Card>;
 }
 
 function CoverageCard({ task }: { task: ResearchTaskDetail }) {
@@ -1127,7 +1137,7 @@ function CoverageCard({ task }: { task: ResearchTaskDetail }) {
   return (
     <Card>
       <CardHeader>
-        <p className="section-kicker">Coverage plan</p>
+        <p className="section-kicker">覆盖计划</p>
         <h3 className="mt-1 font-display text-xl font-semibold">平台计划与实体覆盖</h3>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1184,7 +1194,7 @@ function EvidencePoolCard({ task }: { task: ResearchTaskDetail }) {
   return (
     <Card>
       <CardHeader>
-        <p className="section-kicker">Evidence pool</p>
+        <p className="section-kicker">证据池</p>
         <h3 className="mt-1 font-display text-xl font-semibold">证据池与未采用内容</h3>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -1199,7 +1209,7 @@ function EvidencePoolCard({ task }: { task: ResearchTaskDetail }) {
             {decisions.map((item) => (
               <div key={item.content_id} className="rounded-xl border border-line p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Link to={`/memory/contents/${encodeURIComponent(item.content_id)}`} className="font-semibold hover:text-signal">{item.content_id}</Link>
+                  <Link to={`/memory/contents/${encodeURIComponent(item.content_id)}`} className="font-semibold hover:text-signal">查看来源资料</Link>
                   <span className="text-muted">{contentDecisionLabels[item.decision] ?? "已记录"}{item.is_repost ? " · 转载" : ""}</span>
                 </div>
                 <p className="mt-1 text-muted">来源独立性：{sourceIndependenceLabels[item.source_independence] ?? "未确认"} · 完整度：{contentCompletenessLabels[item.content_completeness] ?? "未确认"} · 质量：{evidenceQualityLabels[item.evidence_quality] ?? "未确认"}</p>
@@ -1218,7 +1228,7 @@ function BudgetTraceCard({ task }: { task: ResearchTaskDetail }) {
   return (
     <Card>
       <CardHeader>
-        <p className="section-kicker">Resource budget</p>
+        <p className="section-kicker">资源预算</p>
         <h3 className="mt-1 font-display text-xl font-semibold">预算与资源使用</h3>
         <p className="mt-2 text-sm text-muted">查看本次研究的资源边界和套餐归属；模型调用轨迹与原始参数位于技术详情。</p>
       </CardHeader>
@@ -1360,9 +1370,9 @@ function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDet
   const sourceLabel = (query: (typeof queries)[number]) => {
     if (query.parent_query_id) {
       const parent = queries.find((candidate) => candidate.id === query.parent_query_id);
-      return parent ? `父查询：${parent.query}` : `父查询：${query.parent_query_id}`;
+      return parent ? `由上级查询扩展：${parent.query}` : "由其他查询扩展";
     }
-    if (query.source_content_id) return `来源内容：${query.source_content_id}`;
+    if (query.source_content_id) return "来自研究资料";
     if (query.record_type === "user_goal" || query.source_type === "user_goal") return "用户目标（不进入执行闸门）";
     return querySourceLabel(query.source_type);
   };
@@ -1372,7 +1382,6 @@ function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDet
     const isUnexecuted = !query.crawler_task_id && !["completed", "failed", "cancelled"].includes(currentLifecycle);
     return <article key={query.id} className="rounded-xl border border-line p-4">
     <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm font-semibold">{query.query}</p><p className="mt-1 text-xs text-muted">{queryTypeLabel(query.query_type)} · {roleLabel(query)} · {sourceLabel(query)} · {query.platform}</p></div><Badge variant={currentLifecycle.startsWith("rejected") ? "danger" : currentLifecycle === "completed" ? "success" : currentLifecycle.startsWith("skipped") ? "warning" : "info"}>{queryLifecycleLabel(currentLifecycle)}</Badge></div>
-    <p className="mt-2 text-xs leading-5 text-muted">生成理由：{query.generation_reason}</p>
     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5"><Metric label="相关性" value={query.relevance_score === null ? "—" : query.relevance_score.toFixed(2)} /><Metric label="具体性" value={query.specificity_score.toFixed(2)} /><Metric label="新颖性" value={query.novelty_score.toFixed(2)} /><Metric label="新增率" value={query.new_content_rate === null || query.new_content_rate === undefined ? "—" : `${(query.new_content_rate * 100).toFixed(0)}%`} /><Metric label="边际价值" value={query.marginal_value_score === null || query.marginal_value_score === undefined ? "—" : query.marginal_value_score.toFixed(2)} /></div>
     {query.rejection_reason ? <p className="mt-3 rounded-lg bg-danger/5 px-3 py-2 text-xs leading-5 text-danger">拒绝原因：{query.rejection_reason}</p> : null}
     {isUnexecuted && query.unexecuted_reason ? <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">未执行原因：{query.unexecuted_reason}</p> : null}
@@ -1385,11 +1394,11 @@ function QueryTrajectoryCard({ queries }: { queries: NonNullable<ResearchTaskDet
 function FindingsCard({ task }: { task: ResearchTaskDetail }) {
   const supportLabel = (value: string | undefined) => ({ direct: "直接支持", contextual: "上下文", contradictory: "反证", background: "背景" }[value ?? "background"] ?? "背景");
   const strengthLabel = (value: string | undefined) => ({ strong: "强", medium: "中", weak: "弱" }[value ?? "weak"] ?? "弱");
-  return <Card><CardHeader><div className="flex items-center justify-between"><div><p className="section-kicker">Evidence</p><h3 className="mt-1 font-display text-xl font-semibold">结论与证据</h3></div><FileSearch className="size-5 text-signal" /></div></CardHeader><CardContent className="space-y-4">{task.findings.length === 0 ? <p className="text-sm text-muted">尚无证据绑定结论。</p> : task.findings.map((finding) => <article key={finding.id} className="rounded-xl border border-line p-4"><div className="flex flex-wrap items-center gap-2"><Badge variant={finding.kind === "fact" ? "info" : "warning"}>{finding.kind === "fact" ? "事实" : "推测 / inference"}</Badge><span className="text-xs text-muted">第 {finding.round_number} 轮</span></div><p className="mt-3 text-sm leading-6">{finding.statement}</p>{finding.derivation ? <p className="mt-2 text-xs leading-5 text-muted">推导：{finding.derivation}</p> : null}{finding.kind === "inference" ? <p className="mt-2 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">反证：{finding.counterevidence_explanation ?? "历史任务未记录反证状态。"}</p> : null}<div className="mt-3 space-y-2">{finding.evidence.map((evidence) => <details key={evidence.content_id} className="rounded-lg bg-paper px-3 py-2 text-xs"><summary className="cursor-pointer list-none"><Link to={`/memory/contents/${encodeURIComponent(evidence.content_id)}`} className="font-semibold hover:text-signal">{evidence.title ?? evidence.content_id}</Link><span className="ml-2 inline-flex gap-1"><Badge variant={evidence.support_type === "contradictory" ? "danger" : evidence.support_type === "direct" ? "info" : "neutral"}>{supportLabel(evidence.support_type)} · {strengthLabel(evidence.support_strength)}</Badge></span></summary><p className="mt-2 leading-5 text-muted">支持说明：{evidence.support_explanation ?? "历史任务未记录支持说明。"}</p><p className="mt-1 text-muted">{evidence.platform ?? "未知平台"} · {evidence.author_name ?? "未知作者"} · 采集 {evidence.collected_at ?? "未知"}</p>{evidence.occurrences && evidence.occurrences.length > 0 ? <div className="mt-2 space-y-1 text-muted"><p>发现 {evidence.occurrences.reduce((total, occurrence) => total + occurrence.occurrence_count, 0)} 次 · 涉及 {evidence.occurrences.length} 条发现记录</p>{evidence.occurrences.map((occurrence) => <p key={occurrence.id}>查询：{occurrence.source_query_ids?.join("、") || occurrence.research_query_id || "—"} · 采集：{occurrence.source_crawler_task_ids?.join("、") || occurrence.crawler_task_id || "—"}</p>)}</div> : null}</details>)}</div></article>)}</CardContent></Card>;
+  return <Card><CardHeader><div className="flex items-center justify-between"><div><p className="section-kicker">证据</p><h3 className="mt-1 font-display text-xl font-semibold">结论与证据</h3></div><FileSearch className="size-5 text-signal" /></div></CardHeader><CardContent className="space-y-4">{task.findings.length === 0 ? <p className="text-sm text-muted">尚无证据绑定结论。</p> : task.findings.map((finding) => <article key={finding.id} className="rounded-xl border border-line p-4"><div className="flex flex-wrap items-center gap-2"><Badge variant={finding.kind === "fact" ? "info" : "warning"}>{finding.kind === "fact" ? "事实" : "推测"}</Badge><span className="text-xs text-muted">第 {finding.round_number} 轮</span></div><p className="mt-3 text-sm leading-6">{finding.statement}</p>{finding.derivation ? <p className="mt-2 text-xs leading-5 text-muted">推导：{finding.derivation}</p> : null}{finding.kind === "inference" ? <p className="mt-2 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">反证：{finding.counterevidence_explanation ?? "历史任务未记录反证状态。"}</p> : null}<div className="mt-3 space-y-2">{finding.evidence.map((evidence) => <details key={evidence.content_id} className="rounded-lg bg-paper px-3 py-2 text-xs"><summary className="cursor-pointer list-none"><Link to={`/memory/contents/${encodeURIComponent(evidence.content_id)}`} className="font-semibold hover:text-signal">{evidence.title ?? evidence.content_id}</Link><span className="ml-2 inline-flex gap-1"><Badge variant={evidence.support_type === "contradictory" ? "danger" : evidence.support_type === "direct" ? "info" : "neutral"}>{supportLabel(evidence.support_type)} · {strengthLabel(evidence.support_strength)}</Badge></span></summary><p className="mt-2 leading-5 text-muted">支持说明：{evidence.support_explanation ?? "历史任务未记录支持说明。"}</p><p className="mt-1 text-muted">{evidence.platform ?? "未知平台"} · {evidence.author_name ?? "未知作者"} · 采集 {evidence.collected_at ?? "未知"}</p>{evidence.occurrences && evidence.occurrences.length > 0 ? <div className="mt-2 space-y-1 text-muted"><p>发现 {evidence.occurrences.reduce((total, occurrence) => total + occurrence.occurrence_count, 0)} 次 · 涉及 {evidence.occurrences.length} 条发现记录</p>{evidence.occurrences.map((occurrence) => <p key={occurrence.id}>查询：{occurrence.source_query_ids?.join("、") || occurrence.research_query_id || "—"} · 采集：{occurrence.source_crawler_task_ids?.join("、") || occurrence.crawler_task_id || "—"}</p>)}</div> : null}</details>)}</div></article>)}</CardContent></Card>;
 }
 
 function ActionsCard({ actions, busy, onDecide }: { taskId: string; actions: ResearchTaskDetail["actions"]; busy: boolean; onDecide: (actionId: string, decision: "approve" | "reject") => void }) {
-  return <Card><CardHeader><p className="section-kicker">Owner approval</p><h3 className="mt-1 font-display text-xl font-semibold">待确认动作</h3></CardHeader><CardContent className="space-y-3">{actions.length === 0 ? <p className="text-sm text-muted">暂无待确认动作。</p> : actions.map((action) => <div key={action.id} className="rounded-xl border border-line p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{action.action}</p><p className="mt-1 text-xs leading-5 text-muted">{action.reason}</p></div><Badge variant={action.status === "pending" ? "warning" : action.status === "approved" ? "success" : "neutral"}>{actionStatusLabel(action.status)}</Badge></div>{action.status === "pending" ? <div className="mt-3 flex gap-2"><Button size="sm" disabled={busy} onClick={() => onDecide(action.id, "approve")}>批准</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => onDecide(action.id, "reject")}>拒绝</Button></div> : null}</div>)}</CardContent></Card>;
+  return <Card><CardHeader><p className="section-kicker">用户确认</p><h3 className="mt-1 font-display text-xl font-semibold">待确认动作</h3></CardHeader><CardContent className="space-y-3">{actions.length === 0 ? <p className="text-sm text-muted">暂无待确认动作。</p> : actions.map((action) => <div key={action.id} className="rounded-xl border border-line p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{action.action}</p><p className="mt-1 text-xs leading-5 text-muted">{action.reason}</p></div><Badge variant={action.status === "pending" ? "warning" : action.status === "approved" ? "success" : "neutral"}>{actionStatusLabel(action.status)}</Badge></div>{action.status === "pending" ? <div className="mt-3 flex gap-2"><Button size="sm" disabled={busy} onClick={() => onDecide(action.id, "approve")}>批准</Button><Button variant="secondary" size="sm" disabled={busy} onClick={() => onDecide(action.id, "reject")}>拒绝</Button></div> : null}</div>)}</CardContent></Card>;
 }
 
 function TraceCard({ trace }: { trace: ResearchTaskDetail["trace"] }) {
@@ -1406,7 +1415,7 @@ function TraceCard({ trace }: { trace: ResearchTaskDetail["trace"] }) {
     current.push(entry);
     groups.set(key, current);
   });
-  return <Card><CardHeader><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">Execution trace</p><h3 className="mt-1 font-display text-xl font-semibold">执行轨迹（{trace.length} 步）</h3><p className="mt-2 text-sm text-muted">按研究步骤分组；空的 tool、reason、token 字段不会占据详情区域。</p></div><div className="relative w-full sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="搜索轨迹" aria-label="搜索执行轨迹" /></div></div></CardHeader><CardContent className="space-y-2">{trace.length === 0 ? <p className="text-sm text-muted">暂无轨迹。</p> : filtered.length === 0 ? <p className="text-sm text-muted">没有匹配的轨迹。</p> : Array.from(groups.entries()).map(([group, entries]) => { const elapsed = entries.reduce((total, entry) => total + (entry.elapsed_ms ?? 0), 0); return <details key={group} className="group rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm"><ChevronDown className="size-4 transition group-open:rotate-180" /><span className="font-semibold">{group}</span><span className="text-xs text-muted">{entries.length} 步</span><span className="ml-auto text-xs text-muted">{elapsed > 0 ? `${elapsed} ms` : "耗时未记录"}</span></summary><div className="space-y-2 border-t border-line p-3">{entries.map((entry) => <details key={entry.sequence} className="rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 text-sm"><span className="font-mono text-xs text-muted">#{entry.sequence}</span><span className="font-semibold">{traceEventLabel(entry.event)}</span><span className="ml-auto text-xs text-muted">{entry.status ? statusLabels[entry.status] : ""}</span></summary><div className="grid gap-3 border-t border-line bg-paper/50 p-3 text-xs sm:grid-cols-2"><div>{entry.reason ? <><p className="text-muted">原因</p><p className="mt-1">{entry.reason}</p></> : null}{entry.provider || entry.model ? <><p className="mt-3 text-muted">模型</p><p className="mt-1">{entry.provider ?? "—"} / {entry.model ?? "—"}</p></> : null}</div><div>{entry.input_tokens !== null || entry.output_tokens !== null || entry.elapsed_ms !== null ? <><p className="text-muted">Token / 耗时</p><p className="mt-1">{entry.input_tokens ?? "—"} / {entry.output_tokens ?? "—"} · {entry.elapsed_ms ?? "—"} ms</p></> : null}{entry.tool_arguments ? <><p className="mt-3 text-muted">实际工具参数</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap">{JSON.stringify(entry.tool_arguments, null, 2)}</pre></> : null}</div></div></details>)}</div></details>; })}</CardContent></Card>;
+  return <Card><CardHeader><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">执行轨迹</p><h3 className="mt-1 font-display text-xl font-semibold">执行轨迹（{trace.length} 步）</h3><p className="mt-2 text-sm text-muted">按研究步骤分组；空的工具、原因、Token 字段不会占据详情区域。</p></div><div className="relative w-full sm:w-64"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="搜索轨迹" aria-label="搜索执行轨迹" /></div></div></CardHeader><CardContent className="space-y-2">{trace.length === 0 ? <p className="text-sm text-muted">暂无轨迹。</p> : filtered.length === 0 ? <p className="text-sm text-muted">没有匹配的轨迹。</p> : Array.from(groups.entries()).map(([group, entries]) => { const elapsed = entries.reduce((total, entry) => total + (entry.elapsed_ms ?? 0), 0); return <details key={group} className="group rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm"><ChevronDown className="size-4 transition group-open:rotate-180" /><span className="font-semibold">{group}</span><span className="text-xs text-muted">{entries.length} 步</span><span className="ml-auto text-xs text-muted">{elapsed > 0 ? `${elapsed} ms` : "耗时未记录"}</span></summary><div className="space-y-2 border-t border-line p-3">{entries.map((entry) => <details key={entry.sequence} className="rounded-xl border border-line"><summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 text-sm"><span className="font-mono text-xs text-muted">#{entry.sequence}</span><span className="font-semibold">{traceEventLabel(entry.event)}</span><span className="ml-auto text-xs text-muted">{entry.status ? statusLabels[entry.status] : ""}</span></summary><div className="grid gap-3 border-t border-line bg-paper/50 p-3 text-xs sm:grid-cols-2"><div>{entry.reason ? <><p className="text-muted">原因</p><p className="mt-1">{entry.reason}</p></> : null}{entry.provider || entry.model ? <><p className="mt-3 text-muted">模型</p><p className="mt-1">{entry.provider ?? "—"} / {entry.model ?? "—"}</p></> : null}</div><div>{entry.input_tokens !== null || entry.output_tokens !== null || entry.elapsed_ms !== null ? <><p className="text-muted">Token / 耗时</p><p className="mt-1">{entry.input_tokens ?? "—"} / {entry.output_tokens ?? "—"} · {entry.elapsed_ms ?? "—"} ms</p></> : null}{entry.tool_arguments ? <><p className="mt-3 text-muted">实际工具参数</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap">{JSON.stringify(entry.tool_arguments, null, 2)}</pre></> : null}</div></div></details>)}</div></details>; })}</CardContent></Card>;
 }
 
 function EmptyDetail() { return <Card className="grid min-h-80 place-items-center"><div className="text-center"><FileSearch className="mx-auto size-8 text-muted" /><p className="mt-3 text-sm text-muted">选择一个任务查看真实执行状态与证据。</p></div></Card>; }

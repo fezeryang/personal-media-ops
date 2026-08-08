@@ -111,7 +111,6 @@ export function LibraryContentPage() {
             {content.description ?? "暂无摘要"}
           </p>
           <div className="mt-4 flex flex-wrap gap-3 text-xs text-muted">
-            <span>源 ID {content.source_content_id}</span>
             <span>最近采集 {formatDateTime(content.last_collected_at)}</span>
             {content.source_url ? (
               <a
@@ -124,6 +123,10 @@ export function LibraryContentPage() {
                 <ArrowUpRight className="size-3" />
               </a>
             ) : null}
+            <details>
+              <summary className="cursor-pointer font-semibold">技术详情</summary>
+              <span className="mt-1 block break-all">来源标识：{content.source_content_id}</span>
+            </details>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <Button

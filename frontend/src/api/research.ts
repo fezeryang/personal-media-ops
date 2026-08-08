@@ -293,6 +293,15 @@ const researchSpaceItemSchema = z.object({
   updated_at: z.string(),
 });
 
+const researchSpaceItemLookupSchema = z.object({
+  item_type: researchSpaceItemTypeSchema,
+  item_id: z.string(),
+  title: z.string(),
+  summary: z.string().nullable(),
+  source_type: z.string().nullable(),
+  updated_at: z.string(),
+});
+
 export const researchSpaceSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -773,6 +782,7 @@ export type DiscoveryFeedbackScope = z.infer<typeof discoveryFeedbackScopeSchema
 export type ResearchSpaceSummary = z.infer<typeof researchSpaceSummarySchema>;
 export type ResearchSpaceDetail = z.infer<typeof researchSpaceDetailSchema>;
 export type ResearchSpaceItem = z.infer<typeof researchSpaceItemSchema>;
+export type ResearchSpaceItemLookup = z.infer<typeof researchSpaceItemLookupSchema>;
 export type ResearchSpaceItemType = z.infer<typeof researchSpaceItemTypeSchema>;
 export type ResearchPreferences = z.infer<typeof researchPreferencesSchema>;
 export type DiscoveryFeedbackInput =
@@ -964,6 +974,18 @@ export function getResearchSpace(spaceId: string, signal?: AbortSignal) {
     researchSpaceDetailSchema,
     { signal },
   );
+}
+
+export function listResearchSpaceItems(
+  input: { itemType?: ResearchSpaceItemType; query?: string; limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (input.itemType) params.set("item_type", input.itemType);
+  if (input.query?.trim()) params.set("query", input.query.trim());
+  if (input.limit) params.set("limit", String(input.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(`/api/research/space-items${suffix}`, z.array(researchSpaceItemLookupSchema), { signal });
 }
 
 export function addResearchSpaceItem(

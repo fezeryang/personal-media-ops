@@ -190,3 +190,82 @@ if sources:
         depth=1,
     )
 ```
+
+## Scenario: Human-readable Research Space picker lookup
+
+### 1. Scope / Trigger
+
+Apply when the frontend selects an existing Research Task, Discovery,
+Evidence, conclusion, Opportunity, Validation Plan, Action, Outcome, or Memory
+for a space without asking the owner to know an internal object ID. This is a
+read-only lookup contract; it does not change space-item write semantics.
+
+### 2. Signatures
+
+```text
+GET /api/research/space-items?item_type=&query=&limit=
+```
+
+Response item:
+
+```text
+{ item_type, item_id, title, summary, source_type, updated_at }
+```
+
+### 3. Contracts
+
+- The endpoint requires the normal Owner Workbench authentication and filters
+  every source query by the authenticated owner.
+- `item_type` accepts only existing typed Research Space item types; invalid
+  types never become dynamic SQL/table names.
+- Search uses human-readable title/summary fields. Empty search returns a
+  bounded recent set. The repository uses fixed projections and never returns
+  raw payloads, secrets, crawler output, or another owner's rows.
+- `item_id` exists for the existing space-item write contract, but the normal
+  UI must show it only in technical details.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Missing/invalid Owner session | Existing authenticated API error |
+| Unsupported `item_type` | Validation error; no dynamic table lookup |
+| Blank `query` | Bounded recent matches |
+| No matches | `[]`; UI shows an honest empty picker state |
+| Invalid or excessive `limit` | Validation error |
+| Other-owner row | Exclude it; never leak existence |
+| Source query failure | Real API error; never fabricate picker options |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the picker searches a task title, displays type/source/update time, and
+  submits the returned typed ID only after selection.
+- Base: no match returns an empty list with a clear explanation.
+- Bad: ask the owner to paste a UUID, concatenate an unvalidated table name,
+  leak another owner, or append an optimistic item after a failed request.
+
+### 6. Tests Required
+
+- Repository tests assert owner isolation, fixed type mapping, search, bounds,
+  and stable title/summary/source/update fields.
+- API tests assert response parsing, unsupported types, empty results, and
+  authenticated access.
+- Frontend tests assert human-readable selection, exact typed-ID mutation, and
+  no ID before technical disclosure.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+<input placeholder="对象 ID" />
+SELECT * FROM {user_supplied_table}
+```
+
+#### Correct
+
+```text
+GET /api/research/space-items?item_type=discovery_candidate&query=登录
+→ display title/type/source/update_at
+→ POST /api/research/spaces/{space_id}/items with the selected typed ID
+```

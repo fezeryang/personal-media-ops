@@ -246,6 +246,30 @@ def test_discovery_feedback_is_reversible_and_spaces_are_owner_scoped(
     )
 
 
+def test_space_item_lookup_returns_owner_scoped_human_readable_choices(
+    client: TestClient,
+    owner_id: str,
+) -> None:
+    task = _task(
+        client.app.state.settings.database_path,
+        owner_id,
+        objective="选择个人 AI 研究材料",
+    )
+
+    response = client.get(
+        "/api/research/space-items",
+        params={"item_type": "research_task", "query": "个人 AI"},
+    )
+
+    assert response.status_code == 200, response.text
+    choices = response.json()
+    assert choices
+    assert choices[0]["item_type"] == "research_task"
+    assert choices[0]["item_id"] == task["id"]
+    assert choices[0]["title"] == "选择个人 AI 研究材料"
+    assert "object_id" not in choices[0]
+
+
 def test_candidate_feedback_does_not_leak_to_unrelated_candidates(
     test_settings,
 ) -> None:

@@ -271,6 +271,17 @@ class ResearchSpaceItem(BaseModel):
     updated_at: str
 
 
+class ResearchSpaceItemLookup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: ResearchSpaceItemType
+    item_id: str
+    title: str
+    summary: str | None = None
+    source_type: str | None = None
+    updated_at: str
+
+
 class ResearchSpaceSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

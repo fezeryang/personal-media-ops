@@ -41,8 +41,9 @@ API modules under `src/api` validate every response with Zod and accept an
   evidence contents, and `insufficient_data` without promotional AI language.
 - The visual system uses mist/warm-gray surfaces, graphite text, teal/cyan
   primary states, and restrained orange warnings through shared CSS tokens.
-  The 390 px layout keeps all ten routes reachable through a horizontal
-  overflow navigation rail.
+  At 390 px current workbench routes remain reachable through the compact top
+  bar and focus-managed mobile navigation drawer, not a page-level horizontal
+  navigation rail.
 - Untrusted titles, descriptions, comments, and evidence render through React
   text nodes. External links are limited to validated HTTP(S) values and use
   `noopener noreferrer`.
@@ -85,8 +86,8 @@ API modules under `src/api` validate every response with Zod and accept an
   collection mutations, creator monitoring, and brief/trend evidence display.
 - Test that a full API key appears only in the creation view and revocation
   remains available from prefix-only rows.
-- Test all ten navigation labels in a 390 px viewport and plain-text rendering
-  of HTML-looking source content.
+- Test all seven current primary navigation labels in a 390 px viewport and
+  plain-text rendering of HTML-looking source content.
 - Run lint, Vitest coverage (all thresholds at least 80%), and production
   TypeScript/Vite build.
 

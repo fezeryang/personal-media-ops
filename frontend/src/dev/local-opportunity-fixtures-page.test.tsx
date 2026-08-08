@@ -6,7 +6,7 @@ describe("LocalOpportunityFixturesPage", () => {
   it("renders the opportunity, validation, content, and outcome fixture states", () => {
     render(<LocalOpportunityFixturesPage />);
 
-    expect(screen.getByRole("heading", { name: "8F Opportunity & Action" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "机会与行动" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "机会卡与证据成熟度" })).toBeInTheDocument();
     expect(screen.getByText("Opportunity Card · detail")).toBeInTheDocument();
     expect(screen.getAllByText("Validation Plan").length).toBeGreaterThan(0);

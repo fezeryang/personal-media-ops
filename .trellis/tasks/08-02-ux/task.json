@@ -1,7 +1,7 @@
 {
   "id": "ux",
   "name": "ux",
-  "title": "研究任务UX优化：查询轨迹展示与质量闸门改进",
+  "title": "前端产品体验收敛：信息架构与响应式 UX",
   "description": "",
   "status": "paused",
   "dev_type": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "因前置功能尚未完成而暂停。需要等待其他板块就绪后再继续UX优化工作。",
+  "notes": "范围已由查询轨迹局部优化扩展为当前已完成 8D–8F 前端的产品体验收敛；不新增产品阶段、业务模块或运行时能力。",
   "meta": {}
 }

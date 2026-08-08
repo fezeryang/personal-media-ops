@@ -11,6 +11,9 @@ const LocalFixturesPage = import.meta.env.DEV
 const LocalOpportunityFixturesPage = import.meta.env.DEV
   ? lazy(() => import("./dev/local-opportunity-fixtures-page").then((module) => ({ default: module.LocalOpportunityFixturesPage })))
   : null;
+const LocalUxFixturesPage = import.meta.env.DEV
+  ? lazy(() => import("./dev/local-ux-fixtures-page").then((module) => ({ default: module.LocalUxFixturesPage })))
+  : null;
 
 const AiModelCenterPage = lazy(() => import("./pages/ai-model-center-page").then((module) => ({ default: module.AiModelCenterPage })));
 const CapabilitiesPage = lazy(() => import("./pages/capabilities-page").then((module) => ({ default: module.CapabilitiesPage })));
@@ -58,6 +61,7 @@ export function App() {
     <Routes>
       {LocalFixturesPage ? <Route path="/__local/fixtures" element={<LocalFixturesPage />} /> : null}
       {LocalOpportunityFixturesPage ? <Route path="/__local/opportunities" element={<LocalOpportunityFixturesPage />} /> : null}
+      {LocalUxFixturesPage ? <Route path="/__local/ux/:surface" element={<LocalUxFixturesPage />} /> : null}
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/research" replace />} />

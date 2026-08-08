@@ -27,7 +27,7 @@ export function CreatorWatchPage() {
 
       <LegacySurfaceNotice
         surface="创作者观察"
-        replacement="AI Research 与未来的统一监控模块（8E）"
+        replacement="AI 研究与监控任务"
         replacementPath="/research"
       />
 

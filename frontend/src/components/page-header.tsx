@@ -1,32 +1,21 @@
 import type { ReactNode } from "react";
 
 interface PageHeaderProps {
-  eyebrow: string;
+  /** Kept for compatibility with older callers; product headers no longer render phase copy. */
+  eyebrow?: string;
   title: string;
-  description: string;
+  description?: string;
   action?: ReactNode;
 }
 
-export function PageHeader({
-  eyebrow,
-  title,
-  description,
-  action,
-}: PageHeaderProps) {
+export function PageHeader({ title, description, action }: PageHeaderProps) {
   return (
-    <header className="flex flex-col gap-5 border-b border-line pb-7 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.22em] text-signal-strong">
-          {eyebrow}
-        </p>
-        <h1 className="font-display text-3xl font-semibold tracking-[-0.035em] text-ink sm:text-4xl">
-          {title}
-        </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-          {description}
-        </p>
+    <header className="flex min-w-0 flex-col gap-2 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="min-w-0">
+        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] text-ink sm:text-3xl">{title}</h1>
+        {description ? <p className="mt-1 line-clamp-1 max-w-3xl text-sm leading-5 text-muted sm:line-clamp-2">{description}</p> : null}
       </div>
-      {action}
+      {action ? <div className="flex shrink-0 flex-wrap gap-2">{action}</div> : null}
     </header>
   );
 }

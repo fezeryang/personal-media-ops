@@ -11,6 +11,7 @@ import {
   giveDiscoveryFeedback,
   listDiscoveries,
   listResearchSpaces,
+  listResearchSpaceItems,
   type DiscoveryFeedbackInput,
   type ResearchSpaceItemType,
 } from "../../../api/research";
@@ -23,6 +24,7 @@ export const discoveryQueryKeys = {
   detail: (candidateId: string) => ["research-discoveries", candidateId] as const,
   spaces: ["research-spaces"] as const,
   space: (spaceId: string) => ["research-spaces", spaceId] as const,
+  spaceItems: (filters: { itemType?: ResearchSpaceItemType; query?: string }) => ["research-space-items", filters] as const,
   preferences: ["research-preferences"] as const,
 };
 
@@ -54,6 +56,14 @@ export function useResearchSpaceQuery(spaceId: string) {
     queryKey: discoveryQueryKeys.space(spaceId),
     queryFn: ({ signal }) => getResearchSpace(spaceId, signal),
     enabled: Boolean(spaceId),
+  });
+}
+
+export function useResearchSpaceItemsQuery(filters: { itemType?: ResearchSpaceItemType; query?: string } = {}) {
+  return useQuery({
+    queryKey: discoveryQueryKeys.spaceItems(filters),
+    queryFn: ({ signal }) => listResearchSpaceItems({ ...filters, limit: 80 }, signal),
+    enabled: Boolean(filters.itemType || filters.query?.trim()),
   });
 }
 

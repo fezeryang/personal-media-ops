@@ -64,8 +64,8 @@ describe("OpportunitiesPage", () => {
     vi.spyOn(opportunityApi, "listOpportunities").mockResolvedValue([detail]);
     renderPage("/opportunities/opportunity-1");
     expect(await screen.findByRole("heading", { name: detail.title })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "证据" }));
-    expect(screen.getByText("Evidence Pack · 1")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "证据" }));
+    expect(screen.getByText("证据包 · 1")).toBeInTheDocument();
     expect(screen.getByText("直接反馈")).toBeInTheDocument();
   });
 });

@@ -83,7 +83,7 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Agent-ready interfaces"
         title="Agent 与集成"
-        description="管理仅显示一次的 Scoped API Key，并查看稳定 REST API。MCP 与 Notion 仅展示规划状态，本阶段未连接外部服务。"
+        description="管理仅显示一次的 Scoped API Key，并查看稳定 REST API。MCP 与 Notion 当前未连接外部服务。"
         action={
           <Button onClick={() => setCreating(true)}>
             <Plus className="size-4" /> 创建 API Key
@@ -301,12 +301,12 @@ export function IntegrationsPage() {
           {[
             {
               title: "MCP Server",
-              text: "下一阶段映射只读工具；写操作需要单独 Scope 与确认。",
+              text: "后续可映射只读工具；写操作需要单独 Scope 与确认。",
               icon: Network,
             },
             {
               title: "Notion",
-              text: "下一阶段接入 API 与 Webhook；当前没有 OAuth 或外部同步。",
+              text: "当前没有 OAuth 或外部同步。",
               icon: Bot,
             },
           ].map((item) => (

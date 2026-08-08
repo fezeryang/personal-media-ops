@@ -27,7 +27,9 @@ from app.models.discovery import (
     ResearchSpaceDetail,
     ResearchSpaceItem,
     ResearchSpaceItemCreate,
+    ResearchSpaceItemLookup,
     ResearchSpaceSummary,
+    ResearchSpaceItemType,
 )
 from app.models.research import (
     ResearchAction,
@@ -821,6 +823,22 @@ def add_discovery_to_space(
 @router.get("/spaces", response_model=list[ResearchSpaceSummary])
 def list_research_spaces(request: Request, auth: OwnerSession) -> list[dict[str, object]]:
     return _discovery(request).list_spaces(owner_id=auth.user_id)
+
+
+@router.get("/space-items", response_model=list[ResearchSpaceItemLookup])
+def list_research_space_items(
+    request: Request,
+    auth: OwnerSession,
+    item_type: ResearchSpaceItemType | None = Query(default=None),
+    query: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[dict[str, object]]:
+    return _discovery(request).list_space_item_lookup(
+        owner_id=auth.user_id,
+        item_type=item_type,
+        query=query,
+        limit=limit,
+    )
 
 
 @router.post("/spaces", response_model=ResearchSpaceDetail, status_code=201)

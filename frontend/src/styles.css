@@ -33,6 +33,7 @@
     min-width: 320px;
     background: var(--color-canvas);
     color-scheme: light;
+    overflow-x: clip;
   }
 
   body {
@@ -47,6 +48,7 @@
     font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
+    overflow-x: clip;
   }
 
   button,

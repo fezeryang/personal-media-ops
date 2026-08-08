@@ -1133,6 +1133,159 @@ class DiscoveryRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_space_item_lookup(
+        self,
+        *,
+        owner_id: str,
+        item_type: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        """Return owner-scoped, human-readable choices for the space picker.
+
+        The write contract intentionally remains ``item_type + item_id``. This
+        read-only projection lets the UI discover those existing objects
+        without exposing internal identifiers as a user task.
+        """
+        statements: dict[str, tuple[str, tuple[object, ...]]] = {
+            "research_task": (
+                """
+                SELECT t.id AS item_id, t.objective AS title,
+                       t.status AS summary, '研究' AS source_type, t.updated_at
+                FROM research_tasks t WHERE t.user_id = ?
+                """,
+                (owner_id,),
+            ),
+            "discovery_candidate": (
+                """
+                SELECT c.id AS item_id, c.title, c.summary,
+                       COALESCE(c.source_platform, '发现') AS source_type, c.updated_at
+                FROM research_discovery_candidates c WHERE c.owner_id = ?
+                """,
+                (owner_id,),
+            ),
+            "evidence": (
+                """
+                SELECT c.id AS item_id, COALESCE(c.title, c.id) AS title,
+                       c.description AS summary, c.platform AS source_type, c.updated_at
+                FROM library_contents c
+                """,
+                (),
+            ),
+            "entity": (
+                """
+                SELECT c.id AS item_id, c.normalized_name AS title,
+                       c.entity_type AS summary, '研究' AS source_type, c.updated_at
+                FROM research_entity_candidates c
+                JOIN research_tasks t ON t.id = c.research_task_id
+                WHERE t.user_id = ?
+                """,
+                (owner_id,),
+            ),
+            "event": (
+                """
+                SELECT c.id AS item_id, c.title,
+                       c.summary, '研究' AS source_type, c.updated_at
+                FROM research_event_candidates c
+                JOIN research_tasks t ON t.id = c.research_task_id
+                WHERE t.user_id = ?
+                """,
+                (owner_id,),
+            ),
+            "finding": (
+                """
+                SELECT f.id AS item_id, f.statement AS title,
+                       f.kind AS summary, '研究' AS source_type, f.updated_at
+                FROM findings f
+                JOIN research_tasks t ON t.id = f.research_task_id
+                WHERE t.user_id = ?
+                """,
+                (owner_id,),
+            ),
+            "unresolved_question": (
+                """
+                SELECT u.id AS item_id, u.unknown AS title,
+                       u.status AS summary, '研究' AS source_type, u.updated_at
+                FROM research_unknowns u
+                JOIN research_tasks t ON t.id = u.research_task_id
+                WHERE t.user_id = ?
+                """,
+                (owner_id,),
+            ),
+            "memory": (
+                """
+                SELECT m.id AS item_id, m.memory_key AS title,
+                       m.memory_type AS summary, '记忆' AS source_type, m.updated_at
+                FROM research_memory_items m
+                LEFT JOIN research_tasks t ON t.id = m.research_task_id
+                LEFT JOIN opportunities o ON o.id = m.source_opportunity_id
+                WHERE t.user_id = ? OR o.owner_id = ?
+                """,
+                (owner_id, owner_id),
+            ),
+            "opportunity": (
+                """
+                SELECT o.id AS item_id, o.title, o.description AS summary,
+                       '机会' AS source_type, o.updated_at
+                FROM opportunities o WHERE o.owner_id = ?
+                """,
+                (owner_id,),
+            ),
+            "validation_plan": (
+                """
+                SELECT p.id AS item_id, p.cheapest_next_test AS title,
+                       p.status AS summary, '机会' AS source_type, p.updated_at
+                FROM validation_plans p WHERE p.owner_id = ?
+                """,
+                (owner_id,),
+            ),
+            "action": (
+                """
+                SELECT a.id AS item_id, a.title,
+                       a.action_type AS summary, '机会' AS source_type, a.updated_at
+                FROM opportunity_actions a WHERE a.owner_id = ?
+                """,
+                (owner_id,),
+            ),
+            "outcome": (
+                """
+                SELECT r.id AS item_id, r.result AS title,
+                       r.next_step AS summary, '行动' AS source_type, r.created_at AS updated_at
+                FROM action_outcomes r WHERE r.owner_id = ?
+                """,
+                (owner_id,),
+            ),
+        }
+        selected_types = [item_type] if item_type else list(statements)
+        needle = query.strip().lower() if query else ""
+        results: list[dict[str, object]] = []
+        with connect_database(self.database_path) as connection:
+            for selected_type in selected_types:
+                statement = statements.get(selected_type)
+                if statement is None:
+                    continue
+                sql, values = statement
+                rows = connection.execute(sql, values).fetchall()
+                for row in rows:
+                    item = dict(row)
+                    title = str(item.get("title") or item.get("item_id") or "未命名材料")
+                    summary = item.get("summary")
+                    summary_text = str(summary) if summary is not None else None
+                    if needle and needle not in f"{title} {summary_text or ''}".lower():
+                        continue
+                    results.append(
+                        {
+                            "item_type": selected_type,
+                            "item_id": str(item["item_id"]),
+                            "title": title,
+                            "summary": summary_text,
+                            "source_type": item.get("source_type"),
+                            "updated_at": str(item["updated_at"]),
+                        }
+                    )
+        results.sort(key=lambda item: (str(item["updated_at"]), str(item["item_id"])), reverse=True)
+        return results[: max(1, min(limit, 100))]
+
     def _space_item_value(
         self,
         connection: sqlite3.Connection,

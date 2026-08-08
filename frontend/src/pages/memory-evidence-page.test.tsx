@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
 import * as researchApi from "../api/research";
@@ -172,6 +173,7 @@ describe("MemoryEvidencePage", () => {
   });
 
   it("centers long-term memory, findings, evidence roles, and unresolved gaps", async () => {
+    const user = userEvent.setup();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -183,12 +185,19 @@ describe("MemoryEvidencePage", () => {
 
     expect(await screen.findByRole("heading", { name: "记忆与证据" })).toBeInTheDocument();
     expect(await screen.findByText(summary.objective)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /验证个人 AI 工具的真实使用体验/ }));
+    expect(await screen.findByRole("heading", { name: summary.objective })).toBeInTheDocument();
+    expect(screen.queryByText("直接证据")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^结论/ }));
     expect(await screen.findByText("工具在本地工作流中减少了重复整理成本。")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^证据/ }));
     expect(screen.getByText("直接证据")).toBeInTheDocument();
     expect(screen.getByText("反向证据")).toBeInTheDocument();
-    expect(screen.getByText("是否存在跨平台的同类体验")).toBeInTheDocument();
-    expect(screen.getByText("减少重复整理成本")).toBeInTheDocument();
     expect(screen.getAllByText("浏览来源资料")).toHaveLength(2);
+    await user.click(screen.getByRole("tab", { name: /^未解决/ }));
+    expect(screen.getByText("是否存在跨平台的同类体验")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^记忆/ }));
+    expect(screen.getByText("减少重复整理成本")).toBeInTheDocument();
     expect(screen.queryByText("资料库")).not.toBeInTheDocument();
   });
 });

@@ -151,6 +151,98 @@ const discoveries = apiError ? demoCandidates : apiCandidates;
 ) : query.data?.length === 0 ? (
   <EmptyDiscoveryState />
 ) : (
-  <DiscoveryList items={query.data ?? []} />
+<DiscoveryList items={query.data ?? []} />
 )}
+```
+
+## Scenario: Progressive-disclosure workbench surfaces
+
+### 1. Scope / Trigger
+
+Apply when refining the existing authenticated 8D–8F workbench without adding
+business capability: navigation, list density, filters, master/detail layouts,
+tabs, dialogs, action menus, technical disclosure, or responsive behavior.
+
+### 2. Signatures
+
+```text
+FilterBar({ search, filters, sort, chips, onClear })
+MasterDetailLayout({ list, detail, listLabel, storageKey })
+CollapsibleSection({ title, description, count, children })
+SegmentedTabs({ value, onChange, label, items })
+SideDrawer({ open, onOpenChange, title, children })
+GET /api/research/space-items -> human-readable picker options
+```
+
+### 3. Contracts
+
+- Core lists with more than ten likely rows expose search, a business filter,
+  and sort. Desktop keeps the bar compact; mobile uses search plus a filter
+  Drawer.
+- Research, Discovery, Space, and Memory expose a simple list expanded/
+  collapsed control. `localStorage` is optional and failures cannot block the
+  page.
+- Default detail content is summary-first. Technical IDs, raw enums, budget
+  internals, traces, and long raw evidence sit behind named disclosure.
+- One visually primary action remains on the page. Secondary mutations use an
+  Action Menu; reject/archive/cancel/abandon use the existing Radix
+  AlertDialog when they have consequential state effects.
+- Every mutation exposes pending state and visible updated state, success, or
+  error. Failed requests are not replaced with fixtures.
+- Tabs have tab semantics and keyboard navigation. Drawer/Dialog uses Radix
+  focus management and Escape. Icon-only controls have accessible names and
+  collapse controls expose `aria-expanded`.
+- Ordinary pages do not create document-level horizontal overflow at 390px.
+  Tab strips, table viewports, and code/log viewers may scroll internally.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| No list results | Truthful empty state without a disabled-button wall |
+| Search/filter has no match | Keep chips and show a clear no-match state |
+| Mobile filter opens | Focus is managed, Escape works, and page width stays bounded |
+| List is collapsed | Detail fills content width and exposes “显示列表” |
+| Storage read/write fails | Use default expanded state; never throw during render |
+| Mutation is pending | Disable only the affected action and show progress text |
+| Mutation fails | Keep current data and show actionable error |
+| Technical disclosure closed | Do not render UUID/raw lifecycle/budget internals in normal flow |
+| Document width exceeds viewport | Fix the owning layout; do not rely on page scrolling |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a user identifies the page, filters a dense list, collapses it, reads a
+  summary, and reaches the primary next action within one screen.
+- Base: a long Chinese title wraps inside a `min-w-0` row while raw evidence
+  remains available through a named disclosure.
+- Bad: five mobile selects in a row, a UUID input in the normal Space flow,
+  twelve equal-weight buttons, or a decorative button with no handler.
+
+### 6. Tests Required
+
+- Shared primitive tests cover FilterBar search/clear/mobile Drawer, Tabs
+  keyboard semantics, CollapsibleSection `aria-expanded`, and Master/Detail
+  collapse/persistence.
+- Page tests cover real filter changes, clear chips, Tabs, Picker selection,
+  destructive confirmation, mutation calls, and pending labels.
+- Local UX fixtures render 24 rows plus loading/empty/error/platform-blocked/
+  long-text states and assert `scrollWidth <= clientWidth` at all viewports.
+- Run the full local gate before preparing an RC.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+<input aria-label="对象 ID" />
+<button className="primary">归档</button>
+<div>{rawInternalStatus}</div>
+```
+
+#### Correct
+
+```tsx
+<Button onClick={() => setArchiveOpen(true)}>更多</Button>
+<AlertDialog open={archiveOpen}>...</AlertDialog>
+<details><summary>技术详情</summary>{rawInternalStatus}</details>
 ```

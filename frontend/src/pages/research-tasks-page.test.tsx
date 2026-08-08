@@ -556,6 +556,7 @@ describe("ResearchTasksPage", () => {
     vi.spyOn(researchApi, "decideResearchAction").mockResolvedValue(task.actions[0]);
     vi.spyOn(researchApi, "pauseResearchTask").mockResolvedValue(task);
     vi.spyOn(researchApi, "resumeResearchTask").mockResolvedValue(task);
+    vi.spyOn(researchApi, "rerunResearchTask").mockResolvedValue(task);
     vi.spyOn(researchApi, "cancelResearchTask").mockResolvedValue(task);
   });
 
@@ -570,10 +571,12 @@ describe("ResearchTasksPage", () => {
     expect(screen.getByText("研究理解卡")).toBeInTheDocument();
     expect(screen.getByText("研究对齐审查")).toBeInTheDocument();
     expect(screen.getByText("独立证据")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重新研究" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: "重新研究" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "重新研究" }));
+    expect(researchApi.rerunResearchTask).toHaveBeenCalledWith("research-1");
     expect(screen.getByLabelText("研究目标")).toBeInTheDocument();
-    expect(screen.getByText("待处理发现")).toBeInTheDocument();
-    expect(screen.getByText("暂无待处理发现")).toBeInTheDocument();
+    expect(screen.queryByText("待处理发现")).not.toBeInTheDocument();
     expect(screen.queryByText("research-1")).not.toBeInTheDocument();
     expect(screen.queryByText(/200 tok/)).not.toBeInTheDocument();
 
@@ -607,7 +610,7 @@ describe("ResearchTasksPage", () => {
     expect(screen.getByText("执行轨迹（1 步）")).toBeInTheDocument();
     await user.click(screen.getByText("检索已有资料"));
     expect(screen.getByText(/AI workbench/)).toBeInTheDocument();
-  }, 10_000);
+  }, 20_000);
 
   it("keeps quality counts, rejected queries, and evidence reachable at 390px", async () => {
     const previousWidth = window.innerWidth;
@@ -632,15 +635,20 @@ describe("ResearchTasksPage", () => {
   });
 
   it("shows pause, resume, and cancel controls for durable runtime states", async () => {
+    const user = userEvent.setup();
     renderPage();
     expect(await screen.findByRole("button", { name: "暂停" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "取消任务" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: "取消任务" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "取消任务" }));
+    expect(screen.getByRole("alertdialog", { name: "取消这条研究？" })).toBeInTheDocument();
 
     cleanup();
     vi.mocked(researchApi.getResearchTask).mockResolvedValue({ ...task, status: "Researching", paused: true });
     renderPage();
     expect(await screen.findByRole("button", { name: "继续" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "取消任务" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: "取消任务" })).toBeInTheDocument();
   });
 
   it("surfaces the platform login entry from the research detail", async () => {

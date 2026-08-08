@@ -8,6 +8,7 @@ EVIDENCE_ROOT="${REPOSITORY_ROOT}/docs/evidence"
 PORT="${MEDIAOPS_LOCAL_VISUAL_PORT:-5174}"
 URL="http://127.0.0.1:${PORT}/__local/fixtures"
 OPPORTUNITY_URL="http://127.0.0.1:${PORT}/__local/opportunities"
+UX_URL="http://127.0.0.1:${PORT}/__local/ux"
 
 local_curl() {
     curl --noproxy '*' "$@"
@@ -62,18 +63,53 @@ local_curl -fsS --max-time 5 "$URL" >/dev/null || {
 }
 
 browser_data="${temporary_root}/browser-data"
-for viewport in 1440x900 1280x720 390x844; do
+capture() {
+    local target_url="$1"
+    local output="$2"
+    timeout 30 "$chrome_bin" --headless=new --no-sandbox --disable-gpu \
+        --user-data-dir="$browser_data" --window-size="$3" \
+        --virtual-time-budget=3000 --screenshot="$output" "$target_url" >/dev/null
+    [[ -s "$output" ]] || {
+        printf 'ERROR: Chrome did not produce visual evidence (%s).\n' "$target_url" >&2
+        exit 4
+    }
+}
+
+assert_fixture_width() {
+    local target_url="$1"
+    local viewport="$2"
+    local dom_output="${temporary_root}/dom-${viewport//x/-}.html"
+    timeout 30 "$chrome_bin" --headless=new --no-sandbox --disable-gpu \
+        --user-data-dir="$browser_data" --window-size="$viewport" \
+        --virtual-time-budget=3000 --dump-dom "$target_url" >"$dom_output"
+    grep -Fq 'data-document-overflow="passed"' "$dom_output" || {
+        printf 'ERROR: document-level horizontal overflow at %s (%s).\n' "$viewport" "$target_url" >&2
+        rg -o 'data-document-overflow="[^"]+"' "$dom_output" | head -1 >&2 || true
+        exit 5
+    }
+}
+
+for viewport in 1440x900 1280x720 1024x768 390x844; do
     for surface in fixtures opportunity; do
         output="${EVIDENCE_ROOT}/local-${surface}-${viewport}.png"
         target_url="$URL"
         [[ "$surface" == "opportunity" ]] && target_url="$OPPORTUNITY_URL"
-        timeout 30 "$chrome_bin" --headless=new --no-sandbox --disable-gpu \
-            --user-data-dir="$browser_data" --window-size="$viewport" \
-            --virtual-time-budget=3000 --screenshot="$output" "$target_url" >/dev/null
-        [[ -s "$output" ]] || {
-            printf 'ERROR: Chrome did not produce visual evidence for %s (%s).\n' "$viewport" "$surface" >&2
-            exit 4
-        }
+        capture "$target_url" "$output" "$viewport"
+    done
+    for surface in research discovery monitoring spaces memory opportunities; do
+        target_url="${UX_URL}/${surface}"
+        output="${EVIDENCE_ROOT}/frontend-ux-${surface}-${viewport}.png"
+        capture "$target_url" "$output" "$viewport"
+        assert_fixture_width "$target_url" "$viewport"
+    done
+done
+
+for surface in research discovery spaces memory; do
+    for viewport in 1440x900 390x844; do
+        target_url="${UX_URL}/${surface}?list=collapsed"
+        output="${EVIDENCE_ROOT}/frontend-ux-${surface}-collapsed-${viewport}.png"
+        capture "$target_url" "$output" "$viewport"
+        assert_fixture_width "$target_url" "$viewport"
     done
 done
 
