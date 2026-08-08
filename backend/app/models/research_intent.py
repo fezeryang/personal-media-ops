@@ -145,13 +145,16 @@ class ResearchMemoryItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    research_task_id: str
+    research_task_id: str | None
     memory_type: str
     memory_key: str
     value: object
     source_content_id: str | None
     source_query_id: str | None
     source_finding_id: str | None
+    source_opportunity_id: str | None = None
+    source_action_id: str | None = None
+    source_outcome_id: str | None = None
     confidence: float = Field(ge=0, le=1)
     is_current: bool
     created_at: str

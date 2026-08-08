@@ -55,6 +55,10 @@ ResearchSpaceItemType = Literal[
     "finding",
     "unresolved_question",
     "memory",
+    "opportunity",
+    "validation_plan",
+    "action",
+    "outcome",
 ]
 
 

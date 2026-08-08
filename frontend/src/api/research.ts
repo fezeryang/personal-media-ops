@@ -274,6 +274,10 @@ const researchSpaceItemTypeSchema = z.enum([
   "finding",
   "unresolved_question",
   "memory",
+  "opportunity",
+  "validation_plan",
+  "action",
+  "outcome",
 ]);
 
 const researchSpaceItemSchema = z.object({
@@ -360,13 +364,16 @@ const eventCandidateSchema = z.object({
 
 const memoryItemSchema = z.object({
   id: z.string(),
-  research_task_id: z.string(),
+  research_task_id: z.string().nullable(),
   memory_type: z.string(),
   memory_key: z.string(),
   value: z.unknown(),
   source_content_id: z.string().nullable(),
   source_query_id: z.string().nullable(),
   source_finding_id: z.string().nullable(),
+  source_opportunity_id: z.string().nullable().optional(),
+  source_action_id: z.string().nullable().optional(),
+  source_outcome_id: z.string().nullable().optional(),
   confidence: z.number().min(0).max(1),
   is_current: z.boolean(),
   created_at: z.string(),

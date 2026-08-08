@@ -14,6 +14,9 @@ PROMPT_ROLES = (
     "change_analyst",
     "alignment_reviewer",
     "report_composer",
+    "opportunity_analyst",
+    "validation_planner",
+    "action_assistant",
 )
 
 

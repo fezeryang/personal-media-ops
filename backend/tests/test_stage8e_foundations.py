@@ -97,6 +97,9 @@ def test_tool_contracts_are_explicit_and_versioned() -> None:
         "search_library",
         "submit_crawl",
         "save_finding",
+        "identify_opportunity",
+        "create_validation_plan",
+        "propose_action",
     }
     assert all(item["input_schema"] and item["failure_types"] for item in contracts)
 

@@ -14,5 +14,9 @@ describe("LocalFixturesPage", () => {
     expect(screen.getByRole("heading", { name: "监控任务列表、理解卡与注意力状态" })).toBeInTheDocument();
     expect(screen.getByText(/no_meaningful_change/)).toBeInTheDocument();
     expect(screen.getByText("等待 Owner 确认")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /证据 → 信号 → 机会/ })).toBeInTheDocument();
+    expect(screen.getByText("Content Opportunity", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Action & Outcome", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("No Opportunity", { exact: true })).toBeInTheDocument();
   });
 });

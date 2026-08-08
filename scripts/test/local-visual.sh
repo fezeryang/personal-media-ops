@@ -7,6 +7,11 @@ FRONTEND_ROOT="${REPOSITORY_ROOT}/frontend"
 EVIDENCE_ROOT="${REPOSITORY_ROOT}/docs/evidence"
 PORT="${MEDIAOPS_LOCAL_VISUAL_PORT:-5174}"
 URL="http://127.0.0.1:${PORT}/__local/fixtures"
+OPPORTUNITY_URL="http://127.0.0.1:${PORT}/__local/opportunities"
+
+local_curl() {
+    curl --noproxy '*' "$@"
+}
 
 [[ -x "${FRONTEND_ROOT}/node_modules/.bin/vite" ]] || {
     printf 'ERROR: frontend dependencies are required for local visual checks.\n' >&2
@@ -45,12 +50,12 @@ trap cleanup EXIT
 server_pid=$!
 
 for _ in $(seq 1 30); do
-    if curl -fsS --max-time 2 "$URL" >/dev/null 2>&1; then
+    if local_curl -fsS --max-time 2 "$URL" >/dev/null 2>&1; then
         break
     fi
     sleep 1
 done
-curl -fsS --max-time 5 "$URL" >/dev/null || {
+local_curl -fsS --max-time 5 "$URL" >/dev/null || {
     printf 'ERROR: local fixture page did not become reachable.\n' >&2
     sed -n '1,120p' "${temporary_root}/vite.log" >&2 || true
     exit 3
@@ -58,14 +63,18 @@ curl -fsS --max-time 5 "$URL" >/dev/null || {
 
 browser_data="${temporary_root}/browser-data"
 for viewport in 1440x900 1280x720 390x844; do
-    output="${EVIDENCE_ROOT}/local-fixtures-${viewport}.png"
-    timeout 30 "$chrome_bin" --headless=new --no-sandbox --disable-gpu \
-        --user-data-dir="$browser_data" --window-size="$viewport" \
-        --virtual-time-budget=3000 --screenshot="$output" "$URL" >/dev/null
-    [[ -s "$output" ]] || {
-        printf 'ERROR: Chrome did not produce visual evidence for %s.\n' "$viewport" >&2
-        exit 4
-    }
+    for surface in fixtures opportunity; do
+        output="${EVIDENCE_ROOT}/local-${surface}-${viewport}.png"
+        target_url="$URL"
+        [[ "$surface" == "opportunity" ]] && target_url="$OPPORTUNITY_URL"
+        timeout 30 "$chrome_bin" --headless=new --no-sandbox --disable-gpu \
+            --user-data-dir="$browser_data" --window-size="$viewport" \
+            --virtual-time-budget=3000 --screenshot="$output" "$target_url" >/dev/null
+        [[ -s "$output" ]] || {
+            printf 'ERROR: Chrome did not produce visual evidence for %s (%s).\n' "$viewport" "$surface" >&2
+            exit 4
+        }
+    done
 done
 
 printf 'local_visual_status=passed\n'

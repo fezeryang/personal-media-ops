@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   Check,
   ChevronDown,
   CirclePause,
@@ -8,6 +9,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  Sparkles,
   Square,
 } from "lucide-react";
 import DOMPurify from "dompurify";
@@ -15,6 +17,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import type { CrawlerPlatformCapability } from "../api/crawler";
+import type { OpportunitySummary } from "../api/opportunity";
 import type {
   DiscoveryInboxItem,
   ResearchTaskDetail,
@@ -29,6 +32,7 @@ import { Card, CardContent, CardHeader } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { useCrawlerCapabilitiesQuery } from "../features/crawler/hooks/use-crawler-queries";
 import { modeCapabilityStatusLabel } from "../features/crawler/lib/task";
+import { useOpportunitiesQuery } from "../features/opportunity/hooks/use-opportunity-queries";
 import {
   useCancelResearchTaskMutation,
   useCompleteResearchTaskMutation,
@@ -370,6 +374,7 @@ export function ResearchTasksPage() {
   const tasks = useResearchTasksQuery();
   const discoveries = useDiscoveriesQuery();
   const capabilities = useCrawlerCapabilitiesQuery();
+  const opportunities = useOpportunitiesQuery();
   const [selectedId, setSelectedId] = useState("");
   const [showCreate, setShowCreate] = useState(true);
   const effectiveSelectedId = selectedId && tasks.data?.some((task) => task.id === selectedId)
@@ -402,6 +407,8 @@ export function ResearchTasksPage() {
 
       <ResearchFlow />
 
+      <WorkbenchOpportunityPulse opportunities={opportunities.data ?? []} pending={opportunities.isPending} error={opportunities.error} />
+
       <ResearchHomePulse
         tasks={tasks.data ?? []}
         discoveries={discoveries.data ?? []}
@@ -431,6 +438,24 @@ export function ResearchTasksPage() {
       ) : null}
     </div>
   );
+}
+
+function WorkbenchOpportunityPulse({ opportunities, pending, error }: { opportunities: OpportunitySummary[]; pending: boolean; error: unknown }) {
+  const top = opportunities.slice(0, 3);
+  return (
+    <section aria-label="行动中枢摘要" className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="section-kicker">Action Assistant · 8F</p><h2 className="mt-1 font-display text-2xl font-semibold">值得行动的机会</h2><p className="mt-1 text-sm text-muted">从有证据的信号开始，先判断，再验证。</p></div><Button asChild variant="secondary"><Link to="/opportunities">查看全部机会 <ArrowRight className="size-4" /></Link></Button></div>
+      {error ? <p className="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-muted">机会摘要暂时不可用；研究流程仍可继续。</p> : pending ? <div className="grid gap-3 md:grid-cols-3">{Array.from({ length: 3 }, (_, index) => <div key={index} className="h-32 animate-pulse rounded-2xl bg-paper" />)}</div> : top.length ? <div className="grid gap-3 md:grid-cols-3">{top.map((opportunity) => <Link key={opportunity.id} to={`/opportunities/${encodeURIComponent(opportunity.id)}`} className="rounded-2xl border border-line bg-white p-4 transition hover:border-signal/35 hover:shadow-sm"><div className="flex items-center justify-between gap-2"><Badge variant="info">{opportunityTypeLabel(opportunity.opportunity_type)}</Badge><span className="text-xs text-muted">{readinessLabel(opportunity.readiness)}</span></div><p className="mt-3 line-clamp-2 text-sm font-semibold">{opportunity.title}</p><p className="mt-2 line-clamp-2 text-xs leading-5 text-muted">{opportunity.next_step}</p></Link>)}</div> : <Card><CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm text-muted"><Sparkles className="size-4 text-signal" />目前还没有足够证据形成机会。先完成研究或处理发现，AI会保留“没有机会”的结果。</CardContent></Card>}
+    </section>
+  );
+}
+
+function opportunityTypeLabel(value: OpportunitySummary["opportunity_type"]): string {
+  return { product_opportunity: "产品机会", business_opportunity: "商业机会", content_opportunity: "内容机会", research_opportunity: "研究机会" }[value];
+}
+
+function readinessLabel(value: OpportunitySummary["readiness"]): string {
+  return { insufficient_evidence: "证据不足", needs_more_evidence: "需更多证据", review_ready: "待判断", validation_ready: "可验证", validated: "已验证" }[value];
 }
 
 function ResearchHomePulse({

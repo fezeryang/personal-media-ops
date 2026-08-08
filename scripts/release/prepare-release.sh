@@ -97,7 +97,7 @@ mkdir -p -- "$(dirname -- "$output")"
     printf 'previous_production_commit=pending_server_preflight\n'
     printf 'worktree_status=%s\n' "$(if ((${#dirty_paths[@]} == 0)); then printf clean; else printf unrelated_dirty_allowed; fi)"
     printf 'unrelated_dirty_paths=%s\n' "$(IFS=,; printf '%s' "${dirty_paths[*]:-}")"
-    printf 'visual_evidence=docs/evidence/local-fixtures-1440x900.png,docs/evidence/local-fixtures-1280x720.png,docs/evidence/local-fixtures-390x844.png\n'
+    printf 'visual_evidence=docs/evidence/local-fixtures-1440x900.png,docs/evidence/local-fixtures-1280x720.png,docs/evidence/local-fixtures-390x844.png,docs/evidence/local-opportunity-1440x900.png,docs/evidence/local-opportunity-1280x720.png,docs/evidence/local-opportunity-390x844.png\n'
     printf 'prepared_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$output"
 chmod 600 -- "$output"

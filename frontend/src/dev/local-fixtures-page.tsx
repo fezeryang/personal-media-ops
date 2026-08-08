@@ -6,6 +6,7 @@ import {
   researchFixtureTask,
   researchStatusFixtures,
 } from "./research-fixtures";
+import { opportunityFixtureStates } from "./opportunity-fixtures";
 
 const statusClass: Record<string, string> = {
   Draft: "border-line bg-white",
@@ -93,6 +94,26 @@ export function LocalFixturesPage() {
                   <span className="text-[11px] font-mono text-muted">{item.status}</span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-muted">{item.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-8" aria-labelledby="opportunity-heading">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <p className="section-kicker">Opportunity & Action · local states</p>
+              <h2 id="opportunity-heading" className="mt-2 text-2xl font-semibold">证据 → 信号 → 机会 → 验证 → 行动 → Outcome → 记忆</h2>
+            </div>
+            <span className="rounded-full bg-[#e6f4ef] px-3 py-1 text-xs font-semibold text-[#126d69]">no fabricated business result</span>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {opportunityFixtureStates.map((item) => (
+              <article key={item.key} className={`rounded-3xl border p-5 ${item.key === "empty" ? "border-line bg-white" : item.key === "counterevidence" ? "border-amber-200 bg-amber-50" : "border-[#9de1d2] bg-[#f1fbf7]"}`}>
+                <div className="flex items-start justify-between gap-2"><p className="section-kicker">{item.label}</p><span className="text-[11px] font-mono text-muted">{item.readiness}</span></div>
+                <h3 className="mt-2 text-lg font-semibold">{item.title}</h3>
+                <p className="mt-3 text-xs font-semibold text-[#126d69]">{item.evidence}</p>
+                <p className="mt-2 text-sm leading-6 text-muted">{item.detail}</p>
               </article>
             ))}
           </div>

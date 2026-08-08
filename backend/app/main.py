@@ -19,6 +19,8 @@ from app.api.intelligence import router as intelligence_router
 from app.api.library import router as library_router
 from app.api.monitoring import notifications_router
 from app.api.monitoring import router as monitoring_router
+from app.api.opportunity import actions_router as opportunity_actions_router
+from app.api.opportunity import router as opportunity_router
 from app.api.organization import router as organization_router
 from app.api.research import router as research_router
 from app.api.subscriptions import router as subscriptions_router
@@ -34,12 +36,14 @@ from app.repositories.discovery import DiscoveryRepository
 from app.repositories.intelligence import IntelligenceRepository
 from app.repositories.library import LibraryRepository
 from app.repositories.monitoring import MonitoringRepository
+from app.repositories.opportunity import OpportunityRepository
 from app.repositories.organization import OrganizationRepository
 from app.repositories.research import ResearchTaskRepository
 from app.security.provider_secrets import ProviderSecretCipher
 from app.services.agent_tools import AgentToolService
 from app.services.ai.discovery import DiscoveryEngine
 from app.services.ai.model_gateway import ModelGateway
+from app.services.ai.opportunity import OpportunityService
 from app.services.ai.research_runtime import ResearchRuntime
 from app.services.ai.research_tools import ResearchToolService
 from app.services.auth import AuthService
@@ -63,6 +67,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     research_repository = ResearchTaskRepository(active_settings.database_path)
     monitoring_repository = MonitoringRepository(active_settings.database_path)
     monitoring_service = MonitoringService(monitoring_repository, research_repository)
+    opportunity_repository = OpportunityRepository(active_settings.database_path)
+    opportunity_service = OpportunityService(opportunity_repository)
     discovery_repository = DiscoveryRepository(active_settings.database_path)
     production_verified_search_platforms = platform_registry.production_verified_platforms_for_mode(
         "search",
@@ -157,6 +163,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.state.automation_coordinator = automation_coordinator
     application.state.monitoring_repository = monitoring_repository
     application.state.monitoring_service = monitoring_service
+    application.state.opportunity_repository = opportunity_repository
+    application.state.opportunity_service = opportunity_service
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(active_settings.frontend_origins),
@@ -213,6 +221,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
     application.include_router(library_router, prefix="/api")
     application.include_router(monitoring_router, prefix="/api")
     application.include_router(notifications_router, prefix="/api")
+    application.include_router(opportunity_router, prefix="/api")
+    application.include_router(opportunity_actions_router, prefix="/api")
     application.include_router(organization_router, prefix="/api")
     application.include_router(research_router, prefix="/api")
     application.include_router(intelligence_router, prefix="/api")

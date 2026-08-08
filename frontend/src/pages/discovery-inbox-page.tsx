@@ -24,6 +24,7 @@ import type {
   DiscoveryInboxItem,
   ResearchSpaceSummary,
 } from "../api/research";
+import { useAnalyzeOpportunityMutation } from "../features/opportunity/hooks/use-opportunity-queries";
 import { ErrorState } from "../components/error-state";
 import { PageHeader } from "../components/page-header";
 import { Badge } from "../components/ui/badge";
@@ -134,6 +135,7 @@ export function DiscoveryInboxPage() {
   const feedback = useDiscoveryFeedbackMutation();
   const continueResearch = useContinueDiscoveryMutation();
   const addToSpace = useAddDiscoveryToSpaceMutation();
+  const analyzeOpportunity = useAnalyzeOpportunityMutation();
   const [spaceId, setSpaceId] = useState("");
   const [followUpRequest, setFollowUpRequest] = useState("");
   const effectiveSpaceId = spaceId || spaces.data?.[0]?.id || "";
@@ -168,6 +170,14 @@ export function DiscoveryInboxPage() {
   // The API returns feedback newest-first; undo must target the actual most
   // recent action rather than the oldest item in the list.
   const lastFeedback = activeFeedback[0];
+
+  function analyzeSelectedOpportunity() {
+    if (!effectiveId) return;
+    analyzeOpportunity.mutate(
+      { source_type: "discovery_candidate", source_id: effectiveId, opportunity_type: "product_opportunity" },
+      { onSuccess: (result) => { const first = result.opportunities[0]; if (first) void navigate(`/opportunities/${encodeURIComponent(first.id)}`); } },
+    );
+  }
 
   return (
     <div className="space-y-7">
@@ -272,6 +282,8 @@ export function DiscoveryInboxPage() {
               feedbackPending={feedback.isPending}
               continuePending={continueResearch.isPending}
               addPending={addToSpace.isPending}
+              analyzePending={analyzeOpportunity.isPending}
+              onAnalyzeOpportunity={analyzeSelectedOpportunity}
               onFeedback={giveFeedback}
               onUndo={() => lastFeedback ? feedback.mutate({ candidateId: effectiveId, feedback: { undo_feedback_id: lastFeedback.id } }) : undefined}
               lastFeedbackLabel={lastFeedback?.feedback_type}
@@ -279,7 +291,7 @@ export function DiscoveryInboxPage() {
               followUpRequest={followUpRequest}
               onFollowUpRequestChange={setFollowUpRequest}
               onAddToSpace={() => { if (effectiveSpaceId) addToSpace.mutate({ candidateId: effectiveId, spaceId: effectiveSpaceId }); }}
-              error={feedback.error ?? continueResearch.error ?? addToSpace.error ?? spaces.error}
+              error={feedback.error ?? continueResearch.error ?? addToSpace.error ?? analyzeOpportunity.error ?? spaces.error}
             />
           ) : (
             <Card className="grid min-h-80 place-items-center"><p className="text-sm text-muted">选择一条发现查看解释和后续动作。</p></Card>
@@ -298,6 +310,7 @@ function DiscoveryDetail({
   feedbackPending,
   continuePending,
   addPending,
+  analyzePending,
   onFeedback,
   onUndo,
   lastFeedbackLabel,
@@ -305,6 +318,7 @@ function DiscoveryDetail({
   followUpRequest,
   onFollowUpRequestChange,
   onAddToSpace,
+  onAnalyzeOpportunity,
   error,
 }: {
   candidate: DiscoveryCandidateDetail;
@@ -314,6 +328,7 @@ function DiscoveryDetail({
   feedbackPending: boolean;
   continuePending: boolean;
   addPending: boolean;
+  analyzePending: boolean;
   onFeedback: (value: DiscoveryFeedbackType) => void;
   onUndo?: () => void;
   lastFeedbackLabel?: string;
@@ -321,6 +336,7 @@ function DiscoveryDetail({
   followUpRequest: string;
   onFollowUpRequestChange: (value: string) => void;
   onAddToSpace: () => void;
+  onAnalyzeOpportunity: () => void;
   error: unknown;
 }) {
   const explanation = candidate.score_explanation;
@@ -413,6 +429,11 @@ function DiscoveryDetail({
           <p className="text-xs leading-5 text-muted">“稍后处理”只保存未来关注意图，不启动长期监控任务。</p>
           {error ? <p className="text-sm text-danger">{errorMessage(error)}</p> : null}
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><p className="section-kicker">Opportunity Intelligence · 8F</p><h3 className="mt-1 font-display text-xl font-semibold">把线索交给机会分析</h3></CardHeader>
+        <CardContent className="space-y-3"><p className="text-sm leading-6 text-muted">系统会保留这条发现的Evidence、转载关系和独立来源；如果证据不足，会明确返回“需要更多证据”，不会强行生成机会。</p><Button variant="secondary" disabled={analyzePending} onClick={onAnalyzeOpportunity}><Sparkles className="size-4" />{analyzePending ? "分析中…" : "分析是否形成机会"}</Button></CardContent>
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">

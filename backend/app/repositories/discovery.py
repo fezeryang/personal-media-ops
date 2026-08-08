@@ -1169,7 +1169,23 @@ class DiscoveryRepository:
                 (item_id,),
             ),
             "memory": (
-                "SELECT id, research_task_id, memory_type, memory_key, confidence, is_current, updated_at FROM research_memory_items WHERE id = ?",
+                "SELECT id, research_task_id, memory_type, memory_key, confidence, is_current, source_opportunity_id, source_action_id, source_outcome_id, updated_at FROM research_memory_items WHERE id = ?",
+                (item_id,),
+            ),
+            "opportunity": (
+                "SELECT id, opportunity_type, title, description, status, readiness, version, updated_at FROM opportunities WHERE id = ?",
+                (item_id,),
+            ),
+            "validation_plan": (
+                "SELECT id, opportunity_id, status, cheapest_next_test, next_decision, updated_at FROM validation_plans WHERE id = ?",
+                (item_id,),
+            ),
+            "action": (
+                "SELECT id, opportunity_id, action_type, title, status, expected_result, updated_at FROM opportunity_actions WHERE id = ?",
+                (item_id,),
+            ),
+            "outcome": (
+                "SELECT id, action_id, result, lesson, next_step, created_at FROM action_outcomes WHERE id = ?",
                 (item_id,),
             ),
         }
@@ -1249,7 +1265,7 @@ class DiscoveryRepository:
                 """,
                 (item_id, owner_id),
             ).fetchone()
-        elif item_type in {"finding", "unresolved_question", "memory"}:
+        elif item_type in {"finding", "unresolved_question"}:
             table = {
                 "finding": "findings",
                 "unresolved_question": "research_unknowns",
@@ -1263,6 +1279,24 @@ class DiscoveryRepository:
                 """,
                 (item_id, owner_id),
             ).fetchone()
+        elif item_type == "memory":
+            row = connection.execute(
+                """
+                SELECT value.id FROM research_memory_items value
+                LEFT JOIN research_tasks task ON task.id = value.research_task_id
+                LEFT JOIN opportunities opportunity ON opportunity.id = value.source_opportunity_id
+                WHERE value.id = ? AND (task.user_id = ? OR opportunity.owner_id = ?)
+                """,
+                (item_id, owner_id, owner_id),
+            ).fetchone()
+        elif item_type == "opportunity":
+            row = connection.execute("SELECT id FROM opportunities WHERE id = ? AND owner_id = ?", (item_id, owner_id)).fetchone()
+        elif item_type == "validation_plan":
+            row = connection.execute("SELECT id FROM validation_plans WHERE id = ? AND owner_id = ?", (item_id, owner_id)).fetchone()
+        elif item_type == "action":
+            row = connection.execute("SELECT id FROM opportunity_actions WHERE id = ? AND owner_id = ?", (item_id, owner_id)).fetchone()
+        elif item_type == "outcome":
+            row = connection.execute("SELECT id FROM action_outcomes WHERE id = ? AND owner_id = ?", (item_id, owner_id)).fetchone()
         else:
             row = None
         if row is None:

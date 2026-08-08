@@ -8,6 +8,9 @@ import { useAuth } from "./features/auth/auth-context";
 const LocalFixturesPage = import.meta.env.DEV
   ? lazy(() => import("./dev/local-fixtures-page").then((module) => ({ default: module.LocalFixturesPage })))
   : null;
+const LocalOpportunityFixturesPage = import.meta.env.DEV
+  ? lazy(() => import("./dev/local-opportunity-fixtures-page").then((module) => ({ default: module.LocalOpportunityFixturesPage })))
+  : null;
 
 const AiModelCenterPage = lazy(() => import("./pages/ai-model-center-page").then((module) => ({ default: module.AiModelCenterPage })));
 const CapabilitiesPage = lazy(() => import("./pages/capabilities-page").then((module) => ({ default: module.CapabilitiesPage })));
@@ -19,6 +22,7 @@ const LibraryCreatorPage = lazy(() => import("./pages/library-creator-page").the
 const MemoryEvidencePage = lazy(() => import("./pages/memory-evidence-page").then((module) => ({ default: module.MemoryEvidencePage })));
 const MonitoringMissionsPage = lazy(() => import("./pages/monitoring-missions-page").then((module) => ({ default: module.MonitoringMissionsPage })));
 const OverviewPage = lazy(() => import("./pages/overview-page").then((module) => ({ default: module.OverviewPage })));
+const OpportunitiesPage = lazy(() => import("./pages/opportunities-page").then((module) => ({ default: module.OpportunitiesPage })));
 const ResearchSpacesPage = lazy(() => import("./pages/research-spaces-page").then((module) => ({ default: module.ResearchSpacesPage })));
 const ResearchTasksPage = lazy(() => import("./pages/research-tasks-page").then((module) => ({ default: module.ResearchTasksPage })));
 const SubscriptionsPage = lazy(() => import("./pages/subscriptions-page").then((module) => ({ default: module.SubscriptionsPage })));
@@ -53,6 +57,7 @@ export function App() {
   return (
     <Routes>
       {LocalFixturesPage ? <Route path="/__local/fixtures" element={<LocalFixturesPage />} /> : null}
+      {LocalOpportunityFixturesPage ? <Route path="/__local/opportunities" element={<LocalOpportunityFixturesPage />} /> : null}
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<Navigate to="/research" replace />} />
@@ -62,6 +67,8 @@ export function App() {
         <Route path="research/tasks/:taskId" element={<Navigate to="/research" replace />} />
         <Route path="discoveries" element={<DiscoveryInboxPage />} />
         <Route path="discoveries/:candidateId" element={<DiscoveryInboxPage />} />
+        <Route path="opportunities" element={<OpportunitiesPage />} />
+        <Route path="opportunities/:opportunityId" element={<OpportunitiesPage />} />
         <Route path="spaces" element={<ResearchSpacesPage />} />
         <Route path="spaces/:spaceId" element={<ResearchSpacesPage />} />
         <Route path="memory" element={<MemoryEvidencePage />} />

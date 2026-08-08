@@ -965,7 +965,8 @@ class ResearchTaskRepository:
         for row in connection.execute(
             """
             SELECT id, research_task_id, memory_type, memory_key, value_json, source_content_id,
-                   source_query_id, source_finding_id, confidence, is_current,
+                   source_query_id, source_finding_id, source_opportunity_id,
+                   source_action_id, source_outcome_id, confidence, is_current,
                    created_at, updated_at
             FROM research_memory_items
             WHERE research_task_id = ? ORDER BY updated_at DESC, id DESC

@@ -17,6 +17,14 @@ FIXED_EVAL_DATASET: tuple[dict[str, object], ...] = (
     {"slug": "content_signal", "task": "识别真实用户讨论中值得继续研究的内容信号。", "expected_intent": "content_opportunity", "key_unknowns": ["recurrence", "unmet need"], "required_evidence_types": ["user signal", "source bound"], "forbidden_scope_drift": ["automatic publishing"], "minimum_sources": 2, "partial_completion_allowed": True},
     {"slug": "insufficient_evidence", "task": "验证一个目前只有单一来源的AI工具说法。", "expected_intent": "verification", "key_unknowns": ["independent confirmation"], "required_evidence_types": ["counterevidence", "source independence"], "forbidden_scope_drift": ["market consensus"], "minimum_sources": 2, "partial_completion_allowed": True},
     {"slug": "platform_unavailable", "task": "监控一个需要验证码的平台上的AI工具变化。", "expected_intent": "monitoring", "key_unknowns": ["platform availability", "change evidence"], "required_evidence_types": ["platform status", "partial evidence"], "forbidden_scope_drift": ["synthetic result"], "minimum_sources": 0, "partial_completion_allowed": True},
+    {"slug": "opportunity_strong_pain", "task": "从多个独立来源判断一个重复痛点是否值得形成机会候选。", "expected_intent": "opportunity_analysis", "key_unknowns": ["severity", "frequency", "counterevidence"], "required_evidence_types": ["pain", "independent", "counterevidence"], "forbidden_scope_drift": ["guaranteed revenue"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_single_marketing", "task": "只有一篇营销文章时，判断是否可以形成商业机会。", "expected_intent": "opportunity_analysis", "key_unknowns": ["independence", "user demand"], "required_evidence_types": ["source independence"], "forbidden_scope_drift": ["market size claim"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_repost_noise", "task": "合并重复转载，避免把内容数量当作机会证据。", "expected_intent": "opportunity_analysis", "key_unknowns": ["original source", "independent count"], "required_evidence_types": ["repost grouping"], "forbidden_scope_drift": ["viral claim"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_insufficient", "task": "证据不足时明确返回需要更多证据，而不是强行生成机会。", "expected_intent": "opportunity_analysis", "key_unknowns": ["independent confirmation"], "required_evidence_types": ["unknown"], "forbidden_scope_drift": ["unsupported opportunity"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_competition", "task": "高热度但高竞争的方向是否仍值得验证。", "expected_intent": "opportunity_analysis", "key_unknowns": ["saturation", "differentiation"], "required_evidence_types": ["saturation", "counterevidence"], "forbidden_scope_drift": ["high score equals success"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_novel_weak_demand", "task": "新颖但需求弱的想法应当如何降级。", "expected_intent": "opportunity_analysis", "key_unknowns": ["demand", "actionability"], "required_evidence_types": ["direct demand"], "forbidden_scope_drift": ["model imagination"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "opportunity_counterevidence", "task": "强反向证据出现时更新机会成熟度和解释。", "expected_intent": "opportunity_analysis", "key_unknowns": ["contradiction", "readiness"], "required_evidence_types": ["contradictory", "version history"], "forbidden_scope_drift": ["silent overwrite"], "minimum_sources": 2, "partial_completion_allowed": True},
+    {"slug": "content_gap", "task": "从重复困惑和真实案例缺失中识别内容缺口，不把它称为全网热点。", "expected_intent": "content_opportunity", "key_unknowns": ["audience", "content gap", "saturation"], "required_evidence_types": ["user signal", "source bound"], "forbidden_scope_drift": ["automatic publishing"], "minimum_sources": 2, "partial_completion_allowed": True},
 )
 
 # Recorded responses are replay fixtures, not product answers or live research
@@ -89,7 +97,7 @@ def evaluate_recorded_response(
     metrics = response.get("metrics")
     metrics = metrics if isinstance(metrics, Mapping) else {}
     expected_intent = case.get("expected_intent")
-    return {
+    result = {
         "case_slug": case.get("slug"),
         "intent_consistency": 1.0 if intent == expected_intent else 0.0 if intent is not None else "not_instrumented",
         "target_coverage": _instrumented_or_unknown(metrics.get("target_coverage")),
@@ -106,6 +114,19 @@ def evaluate_recorded_response(
         "output_tokens": _instrumented_or_unknown(response.get("output_tokens")),
         "runtime_ms": _instrumented_or_unknown(response.get("runtime_ms")),
     }
+    if expected_intent in {"opportunity_analysis", "content_opportunity"}:
+        result.update(
+            {
+                "opportunity_evidence_coverage": _instrumented_or_unknown(metrics.get("opportunity_evidence_coverage")),
+                "opportunity_source_independence": _instrumented_or_unknown(metrics.get("opportunity_source_independence")),
+                "counterevidence_presence": _instrumented_or_unknown(metrics.get("counterevidence_presence")),
+                "opportunity_to_validation_conversion": _instrumented_or_unknown(metrics.get("opportunity_to_validation_conversion")),
+                "validation_completion": _instrumented_or_unknown(metrics.get("validation_completion")),
+                "action_completion_rate": _instrumented_or_unknown(metrics.get("action_completion_rate")),
+                "content_opportunity_accept_rate": _instrumented_or_unknown(metrics.get("content_opportunity_accept_rate")),
+            }
+        )
+    return result
 
 
 def result_status_for_metrics(metrics: Mapping[str, object]) -> str:

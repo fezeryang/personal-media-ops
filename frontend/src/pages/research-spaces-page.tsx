@@ -26,6 +26,10 @@ const itemTypeLabels: Record<ResearchSpaceItemType, string> = {
   finding: "结论",
   unresolved_question: "未解问题",
   memory: "长期记忆",
+  opportunity: "机会",
+  validation_plan: "验证计划",
+  action: "行动",
+  outcome: "行动结果",
 };
 
 const itemTypes = Object.keys(itemTypeLabels) as ResearchSpaceItemType[];

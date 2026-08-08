@@ -27,6 +27,7 @@ workbench.
 | [Research Center 8D-0](./research-center-8d0.md) | Intent understanding card, information utility, discovery candidates, memory, and alignment | Active |
 | [AI Research Workbench 8D-1/2/3/4/5](./research-workbench-8d.md) | Discovery Inbox, research spaces, memory/evidence, tabbed research detail, and canonical navigation | Active |
 | [Monitoring Mission Frontend 8E](./monitoring-8e.md) | Two-step monitoring creation, fixed mission detail tabs, Inbox integration, and responsive states | Active |
+| [Opportunity & Action Frontend 8F](./opportunity-action-8f.md) | Opportunity Cards, Evidence Pack, Validation, Action/Outcome loop, and workbench integration | Active |
 
 ---
 
