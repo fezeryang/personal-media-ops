@@ -58,4 +58,4 @@ Outcome 会形成可追溯的长期记忆更新：旧判断不被静默覆盖，
 
 ## 当前发布状态
 
-8F Release Candidate `b75215d4279e6eb7a65b7024b3838bca63601593` 已通过完整门禁并部署。生产已完成备份 `/var/backups/mediaops/20260808T091409Z` 和 `0018_stage_8f` 迁移，API/Worker active，数据库 integrity=ok，活动 crawler/research/monitoring run 为 0。当前生产尚无 Opportunity/Signal 数据，因此没有伪造生产 Opportunity、Validation、Action 或 Outcome；需通过正常 Owner 浏览器完成真实证据分析和产品检查，证据不足时保持 `no_opportunity_identified` 或 `needs_more_evidence`。
+8F Release Candidate `b75215d4279e6eb7a65b7024b3838bca63601593` 已通过完整门禁并部署。生产已完成备份 `/var/backups/mediaops/20260808T091409Z` 和 `0018_stage_8f` 迁移，API/Worker active，数据库 integrity=ok，活动 crawler/research/monitoring run 为 0。用户已在正常 Owner 浏览器完成 `/opportunities` 和 AI 工作台空状态检查。当前生产尚无 Opportunity/Signal 数据，因此本阶段业务状态为 `completed_with_data_limitation`，没有伪造 Opportunity、Validation、Action 或 Outcome；后续证据不足时保持 `no_opportunity_identified` 或 `needs_more_evidence`。

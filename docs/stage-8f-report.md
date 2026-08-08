@@ -177,7 +177,7 @@ production_deploy_result: passed
 
 生产冒烟结果：公网前端、`/api/health`、`/crawler/tasks` 均为 HTTP 200；生产 Git/静态发布 marker 均为 `b75215d...`；API 与 Worker active；数据库 `integrity_check=ok`、head 为 `0018_stage_8f`；活动 monitoring/research/crawler run 均为 0；浏览器残留为 0。未带 Owner Session 的 `GET /api/opportunities` 返回预期 401，`/opportunities` 返回 200，未出现 500。
 
-真实业务验收保持证据边界：生产当前 `opportunities=0`、`opportunity_signals=0`，没有强行制造机会、验证计划、Action 或 Outcome。需要在正常 Owner 浏览器中运行已有证据分析，并由用户完成最终产品检查；若证据不足，正确结果仍是 `no_opportunity_identified` 或 `needs_more_evidence`。
+真实业务验收保持证据边界：生产当前 `opportunities=0`、`opportunity_signals=0`，没有强行制造机会、验证计划、Action 或 Outcome；本次真实数据验收记录为 `completed_with_data_limitation`。用户已在正常 Owner 浏览器检查 `/opportunities` 和 AI 工作台空状态，确认页面可用、无 500、没有假机会列表。后续若真实证据分析仍不足，正确结果仍是 `no_opportunity_identified` 或 `needs_more_evidence`。
 
 ## 15. 阶段状态（当前真实状态）
 
@@ -188,8 +188,8 @@ local_visual_status: passed
 release_candidate_status: passed
 deployment_status: passed
 production_smoke_status: passed
-production_business_status: production_observation_pending_real_candidate
-user_product_review_status: awaiting_user_review
+production_business_status: completed_with_data_limitation
+user_product_review_status: passed
 ```
 
 ```text
@@ -198,7 +198,7 @@ backend_changed: yes
 frontend_changed: yes
 worker_changed: no (复用现有 Research Runtime/队列；新增 Follow-up 通过既有 Runtime)
 deployment_changed: yes (0018 migration + API/frontend release activated)
-remaining_work: Owner 浏览器中的真实 Opportunity/Content Opportunity 业务验收和用户产品检查；没有候选时记录 no_opportunity_identified，不伪造结果。
+remaining_work: 观察真实 Research/Discovery/Monitoring 使用是否产生可验证机会；不伪造候选，不自动创建 8G/8H。
 user_action_required: 仅在生产出现真实 Owner 确认或平台验证码时；普通工程步骤不要求用户协调。
 ```
 
@@ -215,7 +215,7 @@ production_backup_path_and_sha256: `/var/backups/mediaops/20260808T091409Z`; `1d
 production_commit: b75215d4279e6eb7a65b7024b3838bca63601593
 deployment_transport_status: passed
 production_smoke: passed; database_integrity=ok; alembic_head=0018_stage_8f; active crawler/research/monitoring_run=0
-production_business: production_observation_pending_real_candidate；当前无机会数据，未伪造验收
-user_product_review: awaiting_user_review
-final_report_commit: 本次部署验收后的文档更新待提交；生产代码 Commit 保持 b75215d...
+production_business: completed_with_data_limitation；opportunities=0、signals=0，未伪造验收
+user_product_review: passed；用户已完成生产空状态检查
+final_report_commit: 本次最终验收文档提交记录于 Git log；生产代码 Commit 保持 b75215d...
 ```

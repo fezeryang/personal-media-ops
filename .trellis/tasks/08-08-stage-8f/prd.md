@@ -113,24 +113,24 @@ calendar, or automatic publishing system.
 
 ## Acceptance Criteria
 
-* [ ] Alembic migration upgrades blank and populated databases and preserves
+* [x] Alembic migration upgrades blank and populated databases and preserves
       existing 8E data; runtime head is synchronized.
-* [ ] Backend APIs, repositories, services, and tests cover Signal,
+* [x] Backend APIs, repositories, services, and tests cover Signal,
       Opportunity, Evidence Pack, scoring/readiness, feedback, validation,
       follow-up research, content opportunities, actions, outcomes, and memory
       history with owner/CSRF boundaries.
-* [ ] Frontend API schemas, pages, tabs, actions, loading/error/empty states,
+* [x] Frontend API schemas, pages, tabs, actions, loading/error/empty states,
       local fixtures, and responsive checks cover the complete loop.
-* [ ] Existing Discovery/Research/Monitoring behavior remains compatible;
+* [x] Existing Discovery/Research/Monitoring behavior remains compatible;
       no second Runtime or legacy first-class navigation is introduced.
-* [ ] 8F Eval cases and recorded fixtures prove false-positive suppression and
+* [x] 8F Eval cases and recorded fixtures prove false-positive suppression and
       transparent `not_instrumented` handling.
-* [ ] Local gate, backend tests, frontend lint/tests/build, and visual checks
+* [x] Local gate, backend tests, frontend lint/tests/build, and visual checks
       pass before release preparation.
-* [ ] Production smoke and real business acceptance report either a real
+* [x] Production smoke and real business acceptance report either a real
       evidence-bound Opportunity or `no_opportunity_identified`; no synthetic
       validation/action/outcome is written.
-* [ ] Stage report and Notion update document all 41 requested items and the
+* [x] Stage report and Notion update document all 41 requested items and the
       final eight status dimensions; task is archived without creating 8G/8H.
 
 ## Definition of Done
