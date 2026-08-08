@@ -159,7 +159,7 @@ previous_production_commit: 3faffc416577cc24f5710aa98065b3151b03fb7c
 production_deploy_result: deployment_transport_failed
 ```
 
-部署失败后只新增了文档 checkpoint `5d39d3b6221581b963fe0c37f09f246f3c75bbf9` 和 Trellis journal `b3750cc63b05e27f97a09b272d12c08a3c8f50e0`，没有新增运行时代码。当前 `origin/main` 已是 `b3750cc...`；由于部署 helper 要求目标 Commit 与 `origin/main` 相等，恢复 SSH 后必须对当前最新 Commit 重新运行 `prepare-release.sh` 生成新的 manifest，再继续部署，不得直接复用已过期的 C1 manifest。
+部署失败后只新增了文档 checkpoint `5d39d3b6221581b963fe0c37f09f246f3c75bbf9`、Trellis journal 及本报告的文档提交，没有新增运行时代码。当前 `origin/main` 包含这些文档 descendants；由于部署 helper 要求目标 Commit 与 `origin/main` 相等，恢复 SSH 后必须对当前最新 Commit 重新运行 `prepare-release.sh` 生成新的 manifest，再继续部署，不得直接复用已过期的 C1 manifest。
 
 ## 14. 生产冒烟与业务验收计划
 
